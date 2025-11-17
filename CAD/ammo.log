@@ -1,0 +1,31 @@
+Solid Edge Translation to STEP
+Date: lundi,novembre 03,2025 05:55
+Output File: D:\Documents\Valobot\CAD\ammo.stp
+Author: Unknown
+Organization: Unknown
+Source System: Solid Edge
+
+Hardware:
+Processor: AMD Ryzen 5 5500U with Radeon Graphics         
+Operating System: Windows 11 Version:24H2 Build:26100 System Type:64-bit
+Installed Memory: 7.32 GB
+
+Software Information
+Parasolid Version: 36.1.212
+PSBodyShop Version: 36.1.115
+Step Adapter Version: 13.0.163
+Solid Edge Version: 224.00.07.003 x64
+
+STEP Export Options
+Export Format: AP214
+Export Construction Sheets: Off
+Export Construction Solids: Off
+Export Construction Wires: Off
+Export Displayed Parts Only: Off
+Export Units: Millimeters
+Export Part Component Names As Unicode: Off
+Export PMI: Off
+
+Phase 1 of 1 Translating Parasolid to foreign data types...
+Translation process completed
+Time required to translate:00 : 00 : 01

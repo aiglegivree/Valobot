@@ -1,0 +1,42 @@
+STEP translation to Solid Edge
+Date: lundi,novembre 03,2025 05:52
+Source File: D:\Documents\Valobot\CAD\motor.stp
+Author: Unknown
+Organization: Unknown
+Source System: Solid Edge
+
+Hardware:
+Processor: AMD Ryzen 5 5500U with Radeon Graphics         
+Operating System: Windows 11 Version:24H2 Build:26100 System Type:64-bit
+Installed Memory: 7.32 GB
+
+Software Information
+Parasolid Version: 36.1.212
+PSBodyShop Version: 36.1.115
+Step Adapter Version: 13.0.163
+Solid Edge Version: 224.00.07.003 x64
+
+Step Import Options
+Import Faceted Bodies: On
+Import Check Bodies: Off
+Import Curves: On
+Import DoNotSave: On
+Import Multiple Bodies As Single Part File: On
+Import Optimize:Off
+Import Stitch Surfaces: On
+Import Boolean Solids: On
+Make Base Feature: On
+Simplify Geometry: On
+Import Imprint Curves: On
+Import Drive: C:
+Import Stitch Surfaces: On
+Import Surfaces: On
+Import Output Path: D:\Documents\Valobot\CAD
+Import Enable Default Output Path: On
+Import PMI: Off
+Import As Internal Components: Off
+Import Path: 
+
+Translating to Parasolid data types...
+Translation process completed
+Total time required to translate and post process:00 : 00 : 00
