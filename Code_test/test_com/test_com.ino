@@ -1,49 +1,35 @@
-// --------- Pins moteurs (comme ton code) ----------
-const int ENA = 5;   // PWM moteur A
+// --------- Pins moteurs ----------
+const int ENA = 5;
 const int IN1 = 8;
 const int IN2 = 9;
 
-const int ENB = 6;   // PWM moteur B
+const int ENB = 6;
 const int IN3 = 10;
 const int IN4 = 11;
 
-// --------- Paramètres ----------
-int currentSpeed = 150; // 0..255
+void setMotor(int speed, int EN, int INa, int INb) {
+  int pwm = abs(speed);
+  if (pwm > 255) pwm = 255;
+
+  if (speed > 0) {          // Avant
+    digitalWrite(INa, HIGH);
+    digitalWrite(INb, LOW);
+  } 
+  else if (speed < 0) {     // Arrière
+    digitalWrite(INa, LOW);
+    digitalWrite(INb, HIGH);
+  } 
+  else {                    // Stop
+    digitalWrite(INa, LOW);
+    digitalWrite(INb, LOW);
+  }
+
+  analogWrite(EN, pwm);
+}
 
 void stopMotors() {
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
-  digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW); digitalWrite(IN4, LOW);
-}
-
-void forward(int spd) {
-  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
-  analogWrite(ENA, spd);
-  analogWrite(ENB, spd);
-}
-
-void backward(int spd) {
-  digitalWrite(IN1, LOW); digitalWrite(IN2, HIGH);
-  digitalWrite(IN3, LOW); digitalWrite(IN4, HIGH);
-  analogWrite(ENA, spd);
-  analogWrite(ENB, spd);
-}
-
-// Rotation sur place (optionnel)
-void left(int spd) {   // A arrière, B avant
-  digitalWrite(IN1, LOW);  digitalWrite(IN2, HIGH);
-  digitalWrite(IN3, HIGH); digitalWrite(IN4, LOW);
-  analogWrite(ENA, spd);
-  analogWrite(ENB, spd);
-}
-
-void right(int spd) {  // A avant, B arrière
-  digitalWrite(IN1, HIGH); digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);  digitalWrite(IN4, HIGH);
-  analogWrite(ENA, spd);
-  analogWrite(ENB, spd);
+  setMotor(0, ENA, IN1, IN2);
+  setMotor(0, ENB, IN3, IN4);
 }
 
 void setup() {
@@ -55,15 +41,6 @@ void setup() {
   Serial.println("READY");
 }
 
-// Protocole simple (lignes terminées par \n):
-// F            -> avant vitesse courante
-// B            -> arrière vitesse courante
-// L / R        -> pivoter gauche/droite vitesse courante
-// S            -> stop
-// V <0..255>   -> set vitesse courante
-// M <a> <b>    -> set vitesses directes (a,b 0..255) + conserve direction actuelle (simple)
-// Exemple: "V 180" puis "F"
-
 void loop() {
   if (!Serial.available()) return;
 
@@ -71,39 +48,25 @@ void loop() {
   line.trim();
   if (line.length() == 0) return;
 
-  // Commande + éventuels arguments
-  char cmd = line.charAt(0);
+  if (line.charAt(0) == 'M') {
+    int firstSpace = line.indexOf(' ');
+    int secondSpace = line.indexOf(' ', firstSpace + 1);
 
-  if (cmd == 'S') {
+    if (firstSpace > 0 && secondSpace > firstSpace) {
+      int leftSpeed  = line.substring(firstSpace + 1, secondSpace).toInt();
+      int rightSpeed = line.substring(secondSpace + 1).toInt();
+
+      setMotor(leftSpeed, ENA, IN1, IN2);
+      setMotor(rightSpeed, ENB, IN3, IN4);
+
+      Serial.print("OK M ");
+      Serial.print(leftSpeed);
+      Serial.print(" ");
+      Serial.println(rightSpeed);
+    }
+  }
+  else if (line.charAt(0) == 'S') {
     stopMotors();
     Serial.println("OK S");
-  }
-  else if (cmd == 'F') {
-    forward(currentSpeed);
-    Serial.println("OK F");
-  }
-  else if (cmd == 'B') {
-    backward(currentSpeed);
-    Serial.println("OK B");
-  }
-  else if (cmd == 'L') {
-    left(currentSpeed);
-    Serial.println("OK L");
-  }
-  else if (cmd == 'R') {
-    right(currentSpeed);
-    Serial.println("OK R");
-  }
-  else if (cmd == 'V') {
-    int v = line.substring(1).toInt();
-    if (v < 0) v = 0;
-    if (v > 255) v = 255;
-    currentSpeed = v;
-    Serial.print("OK V ");
-    Serial.println(currentSpeed);
-  }
-  else {
-    Serial.print("ERR unknown: ");
-    Serial.println(line);
   }
 }
