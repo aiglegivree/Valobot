@@ -4,27 +4,33 @@ import numpy as np
 from picamera2 import Picamera2
 
 # =========================
-# Image / ROI parameters
+# Camera / ROI
 # =========================
 W, H = 640, 480
+ROI_Y0 = int(H * 0.45)   # higher -> see further; lower -> more stable
 
-ROI_Y0 = int(H * 0.55)     # raise -> look further, lower -> more stable
-N_ROWS = 25
-MIN_CORRIDOR_WIDTH = 120   # px
+# Look-ahead y (inside ROI, 0..h_roi-1). Higher => farther ahead
+LOOKAHEAD_Y_NORM = 0.35  # 0.25..0.55 typically
 
 # =========================
-# Segmentation parameters
+# Edge / Hough parameters
 # =========================
-WALL_THRESH = 180          # bright=wall, dark=floor (tune!)
-OPEN_THRESH = 0.18         # turn opening score threshold (tune 0.12..0.30)
+CANNY1 = 60
+CANNY2 = 140
 
-OPEN_K = 5
-CLOSE_K = 7
+HOUGH_RHO = 1
+HOUGH_THETA = np.pi / 180
+HOUGH_THRESH = 60
+MIN_LINE_LEN = 60
+MAX_LINE_GAP = 25
+
+# Slope filtering (to reject near-horizontal clutter)
+MIN_ABS_SLOPE = 0.35
 
 # =========================
 # Steering (normalized -1..1)
 # =========================
-Kp = 0.004
+Kp = 0.005
 Kd = 0.001
 Ki = 0.0
 
@@ -35,29 +41,45 @@ MODE_FOLLOW = 0
 MODE_TURN_L = 1
 MODE_TURN_R = 2
 
-MIN_TURN_TIME = 0.35       # seconds
-MAX_TURN_TIME = 2.0        # seconds
+TURN_STEER = 0.85
+MIN_TURN_TIME = 0.30
+MAX_TURN_TIME = 2.0
 REACQUIRE_FRAMES = 3
-TURN_STEER = 0.85          # fixed steer during turn (tune 0.6..0.9)
-CORNER_CONFIRM_FRAMES = 2  # require corner condition for N frames to trigger
+CORNER_CONFIRM_FRAMES = 2
 
-def clamp(x: float, lo: float, hi: float) -> float:
+def clamp(x, lo, hi):
     return max(lo, min(hi, x))
 
-def make_kernel(k: int) -> np.ndarray:
-    k = max(1, int(k))
-    if k % 2 == 0:
-        k += 1
-    return np.ones((k, k), np.uint8)
+def line_x_at_y(x1, y1, x2, y2, y):
+    """Return x coordinate where line through (x1,y1)-(x2,y2) crosses given y. None if vertical/degenerate."""
+    dy = (y2 - y1)
+    dx = (x2 - x1)
+    if abs(dy) < 1e-6:
+        return None
+    t = (y - y1) / dy
+    return x1 + t * dx
+
+def robust_fit_x_at_y(lines, y_query):
+    """
+    Given list of line segments [(x1,y1,x2,y2), ...], compute robust x(y_query)
+    by taking median of each segment's intersection with y_query when valid.
+    """
+    xs = []
+    for (x1, y1, x2, y2) in lines:
+        x = line_x_at_y(x1, y1, x2, y2, y_query)
+        if x is None:
+            continue
+        xs.append(x)
+    if len(xs) == 0:
+        return None
+    return float(np.median(xs))
 
 # =========================
 # Picamera2 setup
 # =========================
 picam2 = Picamera2()
-config = picam2.create_preview_configuration(
-    main={"size": (W, H), "format": "RGB888"}
-)
-picam2.configure(config)
+cfg = picam2.create_preview_configuration(main={"size": (W, H), "format": "RGB888"})
+picam2.configure(cfg)
 picam2.start()
 time.sleep(0.4)
 
@@ -73,119 +95,122 @@ turn_start_t = 0.0
 reacquire_cnt = 0
 corner_cnt = 0
 
-k_open = make_kernel(OPEN_K)
-k_close = make_kernel(CLOSE_K)
-
 while True:
-    # Picamera2 gives RGB; convert to BGR for OpenCV display
+    # Capture
     frame_rgb = picam2.capture_array()
     frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
-    # -------------------------
-    # ROI extraction
-    # -------------------------
+    # ROI
     roi = frame[ROI_Y0:H, :].copy()
+    h_roi, w_roi = roi.shape[:2]
+    y_query = int(h_roi * LOOKAHEAD_Y_NORM)
 
-    # -------------------------
-    # Preprocess + segmentation
-    # -------------------------
+    # Preprocess
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # walls: white, floor: black
-    _, walls = cv2.threshold(gray, WALL_THRESH, 255, cv2.THRESH_BINARY)
-    walls = cv2.morphologyEx(walls, cv2.MORPH_OPEN, k_open)
-    walls = cv2.morphologyEx(walls, cv2.MORPH_CLOSE, k_close)
+    # Edges
+    edges = cv2.Canny(gray, CANNY1, CANNY2)
 
-    h_roi, w_roi = walls.shape
-    debug = roi.copy()
+    # Hough segments
+    segs = cv2.HoughLinesP(
+        edges,
+        rho=HOUGH_RHO,
+        theta=HOUGH_THETA,
+        threshold=HOUGH_THRESH,
+        minLineLength=MIN_LINE_LEN,
+        maxLineGap=MAX_LINE_GAP
+    )
 
-    # -------------------------
-    # Corridor center estimation
-    # -------------------------
-    rows = np.linspace(int(h_roi * 0.25), h_roi - 1, N_ROWS).astype(int)
-    midpoints = []
+    left_lines = []
+    right_lines = []
 
-    for y in rows:
-        row = walls[y, :]
+    if segs is not None:
+        for s in segs[:, 0, :]:
+            x1, y1, x2, y2 = map(int, s)
+            dx = x2 - x1
+            dy = y2 - y1
+            if abs(dx) < 1 and abs(dy) < 1:
+                continue
 
-        left_idx = np.argmax(row > 0)
-        if row[left_idx] == 0:
-            continue
+            slope = dy / (dx + 1e-6)
+            if abs(slope) < MIN_ABS_SLOPE:
+                continue  # reject near-horizontal
 
-        right_rev = np.argmax(row[::-1] > 0)
-        right_idx = w_roi - 1 - right_rev
-        if row[right_idx] == 0:
-            continue
+            # classify by slope sign
+            # Note: image y increases downward, so corridor walls usually yield opposite slope signs.
+            if slope < 0:
+                left_lines.append((x1, y1, x2, y2))
+            else:
+                right_lines.append((x1, y1, x2, y2))
 
-        width = right_idx - left_idx
-        if width < MIN_CORRIDOR_WIDTH:
-            continue
+    # Robust x positions at look-ahead y
+    x_left = robust_fit_x_at_y(left_lines, y_query)
+    x_right = robust_fit_x_at_y(right_lines, y_query)
 
-        mid = 0.5 * (left_idx + right_idx)
-        midpoints.append(mid)
+    # Corridor estimate + error
+    corridor_good = (x_left is not None) and (x_right is not None) and ((x_right - x_left) > 80)
 
-        cv2.circle(debug, (left_idx, y), 3, (0, 255, 0), -1)
-        cv2.circle(debug, (right_idx, y), 3, (0, 255, 0), -1)
-        cv2.circle(debug, (int(mid), y), 3, (0, 0, 255), -1)
-
-    corridor_good = (len(midpoints) >= max(5, N_ROWS // 3))
     if corridor_good:
-        mid_est = float(np.median(midpoints))
-        err = (mid_est - (w_roi / 2.0))  # + => corridor center to the right
+        x_mid = 0.5 * (x_left + x_right)
+        err = x_mid - (w_roi / 2.0)  # + => corridor center to the right
     else:
+        # If one side is missing, we treat it as a corner indicator and hold err for stability
         err = prev_err
 
-    # -------------------------
-    # Opening detection (90° turns)
-    # -------------------------
-    floor = cv2.bitwise_not(walls)
-
-    y1 = int(h_roi * 0.15)
-    y2 = int(h_roi * 0.45)
-    band = floor[y1:y2, :]
-
-    left_floor = int(np.sum(band[:, :w_roi // 2] > 0))
-    right_floor = int(np.sum(band[:, w_roi // 2:] > 0))
-    den = max(1, left_floor + right_floor)
-    open_score = (right_floor - left_floor) / den  # + => opening right
-
-    # -------------------------
-    # PID (FOLLOW mode)
-    # -------------------------
+    # PID (FOLLOW)
     now = time.time()
     dt = max(1e-3, now - prev_t)
     derr = (err - prev_err) / dt
     err_i += err * dt
 
     # -------------------------
-    # State machine
+    # Corner / turn detection
     # -------------------------
+    # Basic logic:
+    # - If corridor_good: follow
+    # - If one side disappears: likely a corner; turn toward missing side's opening (heuristic below)
+    #
+    # Heuristic for turn direction when corridor not good:
+    # - If left wall missing but right exists -> likely opening to LEFT (turn left)
+    # - If right wall missing but left exists -> likely opening to RIGHT (turn right)
+    # If both missing: pick last steering sign (or default right)
+    missing_left = (x_left is None)
+    missing_right = (x_right is None)
+
+    inferred_turn = None
+    if not corridor_good:
+        if missing_left and (not missing_right):
+            inferred_turn = MODE_TURN_L
+        elif missing_right and (not missing_left):
+            inferred_turn = MODE_TURN_R
+        else:
+            inferred_turn = MODE_TURN_R if prev_err >= 0 else MODE_TURN_L
+
     if mode == MODE_FOLLOW:
-        corner_condition = (abs(open_score) > OPEN_THRESH) and (not corridor_good)
+        corner_condition = (not corridor_good) and (inferred_turn is not None)
         corner_cnt = corner_cnt + 1 if corner_condition else 0
 
         if corner_cnt >= CORNER_CONFIRM_FRAMES:
-            mode = MODE_TURN_R if open_score > 0 else MODE_TURN_L
+            mode = inferred_turn
             turn_start_t = now
             reacquire_cnt = 0
             corner_cnt = 0
+
     else:
+        # TURN mode: exit once corridor is reacquired
         if now - turn_start_t > MIN_TURN_TIME:
             if corridor_good:
                 reacquire_cnt += 1
             else:
                 reacquire_cnt = 0
-
             if reacquire_cnt >= REACQUIRE_FRAMES:
                 mode = MODE_FOLLOW
 
         if now - turn_start_t > MAX_TURN_TIME:
             mode = MODE_FOLLOW
 
-    # -------------------------
     # Steering output
-    # -------------------------
     if mode == MODE_FOLLOW:
         steer = clamp((Kp * err) + (Kd * derr) + (Ki * err_i), -1.0, 1.0)
     elif mode == MODE_TURN_L:
@@ -206,29 +231,42 @@ while True:
     # send_to_motors(left_cmd, right_cmd)
 
     # -------------------------
-    # Debug overlays
+    # Debug
     # -------------------------
-    cx = w_roi // 2
-    cv2.line(debug, (cx, 0), (cx, h_roi - 1), (255, 0, 0), 2)
+    debug = roi.copy()
 
+    # draw Hough lines
+    for (x1, y1, x2, y2) in left_lines:
+        cv2.line(debug, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    for (x1, y1, x2, y2) in right_lines:
+        cv2.line(debug, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+    # look-ahead line
+    cv2.line(debug, (0, y_query), (w_roi - 1, y_query), (255, 255, 0), 2)
+
+    # show x_left / x_right / x_mid
+    if x_left is not None:
+        cv2.circle(debug, (int(x_left), y_query), 6, (255, 0, 0), -1)
+    if x_right is not None:
+        cv2.circle(debug, (int(x_right), y_query), 6, (255, 0, 0), -1)
     if corridor_good:
-        cv2.line(debug, (int(mid_est), 0), (int(mid_est), h_roi - 1), (0, 0, 255), 2)
+        cv2.circle(debug, (int(x_mid), y_query), 7, (0, 0, 255), -1)
 
-    cv2.rectangle(debug, (0, y1), (w_roi - 1, y2), (255, 255, 0), 2)
+    # center reference
+    cx = w_roi // 2
+    cv2.line(debug, (cx, 0), (cx, h_roi - 1), (255, 0, 255), 2)
 
     mode_str = {MODE_FOLLOW: "FOLLOW", MODE_TURN_L: "TURN_L", MODE_TURN_R: "TURN_R"}[mode]
     cv2.putText(debug, f"mode={mode_str}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-    cv2.putText(debug, f"err_px={err:.1f} steer={steer:.3f} mid_n={len(midpoints)}",
-                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-
-    cv2.putText(debug, f"open_score={open_score:.2f} (L={left_floor} R={right_floor})",
-                (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
+    cv2.putText(debug, f"good={corridor_good} xL={None if x_left is None else int(x_left)} xR={None if x_right is None else int(x_right)}",
+                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+    cv2.putText(debug, f"err_px={err:.1f} steer={steer:.3f}",
+                (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
 
     cv2.imshow("frame", frame)
     cv2.imshow("roi_debug", debug)
-    cv2.imshow("walls_mask", walls)
+    cv2.imshow("edges", edges)
 
     key = cv2.waitKey(1) & 0xFF
     if key == 27 or key == ord('q'):
