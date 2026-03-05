@@ -56,6 +56,18 @@ def main() -> None:
 
             h, w = frame.shape[:2]
 
+            txt1 = f"state={out.state} speed={out.speed:.1f} steer={out.steer:.2f} fps={fps:.1f}"
+            txt2 = f"found={meas.found} e_px={meas.e_px:.1f} e_used={out.e_used:.1f}"
+
+            cv2.putText(frame, txt1, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+            cv2.putText(frame, txt2, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+
+            wr = meas.debug.get("white_ratio", None)
+            ar = meas.debug.get("area", None)
+            if wr is not None and ar is not None:
+                txt3 = f"white_ratio={wr:.3f} area={ar:.0f}"
+                cv2.putText(frame, txt3, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
+
             # Image center line
             cv2.line(frame, (w // 2, 0), (w // 2, h), (0, 255, 0), 1)
 
