@@ -1,84 +1,81 @@
 # motors.py
-from __future__ import annotations
-import time
 
-try:
-    import RPi.GPIO as GPIO
-except Exception as e:
-    GPIO = None  # allows import on non-RPi for dev/testing
-
+import RPi.GPIO as GPIO
 from config import (
-    ENA, IN1, IN2, ENB, IN3, IN4, PWM_FREQ,
-    MIN_SPEED, MAX_SPEED, LEFT_TRIM, RIGHT_TRIM, SWAP_MOTORS
+    ENA, IN1, IN2,
+    ENB, IN3, IN4,
+    PWM_FREQ,
+    INVERT_LEFT_MOTOR,
+    INVERT_RIGHT_MOTOR
 )
 
-def _clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
+
+def clamp(x, lo, hi):
+    return lo if x < lo else hi if x > hi else x
+
 
 class MotorDriver:
-    """
-    Differential drive using 2 DC motors + H-bridge.
-    Speed inputs expected in -100..+100 (percent duty).
-    """
-    def __init__(self) -> None:
-        if GPIO is None:
-            raise RuntimeError("RPi.GPIO not available. Run on Raspberry Pi or install proper GPIO backend.")
 
+    def __init__(self):
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
 
-        for pin in (ENA, IN1, IN2, ENB, IN3, IN4):
-            GPIO.setup(pin, GPIO.OUT)
+        for p in [ENA, IN1, IN2, ENB, IN3, IN4]:
+            GPIO.setup(p, GPIO.OUT)
+            GPIO.output(p, GPIO.LOW)
 
-        self.pwm_a = GPIO.PWM(ENA, PWM_FREQ)
-        self.pwm_b = GPIO.PWM(ENB, PWM_FREQ)
-        self.pwm_a.start(0)
-        self.pwm_b.start(0)
+        self.pwmA = GPIO.PWM(ENA, PWM_FREQ)
+        self.pwmB = GPIO.PWM(ENB, PWM_FREQ)
 
-        self.stop()
+        self.pwmA.start(0)
+        self.pwmB.start(0)
 
-    def _set_motor(self, pwm, in_fwd: int, in_rev: int, speed: float) -> None:
-        # speed in -100..+100
-        s = _clamp(speed, -100.0, 100.0)
-        if abs(s) < 1e-6:
-            GPIO.output(in_fwd, GPIO.LOW)
-            GPIO.output(in_rev, GPIO.LOW)
-            pwm.ChangeDutyCycle(0)
-            return
+    def set_speeds(self, left_speed, right_speed):
+        """
+        left_speed, right_speed in range [-100 .. 100]
+        sign = direction
+        magnitude = PWM duty
+        """
 
-        if s >= 0:
-            GPIO.output(in_fwd, GPIO.HIGH)
-            GPIO.output(in_rev, GPIO.LOW)
-            pwm.ChangeDutyCycle(_clamp(abs(s), 0.0, 100.0))
+        if INVERT_LEFT_MOTOR:
+            left_speed = -left_speed
+
+        if INVERT_RIGHT_MOTOR:
+            right_speed = -right_speed
+
+        # ----- LEFT MOTOR -----
+        ls = int(clamp(left_speed, -100, 100))
+
+        if ls >= 0:
+            GPIO.output(IN1, 1)
+            GPIO.output(IN2, 0)
         else:
-            GPIO.output(in_fwd, GPIO.LOW)
-            GPIO.output(in_rev, GPIO.HIGH)
-            pwm.ChangeDutyCycle(_clamp(abs(s), 0.0, 100.0))
+            GPIO.output(IN1, 0)
+            GPIO.output(IN2, 1)
 
-    def set_speeds(self, left: float, right: float) -> None:
-        # Apply trims
-        left *= LEFT_TRIM
-        right *= RIGHT_TRIM
+        self.pwmA.ChangeDutyCycle(abs(ls))
 
-        # Optional swap if wiring is crossed
-        if SWAP_MOTORS:
-            left, right = right, left
+        # ----- RIGHT MOTOR -----
+        rs = int(clamp(right_speed, -100, 100))
 
-        # Clamp
-        left = _clamp(left, -100.0, 100.0)
-        right = _clamp(right, -100.0, 100.0)
+        if rs >= 0:
+            GPIO.output(IN3, 1)
+            GPIO.output(IN4, 0)
+        else:
+            GPIO.output(IN3, 0)
+            GPIO.output(IN4, 1)
 
-        self._set_motor(self.pwm_a, IN1, IN2, left)
-        self._set_motor(self.pwm_b, IN3, IN4, right)
+        self.pwmB.ChangeDutyCycle(abs(rs))
 
-    def stop(self) -> None:
-        self.set_speeds(0.0, 0.0)
+    def stop(self):
+        self.pwmA.ChangeDutyCycle(0)
+        self.pwmB.ChangeDutyCycle(0)
 
-    def cleanup(self) -> None:
-        try:
-            self.stop()
-            time.sleep(0.05)
-            self.pwm_a.stop()
-            self.pwm_b.stop()
-        finally:
-            GPIO.cleanup()
+        GPIO.output(IN1, 0)
+        GPIO.output(IN2, 0)
+        GPIO.output(IN3, 0)
+        GPIO.output(IN4, 0)
+
+    def cleanup(self):
+        self.stop()
+        GPIO.cleanup()
