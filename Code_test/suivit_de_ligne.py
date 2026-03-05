@@ -15,35 +15,52 @@ MIN_AREA = 600
 INVERT_AFTER_OTSU = True
 SHOW_DEBUG = True
 
+# Fix color display (Picamera2 gives RGB sometimes; OpenCV expects BGR for imshow)
+FIX_DISPLAY_COLOR_SWAP = True
+
 # ----------------------------
-# CONFIG (MOTORS - L298N, BCM pins)
+# CONFIG (MOTORS - L298N, BCM pins)  (your updated mapping)
 # ----------------------------
 # L298N -> Raspberry Pi (BCM)
-# ENA -> GPIO18 (pin 12)  PWM
-# IN1 -> GPIO23 (pin 16)
-# IN2 -> GPIO24 (pin 18)
-# ENB -> GPIO13 (pin 33)  PWM
-# IN3 -> GPIO27 (pin 13)
-# IN4 -> GPIO22 (pin 15)
+# ENB -> GPIO18 (pin 12)  PWM
+# IN3 -> GPIO23 (pin 16)
+# IN4 -> GPIO24 (pin 18)
+# ENA -> GPIO13 (pin 33)  PWM
+# IN1 -> GPIO27 (pin 13)
+# IN2 -> GPIO22 (pin 15)
 ENA, IN1, IN2 = 13, 27, 22
 ENB, IN3, IN4 = 18, 23, 24
 
 PWM_FREQ = 1000
 
 # Speed limits (slow)
-BASE_SPEED = 20       # 0..100 (keep low)
-MAX_SPEED  = 30        # cap
-MIN_SPEED  = 18        # helps overcome stiction
+BASE_SPEED = 20
+MAX_SPEED  = 30
+MIN_SPEED  = 18
 
-# Steering gain (tune)
-Kp = 2               # bigger = turns more aggressively
-DEADBAND = 0.05        # ignore tiny errors
+# ----------------------------
+# STEERING: anticipate LESS
+# Reason: lookahead point is far ahead of rotation center.
+# We blend bottom+lookahead errors with small weight on lookahead.
+# ----------------------------
+DEADBAND = 0.05
+
+# weights: reduce lookahead influence strongly
+W_LOOK   = 0.25
+W_BOTTOM = 0.75
+
+# proportional gain on blended error (small)
+Kp = 10.0
+
+# (optional) low-pass on steering to reduce jerks
+STEER_LPF_ALPHA = 0.35  # 0=no update, 1=no filtering
+steer_prev = 0.0
 
 # If one motor is physically inverted, flip it here
-INVERT_LEFT_MOTOR  = False  # Motor A
-INVERT_RIGHT_MOTOR = False  # Motor B
+INVERT_LEFT_MOTOR  = False  # Motor A (ENA, IN1, IN2)
+INVERT_RIGHT_MOTOR = False  # Motor B (ENB, IN3, IN4)
 
-# Safety: stop if line lost for too long
+# Safety
 LINE_LOST_TIMEOUT_S = 0.25
 
 
@@ -138,17 +155,13 @@ def setup_motors():
     return pwmA, pwmB
 
 def motor_set(pwmA, pwmB, left_speed, right_speed):
-    """
-    left_speed, right_speed in [-100..100]
-    sign sets direction, magnitude sets PWM duty.
-    """
     # optional inversion
     if INVERT_LEFT_MOTOR:
         left_speed = -left_speed
     if INVERT_RIGHT_MOTOR:
         right_speed = -right_speed
 
-    # Left (Motor A)
+    # Left (Motor A) -> ENA/IN1/IN2
     ls = int(clamp(left_speed, -100, 100))
     if ls >= 0:
         GPIO.output(IN1, 1); GPIO.output(IN2, 0)
@@ -156,7 +169,7 @@ def motor_set(pwmA, pwmB, left_speed, right_speed):
         GPIO.output(IN1, 0); GPIO.output(IN2, 1)
     pwmA.ChangeDutyCycle(abs(ls))
 
-    # Right (Motor B)
+    # Right (Motor B) -> ENB/IN3/IN4
     rs = int(clamp(right_speed, -100, 100))
     if rs >= 0:
         GPIO.output(IN3, 1); GPIO.output(IN4, 0)
@@ -172,9 +185,8 @@ def motor_stop(pwmA, pwmB):
 
 
 def main():
-    # ----------------------------
-    # Picamera2 setup
-    # ----------------------------
+    global steer_prev
+
     cam = Picamera2()
     cam.configure(cam.create_video_configuration(
         main={"format": "BGR888", "size": (W, H)},
@@ -182,7 +194,6 @@ def main():
     ))
     cam.start()
 
-    # Motors
     pwmA, pwmB = setup_motors()
 
     selector = LineSelector(W)
@@ -201,10 +212,15 @@ def main():
             if frame is None:
                 break
 
-            # 1) ROI
+            # If colors look swapped in the displayed window, convert for visualization only
+            vis_src = frame
+            if FIX_DISPLAY_COLOR_SWAP:
+                # swap R<->B for correct imshow rendering if needed
+                vis_src = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+            # ROI (use original frame data; grayscale conversion is fine either way)
             roi = frame[ROI_START:H, :]
 
-            # 2) Preprocess + Otsu
             gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
@@ -215,11 +231,10 @@ def main():
             mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=1)
             mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
-            # 3) Choose correct line
             pick = selector.pick(mask)
 
             # Visualization
-            vis = frame.copy()
+            vis = vis_src.copy()
             cv2.rectangle(vis, (0, ROI_START), (W - 1, H - 1), (0, 255, 255), 2)
 
             y_look_roi = int(mask.shape[0] * LOOKAHEAD_Y_FRAC)
@@ -229,11 +244,8 @@ def main():
 
             if pick is None:
                 cv2.putText(vis, "LINE NOT FOUND", (10, 30), font, 0.9, (0, 0, 255), 2)
-
-                # safety stop if line lost for a bit
                 if (time.time() - last_line_time) > LINE_LOST_TIMEOUT_S:
                     motor_stop(pwmA, pwmB)
-
             else:
                 last_line_time = time.time()
 
@@ -246,33 +258,37 @@ def main():
                 gx_bottom = cx_bottom
                 gy_bottom = ROI_START + int(mask.shape[0] * 0.90)
 
-                # error normalized [-1, 1]
-                e = (cx_look - (W / 2)) / (W / 2)
+                # errors normalized [-1,1]
+                e_look = (cx_look - (W / 2)) / (W / 2)
+                e_bot  = (cx_bottom - (W / 2)) / (W / 2)
 
-                cv2.circle(vis, (gx_look, gy_look), 7, (0, 0, 255), -1)
-                cv2.circle(vis, (gx_bottom, gy_bottom), 7, (255, 0, 0), -1)
+                # Blend -> less anticipation (lookahead has small weight)
+                e = W_LOOK * e_look + W_BOTTOM * e_bot
+
+                cv2.circle(vis, (gx_look, gy_look), 7, (0, 0, 255), -1)       # red (now correct if swap fixed)
+                cv2.circle(vis, (gx_bottom, gy_bottom), 7, (255, 0, 0), -1)   # blue
                 cv2.line(vis, (W // 2, H - 1), (gx_look, gy_look), (255, 0, 0), 2)
 
-                cv2.putText(vis, f"cx_look={cx_look}  e={e:+.3f}", (10, 30),
-                            font, 0.9, (0, 255, 0), 2)
+                cv2.putText(vis, f"e_look={e_look:+.3f} e_bot={e_bot:+.3f} e={e:+.3f}", (10, 30),
+                            font, 0.7, (0, 255, 0), 2)
                 if SHOW_DEBUG:
-                    cv2.putText(vis, f"area={area}  ref={selector.cx_ref}", (10, 65),
+                    cv2.putText(vis, f"area={area} ref={selector.cx_ref}", (10, 60),
                                 font, 0.7, (255, 255, 255), 2)
 
-                # --- CONTROL: slow P-controller ---
+                # P-control on blended error (and filtered)
                 if abs(e) < DEADBAND:
-                    u = 0.0
+                    steer = 0.0
                 else:
-                    u = Kp * e  # u in roughly [-Kp..Kp]
+                    steer = Kp * e
 
-                left = BASE_SPEED - u
-                right = BASE_SPEED + u
+                # low-pass filter for smoother motion
+                steer = (1.0 - STEER_LPF_ALPHA) * steer_prev + STEER_LPF_ALPHA * steer
+                steer_prev = steer
 
-                # enforce slow caps and minimums
-                left = clamp(left, -MAX_SPEED, MAX_SPEED)
-                right = clamp(right, -MAX_SPEED, MAX_SPEED)
+                left = BASE_SPEED - steer
+                right = BASE_SPEED + steer
 
-                # keep it moving forward (no reverse) unless you want reverse turns:
+                # keep slow + forward only
                 left = clamp(left, MIN_SPEED, MAX_SPEED)
                 right = clamp(right, MIN_SPEED, MAX_SPEED)
 
