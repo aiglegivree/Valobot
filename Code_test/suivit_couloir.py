@@ -1,158 +1,260 @@
-# Corridor following using the SAME camera pattern as your working line-following code
-# (no Hough, no heavy GStreamer pipeline differences).
-#
-# Idea (lightweight):
-#   - Take bottom ROI
-#   - Compute vertical edge strength per column (Sobel d/dy) -> wall/floor boundary produces strong edges
-#   - Find strongest edge on left half and right half
-#   - Keep robot centered between them with PID
-#
-# Replace set_motors() with your real motor commands.
-
 import cv2
 import numpy as np
 import time
 
+# =========================
+# Camera / Image parameters
+# =========================
 CAM_ID = 0
 W, H = 640, 480
-ROI_START = int(H * 0.60)  # move up/down to “see” farther (smaller = farther)
+
+# ROI: bottom of image
+ROI_Y0 = int(H * 0.55)   # raise (e.g. 0.45) to "look further", lower (e.g. 0.65) to be more stable
+N_ROWS = 25              # number of scanlines sampled inside ROI
+MIN_CORRIDOR_WIDTH = 120 # px, rejects spurious detections
+
+# =========================
+# Segmentation parameters
+# =========================
+WALL_THRESH = 180        # grayscale threshold: bright = wall, dark = floor (tune!)
+OPEN_THRESH = 0.18       # opening score threshold for turn detection (tune 0.12..0.30)
+
+# Morphology (noise cleanup)
+OPEN_K = 5
+CLOSE_K = 7
+
+# =========================
+# Controller (steer output)
+# =========================
+# Steer is normalized to [-1, 1]
+Kp = 0.004
+Kd = 0.001
+Ki = 0.0
+
+# =========================
+# Turn state machine
+# =========================
+MODE_FOLLOW = 0
+MODE_TURN_L = 1
+MODE_TURN_R = 2
+
+MIN_TURN_TIME = 0.35     # seconds before allowing corridor reacquisition
+MAX_TURN_TIME = 2.0      # safety timeout
+REACQUIRE_FRAMES = 3     # number of consecutive "good corridor" frames to exit turn mode
+TURN_STEER = 0.85        # fixed steer magnitude during turns (tune 0.6..0.9)
+
+# Optional: slow down detection flicker by requiring corner condition for a few frames
+CORNER_CONFIRM_FRAMES = 2
+
+def clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
+
+def make_kernel(k: int) -> np.ndarray:
+    k = max(1, int(k))
+    if k % 2 == 0:
+        k += 1
+    return np.ones((k, k), np.uint8)
+
 cap = cv2.VideoCapture(CAM_ID)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
 
 if not cap.isOpened():
-    raise RuntimeError("Caméra non détectée")
+    raise RuntimeError("Camera not detected")
 
-# Control
-BASE_SPEED = 140      # 0..255
-MAX_CORR   = 110      # steering authority
-KP, KI, KD = 0.8, 0.0, 0.20
-ERR_ALPHA  = 0.35
-
-def clamp(x, lo, hi):
-    return lo if x < lo else hi if x > hi else x
-
-# KEEP YOUR MOTOR COMMANDS HERE
-def set_motors(left_pwm: int, right_pwm: int):
-    # Replace with your motor driver code
-    print(f"motors: L={left_pwm:4d}  R={right_pwm:4d}")
-
-def stop_motors():
-    set_motors(0, 0)
-
-def find_two_edges_from_strength(col_strength: np.ndarray):
-    """
-    Returns (x_left, x_right, quality)
-    - quality is a simple confidence metric (sum of peak strengths).
-    """
-    rw = col_strength.shape[0]
-    mid = rw // 2
-
-    left = col_strength[:mid]
-    right = col_strength[mid:]
-
-    xL = int(np.argmax(left)) if left.size > 0 else None
-    xR = int(np.argmax(right)) + mid if right.size > 0 else None
-
-    q = 0.0
-    if xL is not None:
-        q += float(left[xL])
-    if xR is not None and right.size > 0:
-        q += float(right[xR - mid])
-
-    return xL, xR, q
-
-integ = 0.0
 prev_err = 0.0
-err_f = 0.0
+err_i = 0.0
 prev_t = time.time()
 
-try:
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+mode = MODE_FOLLOW
+turn_start_t = 0.0
+reacquire_cnt = 0
+corner_cnt = 0
 
-        frame = cv2.resize(frame, (W, H))
+k_open = make_kernel(OPEN_K)
+k_close = make_kernel(CLOSE_K)
 
-        # 1) ROI (same style as your line-following)
-        roi = frame[ROI_START:H, :]
-        rh, rw = roi.shape[:2]
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
 
-        # 2) Preprocess (same spirit: gray + blur)
-        gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    frame = cv2.resize(frame, (W, H))
 
-        # 3) Vertical gradient (edge between wall/floor is a strong intensity change)
-        # Use dy to emphasize horizontal edges; then sum per column
-        dy = cv2.Sobel(gray, cv2.CV_16S, 0, 1, ksize=3)
-        abs_dy = cv2.convertScaleAbs(dy)
+    # -------------------------
+    # ROI extraction
+    # -------------------------
+    roi = frame[ROI_Y0:H, :].copy()
 
-        # Reduce noise: focus only on lower part of ROI (closer to robot)
-        band_y0 = int(rh * 0.35)
-        band = abs_dy[band_y0:rh, :]
+    # -------------------------
+    # Preprocess + segmentation
+    # -------------------------
+    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-        # Column edge strength
-        col_strength = band.sum(axis=0).astype(np.float32)
+    # walls: white (255), floor: black (0)
+    _, walls = cv2.threshold(gray, WALL_THRESH, 255, cv2.THRESH_BINARY)
 
-        # Smooth strength to avoid jitter
-        col_strength = cv2.GaussianBlur(col_strength.reshape(1, -1), (1, 31), 0).reshape(-1)
+    # clean mask
+    walls = cv2.morphologyEx(walls, cv2.MORPH_OPEN, k_open)
+    walls = cv2.morphologyEx(walls, cv2.MORPH_CLOSE, k_close)
 
-        xL, xR, quality = find_two_edges_from_strength(col_strength)
+    h_roi, w_roi = walls.shape
 
-        cx = rw * 0.5
-        have = (xL is not None) and (xR is not None) and (abs(xR - xL) > rw * 0.25)
+    # -------------------------
+    # Corridor center estimation
+    # -------------------------
+    rows = np.linspace(int(h_roi * 0.25), h_roi - 1, N_ROWS).astype(int)
 
-        if have:
-            center = 0.5 * (xL + xR)
+    midpoints = []
+    widths = []
+    debug = roi.copy()
+
+    for y in rows:
+        row = walls[y, :]
+
+        # left edge: first wall pixel from left
+        left_idx = np.argmax(row > 0)
+        if row[left_idx] == 0:
+            continue
+
+        # right edge: first wall pixel from right
+        right_rev = np.argmax(row[::-1] > 0)
+        right_idx = w_roi - 1 - right_rev
+        if row[right_idx] == 0:
+            continue
+
+        width = right_idx - left_idx
+        if width < MIN_CORRIDOR_WIDTH:
+            continue
+
+        mid = 0.5 * (left_idx + right_idx)
+        midpoints.append(mid)
+        widths.append(width)
+
+        # debug points
+        cv2.circle(debug, (left_idx, y), 3, (0, 255, 0), -1)
+        cv2.circle(debug, (right_idx, y), 3, (0, 255, 0), -1)
+        cv2.circle(debug, (int(mid), y), 3, (0, 0, 255), -1)
+
+    corridor_good = (len(midpoints) >= max(5, N_ROWS // 3))
+
+    if corridor_good:
+        mid_est = float(np.median(midpoints))
+        err = (mid_est - (w_roi / 2.0))  # + => corridor center is to the right
+    else:
+        err = prev_err  # hold last value
+
+    # -------------------------
+    # Opening detection for 90° turns
+    # -------------------------
+    # floor mask (white=floor)
+    floor = cv2.bitwise_not(walls)
+
+    # upper band (look-ahead region inside ROI)
+    y1 = int(h_roi * 0.15)
+    y2 = int(h_roi * 0.45)
+    band = floor[y1:y2, :]
+
+    left_floor = int(np.sum(band[:, :w_roi // 2] > 0))
+    right_floor = int(np.sum(band[:, w_roi // 2:] > 0))
+    den = max(1, left_floor + right_floor)
+    open_score = (right_floor - left_floor) / den  # + => opening right
+
+    # -------------------------
+    # PID terms (used in FOLLOW mode)
+    # -------------------------
+    now = time.time()
+    dt = max(1e-3, now - prev_t)
+    derr = (err - prev_err) / dt
+    err_i += err * dt
+
+    # -------------------------
+    # Turn state machine
+    # -------------------------
+    if mode == MODE_FOLLOW:
+        corner_condition = (abs(open_score) > OPEN_THRESH) and (not corridor_good)
+        if corner_condition:
+            corner_cnt += 1
         else:
-            center = cx  # fallback: go straight if detection weak
+            corner_cnt = 0
 
-        # 4) Control
-        err = (center - cx) / cx
-        err_f = (1 - ERR_ALPHA) * err_f + ERR_ALPHA * err
+        if corner_cnt >= CORNER_CONFIRM_FRAMES:
+            mode = MODE_TURN_R if open_score > 0 else MODE_TURN_L
+            turn_start_t = now
+            reacquire_cnt = 0
+            corner_cnt = 0
 
-        now = time.time()
-        dt = max(now - prev_t, 1e-3)
-        prev_t = now
+    else:
+        # TURN mode
+        if now - turn_start_t > MIN_TURN_TIME:
+            if corridor_good:
+                reacquire_cnt += 1
+            else:
+                reacquire_cnt = 0
 
-        integ += err_f * dt
-        deriv = (err_f - prev_err) / dt
-        prev_err = err_f
+            if reacquire_cnt >= REACQUIRE_FRAMES:
+                mode = MODE_FOLLOW
 
-        steer = KP * err_f + KI * integ + KD * deriv
+        # safety timeout
+        if now - turn_start_t > MAX_TURN_TIME:
+            mode = MODE_FOLLOW
+
+    # -------------------------
+    # Steer output
+    # -------------------------
+    if mode == MODE_FOLLOW:
+        steer = (Kp * err) + (Kd * derr) + (Ki * err_i)
         steer = clamp(steer, -1.0, 1.0)
+    elif mode == MODE_TURN_L:
+        steer = -TURN_STEER
+    else:  # MODE_TURN_R
+        steer = +TURN_STEER
 
-        corr = int(steer * MAX_CORR)
-        L = int(clamp(BASE_SPEED - corr, 0, 255))
-        R = int(clamp(BASE_SPEED + corr, 0, 255))
+    # Update for next loop
+    prev_err = err
+    prev_t = now
 
-        # If not confident, slow down a bit
-        if not have:
-            L = int(L * 0.7)
-            R = int(R * 0.7)
+    # -------------------------
+    # (Motor command placeholder)
+    # -------------------------
+    # Example mapping (commented):
+    # base_speed = 0.35
+    # gain = 0.30
+    # left_cmd = clamp(base_speed - gain * steer, 0.0, 1.0)
+    # right_cmd = clamp(base_speed + gain * steer, 0.0, 1.0)
+    # send_to_motors(left_cmd, right_cmd)
 
-        set_motors(L, R)
+    # -------------------------
+    # Debug overlays
+    # -------------------------
+    cx = w_roi // 2
+    cv2.line(debug, (cx, 0), (cx, h_roi - 1), (255, 0, 0), 2)  # image center
 
-        # Debug visualization (press q)
-        dbg = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-        # draw found edges and center
-        if xL is not None:
-            cv2.line(dbg, (xL, 0), (xL, rh - 1), (0, 255, 0), 2)
-        if xR is not None:
-            cv2.line(dbg, (xR, 0), (xR, rh - 1), (0, 255, 0), 2)
-        cv2.line(dbg, (int(cx), 0), (int(cx), rh - 1), (255, 0, 0), 2)
-        cv2.line(dbg, (int(center), 0), (int(center), rh - 1), (0, 0, 255), 2)
+    if corridor_good:
+        cv2.line(debug, (int(mid_est), 0), (int(mid_est), h_roi - 1), (0, 0, 255), 2)
 
-        cv2.putText(dbg, f"have={have} q={quality:.0f} err={err_f:.3f}", (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+    # show the band used for opening detection
+    cv2.rectangle(debug, (0, y1), (w_roi - 1, y2), (255, 255, 0), 2)
 
-        cv2.imshow("corridor ROI (gray)", dbg)
+    mode_str = {MODE_FOLLOW: "FOLLOW", MODE_TURN_L: "TURN_L", MODE_TURN_R: "TURN_R"}[mode]
+    cv2.putText(debug, f"mode={mode_str}", (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
+    cv2.putText(debug, f"err_px={err:.1f} steer={steer:.3f} mid_n={len(midpoints)}",
+                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
-finally:
-    stop_motors()
-    cap.release()
-    cv2.destroyAllWindows()
+    cv2.putText(debug, f"open_score={open_score:.2f} (L={left_floor} R={right_floor})",
+                (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+    cv2.imshow("frame", frame)
+    cv2.imshow("roi_debug", debug)
+    cv2.imshow("walls_mask", walls)
+    cv2.imshow("floor_mask", cv2.bitwise_not(walls))
+
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27 or key == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
