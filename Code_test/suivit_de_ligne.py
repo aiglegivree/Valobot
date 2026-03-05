@@ -8,7 +8,7 @@ from picamera2 import Picamera2
 # CONFIG (VISION)
 # ============================================================
 W, H = 640, 480
-ROI_START = int(H * 0.45)          # bigger ROI (see more); was 0.60
+ROI_START = int(H * 0.30)          # bigger ROI (see more); was 0.60
 LOOKAHEAD_Y_FRAC = 0.35            # inside ROI (0=top, 1=bottom)
 BAND_THICKNESS = 10
 MIN_AREA = 600
@@ -33,18 +33,18 @@ ENB, IN3, IN4 = 18, 23, 24
 PWM_FREQ = 1000
 
 # Slow speeds (0..100)
-BASE_SPEED = 20
-MAX_SPEED  = 30
-MIN_SPEED  = 18
+BASE_SPEED = 25
+MAX_SPEED  = 40
+MIN_SPEED  = 20
 
 # ============================================================
 # STEERING (less anticipation)
 # Blend bottom + lookahead errors (lookahead has small weight)
 # ============================================================
 DEADBAND = 0.05
-W_LOOK   = 0.15
-W_BOTTOM = 0.85
-Kp = 10.0
+W_LOOK   = 0.3
+W_BOTTOM = 0.7
+Kp = 5.0
 
 # Steering smoothing
 STEER_LPF_ALPHA = 0.35
