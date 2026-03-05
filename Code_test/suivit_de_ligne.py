@@ -25,18 +25,18 @@ SHOW_DEBUG = True
 # ENB -> GPIO13 (pin 33)  PWM
 # IN3 -> GPIO27 (pin 13)
 # IN4 -> GPIO22 (pin 15)
-ENA, IN1, IN2 = 18, 23, 24
-ENB, IN3, IN4 = 13, 27, 22
+ENA, IN1, IN2 = 13, 27, 22
+ENB, IN3, IN4 = 18, 23, 24
 
 PWM_FREQ = 1000
 
 # Speed limits (slow)
-BASE_SPEED = 28        # 0..100 (keep low)
-MAX_SPEED  = 40        # cap
+BASE_SPEED = 20       # 0..100 (keep low)
+MAX_SPEED  = 30        # cap
 MIN_SPEED  = 18        # helps overcome stiction
 
 # Steering gain (tune)
-Kp = 22                # bigger = turns more aggressively
+Kp = 2               # bigger = turns more aggressively
 DEADBAND = 0.05        # ignore tiny errors
 
 # If one motor is physically inverted, flip it here
