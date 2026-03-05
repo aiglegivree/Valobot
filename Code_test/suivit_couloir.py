@@ -8,31 +8,22 @@ from picamera2 import Picamera2
 # =========================
 W, H = 640, 480
 ROI_Y0 = int(H * 0.45)        # higher -> look further; lower -> more stable
-
-# Look-ahead line inside ROI (0..h_roi-1). Smaller => farther ahead
-LOOKAHEAD_Y_NORM = 0.35       # tune 0.25..0.55
+LOOKAHEAD_Y_NORM = 0.35       # smaller => farther ahead (0.25..0.55)
 
 # =========================
 # Edge / Hough parameters
 # =========================
-CANNY1 = 60
-CANNY2 = 140
+CANNY1 = 50
+CANNY2 = 130
 
 HOUGH_RHO = 1
 HOUGH_THETA = np.pi / 180
-HOUGH_THRESH = 60
-MIN_LINE_LEN = 60
-MAX_LINE_GAP = 25
+HOUGH_THRESH = 45
+MIN_LINE_LEN = 50
+MAX_LINE_GAP = 35
 
-# Reject near-horizontal clutter
-MIN_ABS_SLOPE = 0.35
-
-# =========================
-# Corridor width stabilization (auto-calibration)
-# =========================
-WIDTH_CALIB_SECONDS = 2.0     # first seconds to learn typical corridor width (px at look-ahead line)
-WIDTH_TOL = 0.35              # accept ±35% around learned width
-MIN_WIDTH_PX_FALLBACK = 80    # before calibration, require at least this many pixels
+# Reject near-horizontal clutter (keep, but not too strict)
+MIN_ABS_SLOPE = 0.25
 
 # =========================
 # Steering (normalized -1..1)
@@ -58,7 +49,6 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 def line_x_at_y(x1, y1, x2, y2, yq):
-    """Return x where the segment line crosses y=yq (using infinite line model)."""
     dy = (y2 - y1)
     dx = (x2 - x1)
     if abs(dy) < 1e-6:
@@ -67,7 +57,6 @@ def line_x_at_y(x1, y1, x2, y2, yq):
     return x1 + t * dx
 
 def robust_fit_x_at_y(lines, yq):
-    """Median of x intersections at yq."""
     xs = []
     for (x1, y1, x2, y2) in lines:
         x = line_x_at_y(x1, y1, x2, y2, yq)
@@ -100,13 +89,8 @@ turn_start_t = 0.0
 reacquire_cnt = 0
 corner_cnt = 0
 
-# Width calibration
-width_samples = []
-start_time = time.time()
-width_ref = None
-
 while True:
-    # Capture (RGB -> BGR for OpenCV)
+    # Capture
     frame_rgb = picam2.capture_array()
     frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
@@ -147,45 +131,36 @@ while True:
             if abs(slope) < MIN_ABS_SLOPE:
                 continue
 
-            # In image coordinates: y increases downward.
-            # Typically: left wall gives negative slope, right wall positive slope (often).
+            # classify by slope sign
             if slope < 0:
                 left_lines.append((x1, y1, x2, y2))
             else:
                 right_lines.append((x1, y1, x2, y2))
 
-    # Robust x positions at look-ahead row
+    # Robust x positions at look-ahead y
     x_left = robust_fit_x_at_y(left_lines, yq)
     x_right = robust_fit_x_at_y(right_lines, yq)
 
-    width_px = None
-    if (x_left is not None) and (x_right is not None):
-        width_px = float(x_right - x_left)
+    # "Good" corridor: both sides exist and are not crossing (loose condition)
+    corridor_good = (x_left is not None) and (x_right is not None) and ((x_right - x_left) > 60)
 
-    # Auto-calibrate expected width in pixels (first seconds)
-    elapsed = time.time() - start_time
-    if (width_px is not None) and (elapsed < WIDTH_CALIB_SECONDS):
-        if width_px > MIN_WIDTH_PX_FALLBACK:
-            width_samples.append(width_px)
-        if len(width_samples) >= 12:
-            width_ref = float(np.median(width_samples))
-
-    # Corridor validity with width gating
-    corridor_good_basic = (x_left is not None) and (x_right is not None) and (width_px is not None) and (width_px > MIN_WIDTH_PX_FALLBACK)
-
-    if width_ref is not None and width_px is not None:
-        corridor_good = corridor_good_basic and (abs(width_px - width_ref) <= WIDTH_TOL * width_ref)
-    else:
-        corridor_good = corridor_good_basic
-
-    # Error
     if corridor_good:
         x_mid = 0.5 * (x_left + x_right)
-        err = x_mid - (w_roi / 2.0)  # + => corridor center to the right
+        err = x_mid - (w_roi / 2.0)
     else:
-        err = prev_err
+        # If only one wall is visible, we still can produce a usable error by assuming a nominal corridor half-width in pixels.
+        # This helps avoid losing control when one wall detection drops.
+        NOMINAL_HALF_WIDTH_PX = 120  # tune once you see typical x_right-x_left in debug
+        if (x_left is not None) and (x_right is None):
+            x_mid = x_left + NOMINAL_HALF_WIDTH_PX
+            err = x_mid - (w_roi / 2.0)
+        elif (x_right is not None) and (x_left is None):
+            x_mid = x_right - NOMINAL_HALF_WIDTH_PX
+            err = x_mid - (w_roi / 2.0)
+        else:
+            err = prev_err
 
-    # PID (FOLLOW)
+    # PID
     now = time.time()
     dt = max(1e-3, now - prev_t)
     derr = (err - prev_err) / dt
@@ -197,10 +172,6 @@ while True:
 
     inferred_turn = None
     if not corridor_good:
-        # Heuristic:
-        # - If left wall missing but right exists => opening to LEFT => turn left
-        # - If right wall missing but left exists => opening to RIGHT => turn right
-        # - If both missing => keep turning in direction of previous error sign (fallback)
         if missing_left and (not missing_right):
             inferred_turn = MODE_TURN_L
         elif missing_right and (not missing_left):
@@ -218,22 +189,19 @@ while True:
             turn_start_t = now
             reacquire_cnt = 0
             corner_cnt = 0
-
     else:
-        # TURN mode: exit when corridor is reacquired
         if now - turn_start_t > MIN_TURN_TIME:
             if corridor_good:
                 reacquire_cnt += 1
             else:
                 reacquire_cnt = 0
-
             if reacquire_cnt >= REACQUIRE_FRAMES:
                 mode = MODE_FOLLOW
 
         if now - turn_start_t > MAX_TURN_TIME:
             mode = MODE_FOLLOW
 
-    # Steering output
+    # Steer output
     if mode == MODE_FOLLOW:
         steer = clamp((Kp * err) + (Kd * derr) + (Ki * err_i), -1.0, 1.0)
     elif mode == MODE_TURN_L:
@@ -254,46 +222,42 @@ while True:
     # send_to_motors(left_cmd, right_cmd)
 
     # -------------------------
-    # Debug drawing
+    # Debug
     # -------------------------
     debug = roi.copy()
 
-    # Draw Hough segments used
     for (x1, y1, x2, y2) in left_lines:
         cv2.line(debug, (x1, y1), (x2, y2), (0, 255, 0), 2)
     for (x1, y1, x2, y2) in right_lines:
         cv2.line(debug, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-    # Look-ahead line
     cv2.line(debug, (0, yq), (w_roi - 1, yq), (255, 255, 0), 2)
 
-    # Mark x_left / x_right / x_mid
     if x_left is not None:
         cv2.circle(debug, (int(x_left), yq), 6, (255, 0, 0), -1)
     if x_right is not None:
         cv2.circle(debug, (int(x_right), yq), 6, (255, 0, 0), -1)
-    if corridor_good:
-        cv2.circle(debug, (int(x_mid), yq), 7, (0, 0, 255), -1)
 
-    # Image center reference
+    if (x_left is not None) or (x_right is not None):
+        # draw estimated mid if computed
+        x_mid_draw = int((w_roi / 2.0) + err)
+        cv2.circle(debug, (x_mid_draw, yq), 7, (0, 0, 255), -1)
+
     cx = w_roi // 2
     cv2.line(debug, (cx, 0), (cx, h_roi - 1), (255, 0, 255), 2)
 
-    # Text overlays
     mode_str = {MODE_FOLLOW: "FOLLOW", MODE_TURN_L: "TURN_L", MODE_TURN_R: "TURN_R"}[mode]
-    cv2.putText(debug, f"mode={mode_str}", (10, 30),
+    cv2.putText(debug, f"mode={mode_str} good={corridor_good}", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.85, (255, 255, 255), 2)
 
-    cv2.putText(debug, f"good={corridor_good} err_px={err:.1f} steer={steer:.3f}",
+    wpx = None
+    if (x_left is not None) and (x_right is not None):
+        wpx = int(x_right - x_left)
+    cv2.putText(debug, f"xL={None if x_left is None else int(x_left)} xR={None if x_right is None else int(x_right)} width_px={wpx}",
                 (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
 
-    wpx_txt = "None" if width_px is None else str(int(width_px))
-    wref_txt = "None" if width_ref is None else str(int(width_ref))
-    cv2.putText(debug, f"width_px={wpx_txt} width_ref={wref_txt} tol={int(WIDTH_TOL*100)}%",
-                (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-
-    cv2.putText(debug, f"xL={None if x_left is None else int(x_left)} xR={None if x_right is None else int(x_right)}",
-                (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+    cv2.putText(debug, f"err_px={err:.1f} steer={steer:.3f}", (10, 85),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
 
     cv2.imshow("frame", frame)
     cv2.imshow("roi_debug", debug)
