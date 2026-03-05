@@ -1,32 +1,29 @@
+import time
 import cv2
 import numpy as np
-import time
+from picamera2 import Picamera2
 
 # =========================
-# Camera / Image parameters
+# Image / ROI parameters
 # =========================
-CAM_ID = 0
 W, H = 640, 480
 
-# ROI: bottom of image
-ROI_Y0 = int(H * 0.55)   # raise (e.g. 0.45) to "look further", lower (e.g. 0.65) to be more stable
-N_ROWS = 25              # number of scanlines sampled inside ROI
-MIN_CORRIDOR_WIDTH = 120 # px, rejects spurious detections
+ROI_Y0 = int(H * 0.55)     # raise -> look further, lower -> more stable
+N_ROWS = 25
+MIN_CORRIDOR_WIDTH = 120   # px
 
 # =========================
 # Segmentation parameters
 # =========================
-WALL_THRESH = 180        # grayscale threshold: bright = wall, dark = floor (tune!)
-OPEN_THRESH = 0.18       # opening score threshold for turn detection (tune 0.12..0.30)
+WALL_THRESH = 180          # bright=wall, dark=floor (tune!)
+OPEN_THRESH = 0.18         # turn opening score threshold (tune 0.12..0.30)
 
-# Morphology (noise cleanup)
 OPEN_K = 5
 CLOSE_K = 7
 
 # =========================
-# Controller (steer output)
+# Steering (normalized -1..1)
 # =========================
-# Steer is normalized to [-1, 1]
 Kp = 0.004
 Kd = 0.001
 Ki = 0.0
@@ -38,13 +35,11 @@ MODE_FOLLOW = 0
 MODE_TURN_L = 1
 MODE_TURN_R = 2
 
-MIN_TURN_TIME = 0.35     # seconds before allowing corridor reacquisition
-MAX_TURN_TIME = 2.0      # safety timeout
-REACQUIRE_FRAMES = 3     # number of consecutive "good corridor" frames to exit turn mode
-TURN_STEER = 0.85        # fixed steer magnitude during turns (tune 0.6..0.9)
-
-# Optional: slow down detection flicker by requiring corner condition for a few frames
-CORNER_CONFIRM_FRAMES = 2
+MIN_TURN_TIME = 0.35       # seconds
+MAX_TURN_TIME = 2.0        # seconds
+REACQUIRE_FRAMES = 3
+TURN_STEER = 0.85          # fixed steer during turn (tune 0.6..0.9)
+CORNER_CONFIRM_FRAMES = 2  # require corner condition for N frames to trigger
 
 def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
@@ -55,13 +50,20 @@ def make_kernel(k: int) -> np.ndarray:
         k += 1
     return np.ones((k, k), np.uint8)
 
-cap = cv2.VideoCapture(CAM_ID)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+# =========================
+# Picamera2 setup
+# =========================
+picam2 = Picamera2()
+config = picam2.create_preview_configuration(
+    main={"size": (W, H), "format": "RGB888"}
+)
+picam2.configure(config)
+picam2.start()
+time.sleep(0.4)
 
-if not cap.isOpened():
-    raise RuntimeError("Camera not detected")
-
+# =========================
+# Runtime state
+# =========================
 prev_err = 0.0
 err_i = 0.0
 prev_t = time.time()
@@ -75,11 +77,9 @@ k_open = make_kernel(OPEN_K)
 k_close = make_kernel(CLOSE_K)
 
 while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
-
-    frame = cv2.resize(frame, (W, H))
+    # Picamera2 gives RGB; convert to BGR for OpenCV display
+    frame_rgb = picam2.capture_array()
+    frame = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
     # -------------------------
     # ROI extraction
@@ -92,33 +92,27 @@ while True:
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # walls: white (255), floor: black (0)
+    # walls: white, floor: black
     _, walls = cv2.threshold(gray, WALL_THRESH, 255, cv2.THRESH_BINARY)
-
-    # clean mask
     walls = cv2.morphologyEx(walls, cv2.MORPH_OPEN, k_open)
     walls = cv2.morphologyEx(walls, cv2.MORPH_CLOSE, k_close)
 
     h_roi, w_roi = walls.shape
+    debug = roi.copy()
 
     # -------------------------
     # Corridor center estimation
     # -------------------------
     rows = np.linspace(int(h_roi * 0.25), h_roi - 1, N_ROWS).astype(int)
-
     midpoints = []
-    widths = []
-    debug = roi.copy()
 
     for y in rows:
         row = walls[y, :]
 
-        # left edge: first wall pixel from left
         left_idx = np.argmax(row > 0)
         if row[left_idx] == 0:
             continue
 
-        # right edge: first wall pixel from right
         right_rev = np.argmax(row[::-1] > 0)
         right_idx = w_roi - 1 - right_rev
         if row[right_idx] == 0:
@@ -130,28 +124,23 @@ while True:
 
         mid = 0.5 * (left_idx + right_idx)
         midpoints.append(mid)
-        widths.append(width)
 
-        # debug points
         cv2.circle(debug, (left_idx, y), 3, (0, 255, 0), -1)
         cv2.circle(debug, (right_idx, y), 3, (0, 255, 0), -1)
         cv2.circle(debug, (int(mid), y), 3, (0, 0, 255), -1)
 
     corridor_good = (len(midpoints) >= max(5, N_ROWS // 3))
-
     if corridor_good:
         mid_est = float(np.median(midpoints))
-        err = (mid_est - (w_roi / 2.0))  # + => corridor center is to the right
+        err = (mid_est - (w_roi / 2.0))  # + => corridor center to the right
     else:
-        err = prev_err  # hold last value
+        err = prev_err
 
     # -------------------------
-    # Opening detection for 90° turns
+    # Opening detection (90° turns)
     # -------------------------
-    # floor mask (white=floor)
     floor = cv2.bitwise_not(walls)
 
-    # upper band (look-ahead region inside ROI)
     y1 = int(h_roi * 0.15)
     y2 = int(h_roi * 0.45)
     band = floor[y1:y2, :]
@@ -162,7 +151,7 @@ while True:
     open_score = (right_floor - left_floor) / den  # + => opening right
 
     # -------------------------
-    # PID terms (used in FOLLOW mode)
+    # PID (FOLLOW mode)
     # -------------------------
     now = time.time()
     dt = max(1e-3, now - prev_t)
@@ -170,23 +159,18 @@ while True:
     err_i += err * dt
 
     # -------------------------
-    # Turn state machine
+    # State machine
     # -------------------------
     if mode == MODE_FOLLOW:
         corner_condition = (abs(open_score) > OPEN_THRESH) and (not corridor_good)
-        if corner_condition:
-            corner_cnt += 1
-        else:
-            corner_cnt = 0
+        corner_cnt = corner_cnt + 1 if corner_condition else 0
 
         if corner_cnt >= CORNER_CONFIRM_FRAMES:
             mode = MODE_TURN_R if open_score > 0 else MODE_TURN_L
             turn_start_t = now
             reacquire_cnt = 0
             corner_cnt = 0
-
     else:
-        # TURN mode
         if now - turn_start_t > MIN_TURN_TIME:
             if corridor_good:
                 reacquire_cnt += 1
@@ -196,32 +180,28 @@ while True:
             if reacquire_cnt >= REACQUIRE_FRAMES:
                 mode = MODE_FOLLOW
 
-        # safety timeout
         if now - turn_start_t > MAX_TURN_TIME:
             mode = MODE_FOLLOW
 
     # -------------------------
-    # Steer output
+    # Steering output
     # -------------------------
     if mode == MODE_FOLLOW:
-        steer = (Kp * err) + (Kd * derr) + (Ki * err_i)
-        steer = clamp(steer, -1.0, 1.0)
+        steer = clamp((Kp * err) + (Kd * derr) + (Ki * err_i), -1.0, 1.0)
     elif mode == MODE_TURN_L:
         steer = -TURN_STEER
-    else:  # MODE_TURN_R
+    else:
         steer = +TURN_STEER
 
-    # Update for next loop
     prev_err = err
     prev_t = now
 
     # -------------------------
-    # (Motor command placeholder)
+    # Motor command placeholder (commented)
     # -------------------------
-    # Example mapping (commented):
     # base_speed = 0.35
     # gain = 0.30
-    # left_cmd = clamp(base_speed - gain * steer, 0.0, 1.0)
+    # left_cmd  = clamp(base_speed - gain * steer, 0.0, 1.0)
     # right_cmd = clamp(base_speed + gain * steer, 0.0, 1.0)
     # send_to_motors(left_cmd, right_cmd)
 
@@ -229,12 +209,11 @@ while True:
     # Debug overlays
     # -------------------------
     cx = w_roi // 2
-    cv2.line(debug, (cx, 0), (cx, h_roi - 1), (255, 0, 0), 2)  # image center
+    cv2.line(debug, (cx, 0), (cx, h_roi - 1), (255, 0, 0), 2)
 
     if corridor_good:
         cv2.line(debug, (int(mid_est), 0), (int(mid_est), h_roi - 1), (0, 0, 255), 2)
 
-    # show the band used for opening detection
     cv2.rectangle(debug, (0, y1), (w_roi - 1, y2), (255, 255, 0), 2)
 
     mode_str = {MODE_FOLLOW: "FOLLOW", MODE_TURN_L: "TURN_L", MODE_TURN_R: "TURN_R"}[mode]
@@ -250,11 +229,10 @@ while True:
     cv2.imshow("frame", frame)
     cv2.imshow("roi_debug", debug)
     cv2.imshow("walls_mask", walls)
-    cv2.imshow("floor_mask", cv2.bitwise_not(walls))
 
     key = cv2.waitKey(1) & 0xFF
     if key == 27 or key == ord('q'):
         break
 
-cap.release()
 cv2.destroyAllWindows()
+picam2.stop()
