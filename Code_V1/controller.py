@@ -4,83 +4,78 @@ from dataclasses import dataclass
 import time
 
 from config import (
-    KP, KD, EMA_ALPHA, GATE_PX,
-    BASE_SPEED, MIN_SPEED, MAX_SPEED,
-    LOST_TIMEOUT_S, SEARCH_STEER, SEARCH_SPEED_FACTOR,
-    INVERT_STEER
+    W, BASE_SPEED, MIN_SPEED, MAX_SPEED,
+    W_LOOK, W_BOTTOM, KP, DEADBAND, STEER_LPF_ALPHA,
+    LINE_LOST_TIMEOUT_S, SEARCH_FORWARD,
+    SEARCH_STEER_START, SEARCH_STEER_MAX, SEARCH_RAMP_TIME
 )
 
-def _clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
+def clamp(x, lo, hi):
+    return lo if x < lo else hi if x > hi else x
 
 @dataclass
-class ControlOutput:
-    speed: float   # 0..100
-    steer: float   # -1..+1
-    state: str     # "SEEN" or "LOST"
-    e_used: float  # filtered / predicted error (px)
+class ControlOut:
+    left: float
+    right: float
+    state: str
+    e: float
+    steer: float
+    last_turn_sign: int
 
-class LineController:
-    def __init__(self) -> None:
-        self.e_filt = 0.0
-        self.e_prev = 0.0
-        self.last_time = time.time()
-
+class LineFollower:
+    def __init__(self):
         self.last_seen_time = time.time()
-        self.last_turn_sign = +1  # +1 right, -1 left
+        self.last_turn_sign = 1
         self.steer_prev = 0.0
 
-        self.state = "LOST"
-
-    def update(self, found: bool, e_meas: float) -> ControlOutput:
+    def update(self, pick) -> ControlOut:
         now = time.time()
-        dt = max(1e-3, now - self.last_time)
-        self.last_time = now
 
-        # Prediction is simply "keep last filtered value"
-        e_pred = self.e_filt
+        if pick is None:
+            # LINE LOST
+            lost_dt = now - self.last_seen_time
 
-        usable_meas = False
-        if found:
-            if abs(e_meas - e_pred) <= GATE_PX:
-                usable_meas = True
+            if lost_dt < LINE_LOST_TIMEOUT_S:
+                # hold last steering briefly
+                left = clamp(BASE_SPEED - self.steer_prev, MIN_SPEED, MAX_SPEED)
+                right = clamp(BASE_SPEED + self.steer_prev, MIN_SPEED, MAX_SPEED)
+                return ControlOut(left, right, "LOST_HOLD", 0.0, self.steer_prev, self.last_turn_sign)
 
-        if usable_meas:
-            # EMA filter
-            self.e_filt = (EMA_ALPHA * e_meas) + ((1.0 - EMA_ALPHA) * self.e_filt)
-            de = (self.e_filt - self.e_prev) / dt
-            self.e_prev = self.e_filt
+            # search ramp
+            r = clamp(lost_dt / SEARCH_RAMP_TIME, 0.0, 1.0)
+            steer_mag = SEARCH_STEER_START + r * (SEARCH_STEER_MAX - SEARCH_STEER_START)
+            steer = self.last_turn_sign * steer_mag
 
-            steer = (KP * self.e_filt) + (KD * de)
-            steer = _clamp(steer, -1.0, 1.0)
+            base = SEARCH_FORWARD  # 0 => turn in place
+            left = clamp(base - steer, -MAX_SPEED, MAX_SPEED)
+            right = clamp(base + steer, -MAX_SPEED, MAX_SPEED)
 
-            if INVERT_STEER:
-                steer = -steer
-
-            # update memory of turn direction
-            if steer > 0.05:
-                self.last_turn_sign = +1
-            elif steer < -0.05:
-                self.last_turn_sign = -1
-
-            self.last_seen_time = now
-            self.state = "SEEN"
-
-            speed = _clamp(BASE_SPEED, MIN_SPEED, MAX_SPEED)
             self.steer_prev = steer
-            return ControlOutput(speed=speed, steer=steer, state=self.state, e_used=self.e_filt)
+            return ControlOut(left, right, "SEARCH", 0.0, steer, self.last_turn_sign)
 
-        # LOST mode
-        t_lost = now - self.last_seen_time
-        self.state = "LOST"
+        # LINE FOUND
+        self.last_seen_time = now
 
-        steer = self.last_turn_sign * SEARCH_STEER
-        if t_lost > LOST_TIMEOUT_S:
-            steer = _clamp(steer * 1.25, -1.0, 1.0)
+        # normalized errors [-1, 1]
+        e_look = (pick.cx_look - (W / 2.0)) / (W / 2.0)
+        e_bot  = (pick.cx_bottom - (W / 2.0)) / (W / 2.0)
 
-        if INVERT_STEER:
-            steer = -steer
+        e = W_LOOK * e_look + W_BOTTOM * e_bot
 
-        speed = _clamp(BASE_SPEED * SEARCH_SPEED_FACTOR, MIN_SPEED, MAX_SPEED)
+        if abs(e) < DEADBAND:
+            steer = 0.0
+        else:
+            steer = KP * e
+
+        # LPF
+        steer = (1.0 - STEER_LPF_ALPHA) * self.steer_prev + STEER_LPF_ALPHA * steer
         self.steer_prev = steer
-        return ControlOutput(speed=speed, steer=steer, state=self.state, e_used=e_pred)
+
+        # remember turn direction for recovery
+        if abs(steer) > 1e-3:
+            self.last_turn_sign = 1 if steer > 0 else -1
+
+        left = clamp(BASE_SPEED - steer, MIN_SPEED, MAX_SPEED)
+        right = clamp(BASE_SPEED + steer, MIN_SPEED, MAX_SPEED)
+
+        return ControlOut(left, right, "TRACK", e, steer, self.last_turn_sign)

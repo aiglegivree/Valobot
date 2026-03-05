@@ -1,48 +1,50 @@
 # config.py
 
 # ---------------- Camera ----------------
-CAM_ID = 0  # pas utilisé si PiCam (Picamera2), mais ok de le garder
 W, H = 640, 480
+FPS = 60
 
-# ROI (fractions of image height)
-ROI_TOP_FRAC = 0.65
-ROI_BOT_FRAC = 1.00
+# ---------------- Vision ----------------
+ROI_START_FRAC = 0.30              # was 0.60; bigger ROI => see more
+LOOKAHEAD_Y_FRAC = 0.35            # inside ROI (0=top, 1=bottom)
+BAND_THICKNESS = 10
+MIN_AREA = 600
+INVERT_AFTER_OTSU = True
 
-# Thresholding / detection
-GAUSS_K = 5
-MIN_CONTOUR_AREA = 150
+# Morphology
+KERNEL_SIZE = 5
+MORPH_CLOSE_IT = 1
+MORPH_OPEN_IT = 1
 
 # ---------------- Control ----------------
-# speed scale 0..100 (% duty)
+# Speeds 0..100
 BASE_SPEED = 25
-MIN_SPEED = 0
-MAX_SPEED = 60
+MAX_SPEED  = 40
+MIN_SPEED  = 20
 
-# Steering output expected in [-1, +1]
-KP = 0.004
-KD = 0.000
+# Blend errors (normalized [-1, 1])
+DEADBAND = 0.05
+W_LOOK   = 0.3
+W_BOTTOM = 0.7
+KP = 5.0
 
-# EMA smoothing on error
-EMA_ALPHA = 0.35
+# Steering smoothing
+STEER_LPF_ALPHA = 0.35
 
-# Anti-jump gating (start large to avoid constant LOST)
-GATE_PX = 160
-
-# Line lost behavior
-LOST_TIMEOUT_S = 0.35
-SEARCH_STEER = 0.55
-SEARCH_SPEED_FACTOR = 0.55
+# ---------------- Line lost recovery ----------------
+LINE_LOST_TIMEOUT_S = 0.08   # after this, enter search
+SEARCH_FORWARD = 0.0         # 0 = turn in place (recommended for 90°)
+SEARCH_STEER_START = 10.0    # initial turning strength
+SEARCH_STEER_MAX = 30.0      # max turning strength
+SEARCH_RAMP_TIME = 0.40      # time to ramp to max
 
 # ---------------- Motors GPIO (BCM) ----------------
 ENA, IN1, IN2 = 13, 27, 22
 ENB, IN3, IN4 = 18, 23, 24
-
 PWM_FREQ = 1000
 
-# Motor trim (compensate mismatch). 1.0 = no change.
-LEFT_TRIM  = 1.00
-RIGHT_TRIM = 1.00
+INVERT_LEFT_MOTOR  = False
+INVERT_RIGHT_MOTOR = False
 
-# Direction fixes
-INVERT_STEER = False
-SWAP_MOTORS = False
+# Debug video
+SHOW_MASK_WINDOW = True

@@ -1,104 +1,98 @@
-# main.py  (Option A: local OpenCV window on the Raspberry Pi)
+# main.py
 from __future__ import annotations
-
 import time
 import cv2
+import numpy as np
 
-from config import W, H
-from camera import PiCam
-from vision import measure_line
-from controller import LineController
+from picamera2 import Picamera2
+
+from config import W, H, FPS, SHOW_MASK_WINDOW
+from vision import LineSelector, detect_line
+from controller import LineFollower
 from motors import MotorDriver
 
-
-def mix_speed_steer(speed: float, steer: float) -> tuple[float, float]:
-    """
-    Convert speed (0..100) + steer (-1..+1) to left/right speeds (-100..+100).
-    """
-    left = speed * (1.0 - steer)
-    right = speed * (1.0 + steer)
-    return left, right
-
-
-def main() -> None:
-    cam = PiCam(size=(W, H), fps=30)
+def main():
+    cam = Picamera2()
+    cam.configure(cam.create_video_configuration(
+        main={"format": "BGR888", "size": (W, H)},
+        controls={"FrameRate": int(FPS)}
+    ))
+    cam.start()
 
     motors = MotorDriver()
-    ctrl = LineController()
+    selector = LineSelector(W)
+    follower = LineFollower()
+    font = cv2.FONT_HERSHEY_SIMPLEX
 
     cv2.namedWindow("VALOBOT", cv2.WINDOW_NORMAL)
+    if SHOW_MASK_WINDOW:
+        cv2.namedWindow("MASK_ROI", cv2.WINDOW_NORMAL)
 
     fps_t0 = time.time()
     fps_n = 0
-    fps = 0.0
+    fps_val = 0.0
 
     try:
         while True:
-            ret, frame = cam.read()
-            if not ret or frame is None:
-                motors.stop()
-                time.sleep(0.01)
+            frame = cam.capture_array()
+            if frame is None:
                 continue
 
-            meas = measure_line(frame)
-            out = ctrl.update(meas.found, meas.e_px)
+            pick = detect_line(frame, selector)
+            out = follower.update(pick)
 
-            left, right = mix_speed_steer(out.speed, out.steer)
-            motors.set_speeds(left, right)
+            # Apply motors
+            motors.set_speeds(out.left, out.right)
 
-            # -------- Debug overlay --------
+            # ---- Visualization ----
+            vis = frame.copy()
+
+            # ROI rectangle
+            roi_start = int(H * 0.30)  # matches ROI_START_FRAC in config (keep in sync)
+            cv2.rectangle(vis, (0, roi_start), (W - 1, H - 1), (0, 255, 255), 2)
+
+            if pick is not None:
+                gx_look = pick.cx_look
+                gy_look = pick.roi_start + pick.y_look
+                gx_bottom = pick.cx_bottom
+                gy_bottom = pick.roi_start + int(pick.mask.shape[0] * 0.90)
+
+                cv2.circle(vis, (gx_look, gy_look), 7, (0, 0, 255), -1)
+                cv2.circle(vis, (gx_bottom, gy_bottom), 7, (255, 0, 0), -1)
+                cv2.line(vis, (W // 2, H - 1), (gx_look, gy_look), (255, 0, 0), 2)
+
+            cv2.putText(vis, f"state={out.state} e={out.e:+.3f} steer={out.steer:+.2f}", (10, 30),
+                        font, 0.8, (255, 255, 255), 2)
+            cv2.putText(vis, f"L={out.left:+.1f} R={out.right:+.1f} turn_sign={out.last_turn_sign}", (10, 60),
+                        font, 0.7, (255, 255, 255), 2)
+
+            # FPS
             fps_n += 1
-            if fps_n >= 15:
-                dt = time.time() - fps_t0
-                fps = fps_n / max(dt, 1e-6)
-                fps_t0 = time.time()
+            t = time.time()
+            if t - fps_t0 >= 0.5:
+                fps_val = fps_n / (t - fps_t0)
+                fps_t0 = t
                 fps_n = 0
+            cv2.putText(vis, f"FPS={fps_val:.1f}", (10, H - 15),
+                        font, 0.7, (255, 255, 255), 2)
 
-            h, w = frame.shape[:2]
+            cv2.imshow("VALOBOT", vis)
 
-            txt1 = f"state={out.state} speed={out.speed:.1f} steer={out.steer:.2f} fps={fps:.1f}"
-            txt2 = f"found={meas.found} e_px={meas.e_px:.1f} e_used={out.e_used:.1f}"
-
-            cv2.putText(frame, txt1, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
-            cv2.putText(frame, txt2, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
-
-            wr = meas.debug.get("white_ratio", None)
-            ar = meas.debug.get("area", None)
-            if wr is not None and ar is not None:
-                txt3 = f"white_ratio={wr:.3f} area={ar:.0f}"
-                cv2.putText(frame, txt3, (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255,255,255), 2)
-
-            # Image center line
-            cv2.line(frame, (w // 2, 0), (w // 2, h), (0, 255, 0), 1)
-
-            # If vision returned a binary debug image, show it in a small corner (optional)
-            bw = meas.debug.get("bw", None)
-            if bw is not None:
-                bw_bgr = cv2.cvtColor(bw, cv2.COLOR_GRAY2BGR)
-                bw_bgr = cv2.resize(bw_bgr, (w // 3, h // 3))
-                frame[0:bw_bgr.shape[0], 0:bw_bgr.shape[1]] = bw_bgr
-
-            txt1 = f"state={out.state}  speed={out.speed:.1f}  steer={out.steer:.2f}  fps={fps:.1f}"
-            txt2 = f"found={meas.found}  e_px={meas.e_px:.1f}  e_used={out.e_used:.1f}"
-            cv2.putText(frame, txt1, (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-            cv2.putText(frame, txt2, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-
-            cv2.imshow("VALOBOT", frame)
+            if SHOW_MASK_WINDOW and pick is not None:
+                cv2.imshow("MASK_ROI", pick.mask)
+            elif SHOW_MASK_WINDOW:
+                # show last computed mask even if lost (optional)
+                pass
 
             key = cv2.waitKey(1) & 0xFF
-            if key == ord('q'):
-                motors.stop()
+            if key == 27 or key == ord('q'):
                 break
 
     finally:
         motors.stop()
         motors.cleanup()
-        cam.close()
-        try:
-            cv2.destroyAllWindows()
-        except Exception:
-            pass
-
+        cam.stop()
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
