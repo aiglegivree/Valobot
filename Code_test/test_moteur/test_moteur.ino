@@ -1,12 +1,46 @@
 // Moteur A
-const int ENA = 5;   // PWM vitesse moteur A
-const int IN1 = 8;   // direction A
-const int IN2 = 9;   // direction A
+const int ENA = 5;   // PWM
+const int IN1 = 7;
+const int IN2 = 8;
 
 // Moteur B
-const int ENB = 6;   // PWM vitesse moteur B
-const int IN3 = 10;  // direction B
-const int IN4 = 11;  // direction B
+const int ENB = 6;   // PWM
+const int IN3 = 9;
+const int IN4 = 10;
+
+// Gains pour égaliser la vitesse (à régler)
+float gainA = 1.00;
+float gainB = 0.90;
+
+int clampPWM(int v) {
+  if (v < 0) return 0;
+  if (v > 255) return 255;
+  return v;
+}
+
+void setForward(int pwm) {
+  // Direction avant (à inverser si un moteur est monté à l'envers)
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+
+  int pwmA = clampPWM((int)(pwm * gainA));
+  int pwmB = clampPWM((int)(pwm * gainB));
+
+  analogWrite(ENA, pwmA);
+  analogWrite(ENB, pwmB);
+}
+
+void stopMotors() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+}
 
 void setup() {
   pinMode(ENA, OUTPUT);
@@ -17,71 +51,13 @@ void setup() {
   pinMode(IN3, OUTPUT);
   pinMode(IN4, OUTPUT);
 
-  // STOP initial des deux moteurs
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, LOW);
+  stopMotors();
 }
 
 void loop() {
-
-  // AVANT à 60% (les deux moteurs)
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH);
-  digitalWrite(IN4, LOW);
-  analogWrite(ENA, 150);
-  analogWrite(ENB, 150);
+  setForward(150);
   delay(2000);
 
-  // STOP
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
+  stopMotors();
   delay(1000);
-
-  // ARRIÈRE à 60% (les deux moteurs)
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, HIGH);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, HIGH);
-  analogWrite(ENA, 150);
-  analogWrite(ENB, 150);
-  delay(2000);
-
-  // STOP
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
-  delay(2000);
-
-  // ARRIÈRE à 20%
-  digitalWrite(IN1, LOW);
-  digitalWrite(IN2, HIGH);
-  digitalWrite(IN3, LOW);
-  digitalWrite(IN4, HIGH);
-  analogWrite(ENA, 100);  // 20% de 255
-  analogWrite(ENB, 100);
-  delay(2000);
-
-  // STOP final
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
-  delay(2000);
-
-  // Avant à 100%
-  digitalWrite(IN1, HIGH);
-  digitalWrite(IN2, LOW);
-  digitalWrite(IN3, HIGH);
-  digitalWrite(IN4, LOW);
-  analogWrite(ENA, 255);  // 100% de 255
-  analogWrite(ENB, 255);
-  delay(2000);
-
-  // STOP final
-  analogWrite(ENA, 0);
-  analogWrite(ENB, 0);
-  delay(2000);
 }
-

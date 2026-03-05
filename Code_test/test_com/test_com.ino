@@ -1,11 +1,11 @@
 // --------- Pins moteurs ----------
-const int ENA = 5;
-const int IN1 = 8;
-const int IN2 = 9;
+const int ENA = 3;
+const int IN1 = 4;
+const int IN2 = 5;
 
-const int ENB = 6;
-const int IN3 = 10;
-const int IN4 = 11;
+const int ENB = 4;
+const int IN3 = 6;
+const int IN4 = 7;
 
 void setMotor(int speed, int EN, int INa, int INb) {
   int pwm = abs(speed);
