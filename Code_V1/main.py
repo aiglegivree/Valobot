@@ -19,3 +19,31 @@ while True:
     left, right, speed, steer, mode = controller.update(vision)
 
     motors.set_speeds(left, right)
+
+    res = detect_line(frame)
+
+    dbg = draw_debug_slices(
+        frame_bgr=frame,
+        mask=res.mask,
+        roi_start=res.roi_start,
+        y_top=res.y_top,
+        y_mid=res.y_mid,
+        y_bot=res.y_bot,
+        cx_top=res.cx_top,
+        cx_mid=res.cx_mid,
+        cx_bot=res.cx_bot,
+        band_thickness=6
+    )
+
+    mask_dbg = draw_mask_slices(
+        mask=res.mask,
+        y_top=res.y_top,
+        y_mid=res.y_mid,
+        y_bot=res.y_bot,
+        cx_top=res.cx_top,
+        cx_mid=res.cx_mid,
+        cx_bot=res.cx_bot
+    )
+
+    cv2.imshow("camera debug", dbg)
+    cv2.imshow("mask debug", mask_dbg)

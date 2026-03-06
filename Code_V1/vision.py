@@ -168,3 +168,68 @@ def draw_debug(frame_bgr: np.ndarray, res: VisionResult) -> np.ndarray:
         cv2.circle(out, (res.cx_bot, roi_y0 + res.y_bot), 6, (0, 0, 255), -1)
 
     return out
+
+def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
+                      cx_top, cx_mid, cx_bot, band_thickness):
+    """
+    Affiche sur l'image :
+    - la ROI
+    - les 3 tranches
+    - les centres détectés pour chaque tranche
+    - le centre de l'image
+    """
+    out = frame_bgr.copy()
+    h_roi, w_roi = mask.shape
+
+    # rectangle ROI
+    cv2.rectangle(out, (0, roi_start), (w_roi - 1, roi_start + h_roi - 1), (0, 255, 255), 2)
+
+    # centre image
+    cx_ref = w_roi // 2
+    cv2.line(out, (cx_ref, roi_start), (cx_ref, roi_start + h_roi - 1), (255, 0, 0), 2)
+
+    # fonction locale pour dessiner une tranche
+    def draw_one_slice(y, cx, color, name):
+        yy = roi_start + y
+
+        # bande horizontale
+        y0 = max(roi_start, yy - band_thickness)
+        y1 = min(roi_start + h_roi - 1, yy + band_thickness)
+
+        cv2.rectangle(out, (0, y0), (w_roi - 1, y1), color, 1)
+        cv2.line(out, (0, yy), (w_roi - 1, yy), color, 1)
+
+        # centre détecté
+        if cx is not None:
+            cv2.circle(out, (cx, yy), 6, color, -1)
+            cv2.putText(out, f"{name}: {cx}", (10, yy - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        else:
+            cv2.putText(out, f"{name}: None", (10, yy - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+
+    draw_one_slice(y_top, cx_top, (0, 255, 0), "TOP")
+    draw_one_slice(y_mid, cx_mid, (0, 200, 255), "MID")
+    draw_one_slice(y_bot, cx_bot, (0, 0, 255), "BOT")
+
+    return out
+
+def draw_mask_slices(mask, y_top, y_mid, y_bot, cx_top, cx_mid, cx_bot):
+    """
+    Retourne une image couleur du masque pour visualiser les tranches.
+    """
+    vis = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+
+    def draw_one(y, cx, color):
+        cv2.line(vis, (0, y), (mask.shape[1] - 1, y), color, 1)
+        if cx is not None:
+            cv2.circle(vis, (cx, y), 5, color, -1)
+
+    draw_one(y_top, cx_top, (0, 255, 0))
+    draw_one(y_mid, cx_mid, (0, 200, 255))
+    draw_one(y_bot, cx_bot, (0, 0, 255))
+
+    cx_ref = mask.shape[1] // 2
+    cv2.line(vis, (cx_ref, 0), (cx_ref, mask.shape[0] - 1), (255, 0, 0), 1)
+
+    return vis
