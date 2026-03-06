@@ -1,5 +1,5 @@
 from camera import Camera
-from vision import detect_line
+from vision import detect_line,draw_debug_slices,draw_mask_slices
 from controller import Controller
 from motors import MotorDriver
 
