@@ -47,3 +47,8 @@ while True:
 
     cv2.imshow("camera debug", dbg)
     cv2.imshow("mask debug", mask_dbg)
+
+
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27 or key == ord('q'):
+        break
