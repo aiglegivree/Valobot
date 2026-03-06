@@ -2,14 +2,15 @@
 from __future__ import annotations
 import RPi.GPIO as GPIO
 
-# à adapter à ton câblage
-LEFT_EN = 12
-LEFT_IN1 = 5
-LEFT_IN2 = 6
 
-RIGHT_EN = 13
-RIGHT_IN1 = 20
-RIGHT_IN2 = 21
+
+LEFT_EN = 13
+LEFT_IN1 = 27
+LEFT_IN2 = 22
+
+RIGHT_EN = 18
+RIGHT_IN1 = 23
+RIGHT_IN2 = 24
 
 PWM_FREQ = 1000
 
