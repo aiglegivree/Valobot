@@ -27,9 +27,9 @@ SLICE_MID_FRAC = 0.50
 SLICE_BOT_FRAC = 0.95
 
 # poids pour l'erreur de steering
-W_TOP = 0.50
-W_MID = 0.30
-W_BOT = 0.20
+W_TOP = 0.0
+W_MID = 0.0
+W_BOT = 1.0
 
 # ============================================================
 # CONTROL
