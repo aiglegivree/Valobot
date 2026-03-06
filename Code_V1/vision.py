@@ -47,7 +47,8 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     gray = cv2.GaussianBlur(gray, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
 
     thresh_type = cv2.THRESH_BINARY_INV if USE_BINARY_INV else cv2.THRESH_BINARY
-    _, mask = cv2.threshold(gray, 0, 255, thresh_type + cv2.THRESH_OTSU)
+    THRESH = 120
+    _, mask = cv2.threshold( gray, THRESH, 255, cv2.THRESH_BINARY_INV)
 
     kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
