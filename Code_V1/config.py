@@ -1,50 +1,68 @@
 # config.py
 
-# ---------------- Camera ----------------
-W, H = 640, 480
-FPS = 60
+# ============================================================
+# CAMERA
+# ============================================================
+W = 640
+H = 480
 
-# ---------------- Vision ----------------
-ROI_START_FRAC = 0.30              # was 0.60; bigger ROI => see more
-LOOKAHEAD_Y_FRAC = 0.35            # inside ROI (0=top, 1=bottom)
-BAND_THICKNESS = 10
-MIN_AREA = 600
-INVERT_AFTER_OTSU = True
+# ============================================================
+# VISION
+# ============================================================
+ROI_START_FRAC = 0.50          # on traite seulement la moitié basse
+GAUSS_KSIZE = 5
 
-# Morphology
+# ligne noire sur fond blanc
+USE_BINARY_INV = True
+
 KERNEL_SIZE = 5
-MORPH_CLOSE_IT = 1
+MORPH_CLOSE_IT = 2
 MORPH_OPEN_IT = 1
 
-# ---------------- Control ----------------
-# Speeds 0..100
-BASE_SPEED = 25
-MAX_SPEED  = 40
-MIN_SPEED  = 20
+BAND_THICKNESS = 6
 
-# Blend errors (normalized [-1, 1])
-DEADBAND = 0.05
-W_LOOK   = 0.3
-W_BOTTOM = 0.7
-KP = 5.0
+# positions des 3 tranches dans la ROI
+SLICE_TOP_FRAC = 0.05
+SLICE_MID_FRAC = 0.50
+SLICE_BOT_FRAC = 0.95
 
-# Steering smoothing
-STEER_LPF_ALPHA = 0.35
+# poids pour l'erreur de steering
+W_TOP = 0.50
+W_MID = 0.30
+W_BOT = 0.20
 
-# ---------------- Line lost recovery ----------------
-LINE_LOST_TIMEOUT_S = 0.08   # after this, enter search
-SEARCH_FORWARD = 0.0         # 0 = turn in place (recommended for 90°)
-SEARCH_STEER_START = 10.0    # initial turning strength
-SEARCH_STEER_MAX = 30.0      # max turning strength
-SEARCH_RAMP_TIME = 0.40      # time to ramp to max
+# ============================================================
+# CONTROL
+# ============================================================
+STEER_SMOOTH_ALPHA = 0.35      # lissage de la commande
+STEER_DEADZONE = 5.0           # pour mettre à jour last_turn_sign
 
-# ---------------- Motors GPIO (BCM) ----------------
-ENA, IN1, IN2 = 13, 27, 22
-ENB, IN3, IN4 = 18, 23, 24
-PWM_FREQ = 1000
+# seuil à partir duquel on considère qu'on prépare un gros virage
+HARD_TURN_THRESH = 90.0
 
-INVERT_LEFT_MOTOR  = False
-INVERT_RIGHT_MOTOR = False
+# ============================================================
+# LOST LINE / STATES
+# ============================================================
+BLIND_TURN_FRAMES = 8          # nb de frames pendant lesquelles on continue à tourner
+SEARCH_FRAMES = 18             # au-delà -> mode recherche
 
-# Debug video
-SHOW_MASK_WINDOW = True
+BLIND_TURN_STEER = 0.85        # steering forcé pendant blind turn
+SEARCH_TURN_STEER = 0.60       # steering forcé pendant recherche
+
+# ============================================================
+# SPEED
+# ============================================================
+BASE_SPEED = 0.42              # 0..1
+TURN_SPEED = 0.34              # gros virage
+BLIND_SPEED = 0.28             # pendant perte ligne
+SEARCH_SPEED = 0.22            # recherche
+
+# mix steering -> roues
+STEER_GAIN = 0.90              # influence du steering sur left/right
+
+# ============================================================
+# DEBUG
+# ============================================================
+SHOW_DEBUG = True
+CAM_ID = 0
+USE_PICAMERA2 = True           # True si tu utilises la PiCam avec Picamera2

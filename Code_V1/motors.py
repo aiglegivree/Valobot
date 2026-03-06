@@ -1,81 +1,66 @@
 # motors.py
-
+from __future__ import annotations
 import RPi.GPIO as GPIO
-from config import (
-    ENA, IN1, IN2,
-    ENB, IN3, IN4,
-    PWM_FREQ,
-    INVERT_LEFT_MOTOR,
-    INVERT_RIGHT_MOTOR
-)
 
+# à adapter à ton câblage
+LEFT_EN = 12
+LEFT_IN1 = 5
+LEFT_IN2 = 6
 
-def clamp(x, lo, hi):
-    return lo if x < lo else hi if x > hi else x
+RIGHT_EN = 13
+RIGHT_IN1 = 20
+RIGHT_IN2 = 21
+
+PWM_FREQ = 1000
+
+LEFT_TRIM = 1.00
+RIGHT_TRIM = 1.00
 
 
 class MotorDriver:
-
     def __init__(self):
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
 
-        for p in [ENA, IN1, IN2, ENB, IN3, IN4]:
-            GPIO.setup(p, GPIO.OUT)
-            GPIO.output(p, GPIO.LOW)
+        for pin in [LEFT_EN, LEFT_IN1, LEFT_IN2, RIGHT_EN, RIGHT_IN1, RIGHT_IN2]:
+            GPIO.setup(pin, GPIO.OUT)
 
-        self.pwmA = GPIO.PWM(ENA, PWM_FREQ)
-        self.pwmB = GPIO.PWM(ENB, PWM_FREQ)
+        self.pwm_left = GPIO.PWM(LEFT_EN, PWM_FREQ)
+        self.pwm_right = GPIO.PWM(RIGHT_EN, PWM_FREQ)
+        self.pwm_left.start(0)
+        self.pwm_right.start(0)
 
-        self.pwmA.start(0)
-        self.pwmB.start(0)
+        self.stop()
 
-    def set_speeds(self, left_speed, right_speed):
-        """
-        left_speed, right_speed in range [-100 .. 100]
-        sign = direction
-        magnitude = PWM duty
-        """
+    def _set_one(self, pwm, in1, in2, value: float):
+        value = max(-1.0, min(1.0, value))
+        duty = abs(value) * 100.0
 
-        if INVERT_LEFT_MOTOR:
-            left_speed = -left_speed
-
-        if INVERT_RIGHT_MOTOR:
-            right_speed = -right_speed
-
-        # ----- LEFT MOTOR -----
-        ls = int(clamp(left_speed, -100, 100))
-
-        if ls >= 0:
-            GPIO.output(IN1, 1)
-            GPIO.output(IN2, 0)
+        if value > 0:
+            GPIO.output(in1, GPIO.HIGH)
+            GPIO.output(in2, GPIO.LOW)
+        elif value < 0:
+            GPIO.output(in1, GPIO.LOW)
+            GPIO.output(in2, GPIO.HIGH)
         else:
-            GPIO.output(IN1, 0)
-            GPIO.output(IN2, 1)
+            GPIO.output(in1, GPIO.LOW)
+            GPIO.output(in2, GPIO.LOW)
 
-        self.pwmA.ChangeDutyCycle(abs(ls))
+        pwm.ChangeDutyCycle(duty)
 
-        # ----- RIGHT MOTOR -----
-        rs = int(clamp(right_speed, -100, 100))
+    def set_speeds(self, left: float, right: float):
+        left *= LEFT_TRIM
+        right *= RIGHT_TRIM
 
-        if rs >= 0:
-            GPIO.output(IN3, 1)
-            GPIO.output(IN4, 0)
-        else:
-            GPIO.output(IN3, 0)
-            GPIO.output(IN4, 1)
-
-        self.pwmB.ChangeDutyCycle(abs(rs))
+        self._set_one(self.pwm_left, LEFT_IN1, LEFT_IN2, left)
+        self._set_one(self.pwm_right, RIGHT_IN1, RIGHT_IN2, right)
 
     def stop(self):
-        self.pwmA.ChangeDutyCycle(0)
-        self.pwmB.ChangeDutyCycle(0)
-
-        GPIO.output(IN1, 0)
-        GPIO.output(IN2, 0)
-        GPIO.output(IN3, 0)
-        GPIO.output(IN4, 0)
+        self._set_one(self.pwm_left, LEFT_IN1, LEFT_IN2, 0.0)
+        self._set_one(self.pwm_right, RIGHT_IN1, RIGHT_IN2, 0.0)
 
     def cleanup(self):
         self.stop()
+        self.pwm_left.stop()
+        self.pwm_right.stop()
         GPIO.cleanup()

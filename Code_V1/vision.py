@@ -5,103 +5,49 @@ import cv2
 import numpy as np
 
 from config import (
-    W, H,
-    ROI_START_FRAC, LOOKAHEAD_Y_FRAC, BAND_THICKNESS,
-    MIN_AREA, INVERT_AFTER_OTSU,
-    KERNEL_SIZE, MORPH_CLOSE_IT, MORPH_OPEN_IT
+    H, W,
+    ROI_START_FRAC, GAUSS_KSIZE, USE_BINARY_INV,
+    KERNEL_SIZE, MORPH_CLOSE_IT, MORPH_OPEN_IT,
+    BAND_THICKNESS,
+    SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
+    W_TOP, W_MID, W_BOT
 )
 
+
 @dataclass
-class LinePick:
-    cx_bottom: int
-    cx_look: int
-    area: int
-    y_look: int          # y in ROI coordinates
-    roi_start: int       # y offset in full image
-    mask: np.ndarray     # binary mask of ROI
+class VisionResult:
+    cx_top: int | None
+    cx_mid: int | None
+    cx_bot: int | None
 
-class LineSelector:
-    def __init__(self, w: int):
-        self.w = w
-        self.cx_ref = w // 2
+    err_top: float
+    err_mid: float
+    err_bot: float
+    steer_error: float
 
-    def pick(self, mask: np.ndarray) -> dict | None:
-        num, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-        if num <= 1:
-            return None
+    seen_top: bool
+    seen_mid: bool
+    seen_bot: bool
+    any_seen: bool
+    all_seen: bool
 
-        h, w = mask.shape
-        y_la = int(h * LOOKAHEAD_Y_FRAC)
-        y0 = max(0, y_la - BAND_THICKNESS)
-        y1 = min(h, y_la + BAND_THICKNESS)
+    roi_start: int
+    y_top: int
+    y_mid: int
+    y_bot: int
 
-        best = None  # (score, comp_id, cx_bottom, cx_look, area)
+    mask: np.ndarray
 
-        for i in range(1, num):
-            area = int(stats[i, cv2.CC_STAT_AREA])
-            if area < MIN_AREA:
-                continue
-
-            comp = (labels == i).astype(np.uint8)
-
-            # bottom slice centroid
-            yb0 = int(h * 0.80)
-            bottom = comp[yb0:h, :]
-            if bottom.sum() == 0:
-                continue
-            _, xs_b = np.where(bottom > 0)
-            cx_bottom = int(xs_b.mean())
-
-            # lookahead band centroid
-            band = comp[y0:y1, :]
-            if band.sum() == 0:
-                cx_look = cx_bottom
-                miss_penalty = 1.0
-            else:
-                _, xs_l = np.where(band > 0)
-                cx_look = int(xs_l.mean())
-                miss_penalty = 0.0
-
-            score = (
-                1.5 * abs(cx_look - self.cx_ref) +
-                0.7 * abs(cx_bottom - self.cx_ref) +
-                500.0 * miss_penalty -
-                0.002 * area
-            )
-
-            if (best is None) or (score < best[0]):
-                best = (score, i, cx_bottom, cx_look, area)
-
-        if best is None:
-            return None
-
-        _, comp_id, cx_bottom, cx_look, area = best
-
-        # continuity (EMA)
-        alpha = 0.35
-        self.cx_ref = int((1 - alpha) * self.cx_ref + alpha * cx_look)
-
-        return {
-            "comp_id": comp_id,
-            "cx_bottom": cx_bottom,
-            "cx_look": cx_look,
-            "area": area,
-            "y_look": int(mask.shape[0] * LOOKAHEAD_Y_FRAC),
-        }
 
 def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
-    """
-    Returns (mask, roi_start_y) where mask is binary uint8 (0/255) in ROI coordinates.
-    """
     roi_start = int(H * ROI_START_FRAC)
     roi = frame_bgr[roi_start:H, :]
 
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (5, 5), 0)
+    gray = cv2.GaussianBlur(gray, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
 
-    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    if INVERT_AFTER_OTSU:
-        mask = 255 - mask
+    thresh_type = cv2.THRESH_BINARY_INV if USE_BINARY_INV else cv2.THRESH_BINARY
+    _, mask = cv2.threshold(gray, 0, 255, thresh_type + cv2.THRESH_OTSU)
 
     kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
@@ -109,17 +55,116 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
 
     return mask, roi_start
 
-def detect_line(frame_bgr: np.ndarray, selector: LineSelector) -> LinePick | None:
-    mask, roi_start = compute_mask_from_frame(frame_bgr)
-    pick = selector.pick(mask)
-    if pick is None:
-        return None
 
-    return LinePick(
-        cx_bottom=int(pick["cx_bottom"]),
-        cx_look=int(pick["cx_look"]),
-        area=int(pick["area"]),
-        y_look=int(pick["y_look"]),
-        roi_start=int(roi_start),
+def get_band_center(mask: np.ndarray, y_frac: float, thickness: int) -> tuple[int | None, int]:
+    h, w = mask.shape
+    y = int(h * y_frac)
+
+    y0 = max(0, y - thickness)
+    y1 = min(h, y + thickness + 1)
+
+    band = mask[y0:y1, :]
+    ys, xs = np.where(band > 0)
+
+    if xs.size == 0:
+        return None, y
+
+    cx = int(xs.mean())
+    return cx, y
+
+
+def detect_line(frame_bgr: np.ndarray) -> VisionResult:
+    mask, roi_start = compute_mask_from_frame(frame_bgr)
+
+    h, w = mask.shape
+    cx_ref = w // 2
+
+    cx_top, y_top = get_band_center(mask, SLICE_TOP_FRAC, BAND_THICKNESS)
+    cx_mid, y_mid = get_band_center(mask, SLICE_MID_FRAC, BAND_THICKNESS)
+    cx_bot, y_bot = get_band_center(mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+
+    seen_top = cx_top is not None
+    seen_mid = cx_mid is not None
+    seen_bot = cx_bot is not None
+
+    any_seen = seen_top or seen_mid or seen_bot
+    all_seen = seen_top and seen_mid and seen_bot
+
+    # fallback local pour calculer une erreur même si une tranche manque
+    if cx_bot is None and cx_mid is not None:
+        cx_bot_use = cx_mid
+    elif cx_bot is None and cx_top is not None:
+        cx_bot_use = cx_top
+    elif cx_bot is None:
+        cx_bot_use = cx_ref
+    else:
+        cx_bot_use = cx_bot
+
+    if cx_mid is None:
+        cx_mid_use = cx_bot_use
+    else:
+        cx_mid_use = cx_mid
+
+    if cx_top is None:
+        cx_top_use = cx_mid_use
+    else:
+        cx_top_use = cx_top
+
+    err_top = float(cx_top_use - cx_ref)
+    err_mid = float(cx_mid_use - cx_ref)
+    err_bot = float(cx_bot_use - cx_ref)
+
+    steer_error = (
+        W_TOP * err_top +
+        W_MID * err_mid +
+        W_BOT * err_bot
+    )
+
+    return VisionResult(
+        cx_top=cx_top,
+        cx_mid=cx_mid,
+        cx_bot=cx_bot,
+        err_top=err_top,
+        err_mid=err_mid,
+        err_bot=err_bot,
+        steer_error=steer_error,
+        seen_top=seen_top,
+        seen_mid=seen_mid,
+        seen_bot=seen_bot,
+        any_seen=any_seen,
+        all_seen=all_seen,
+        roi_start=roi_start,
+        y_top=y_top,
+        y_mid=y_mid,
+        y_bot=y_bot,
         mask=mask
     )
+
+
+def draw_debug(frame_bgr: np.ndarray, res: VisionResult) -> np.ndarray:
+    out = frame_bgr.copy()
+    h_roi, w_roi = res.mask.shape
+    roi_y0 = res.roi_start
+    roi_y1 = roi_y0 + h_roi
+
+    # rectangle ROI
+    cv2.rectangle(out, (0, roi_y0), (w_roi - 1, roi_y1 - 1), (0, 255, 255), 2)
+
+    # centre image
+    cx_ref = w_roi // 2
+    cv2.line(out, (cx_ref, roi_y0), (cx_ref, roi_y1 - 1), (255, 0, 0), 2)
+
+    # lignes des tranches
+    for y in [res.y_top, res.y_mid, res.y_bot]:
+        yy = roi_y0 + y
+        cv2.line(out, (0, yy), (w_roi - 1, yy), (180, 180, 180), 1)
+
+    # points détectés
+    if res.cx_top is not None:
+        cv2.circle(out, (res.cx_top, roi_y0 + res.y_top), 6, (0, 255, 0), -1)
+    if res.cx_mid is not None:
+        cv2.circle(out, (res.cx_mid, roi_y0 + res.y_mid), 6, (0, 200, 255), -1)
+    if res.cx_bot is not None:
+        cv2.circle(out, (res.cx_bot, roi_y0 + res.y_bot), 6, (0, 0, 255), -1)
+
+    return out

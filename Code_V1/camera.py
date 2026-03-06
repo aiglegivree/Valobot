@@ -1,35 +1,54 @@
 # camera.py
 from __future__ import annotations
-import time
-import numpy as np
+import cv2
+from config import W, H, CAM_ID, USE_PICAMERA2
 
-from picamera2 import Picamera2
 
-class PiCam:
-    def __init__(self, size=(640, 480), fps=30):
-        self.size = tuple(size)
-        self.fps = int(fps)
+class Camera:
 
-        self.picam2 = Picamera2()
-        cfg = self.picam2.create_video_configuration(
-            main={"size": self.size, "format": "RGB888"},
-            controls={"FrameRate": self.fps}
-        )
-        self.picam2.configure(cfg)
-        self.picam2.start()
-        time.sleep(0.3)
+    def __init__(self):
 
-    def read(self) -> tuple[bool, np.ndarray | None]:
-        # returns (ok, frame_bgr)
-        frame_rgb = self.picam2.capture_array()
-        if frame_rgb is None:
-            return False, None
-        # Convert RGB->BGR without cv2 dependency here:
-        frame_bgr = frame_rgb[:, :, ::-1].copy()
-        return True, frame_bgr
+        if USE_PICAMERA2:
 
-    def close(self) -> None:
-        try:
-            self.picam2.stop()
-        except Exception:
-            pass
+            from picamera2 import Picamera2
+
+            self.cam = Picamera2()
+            self.cam.configure(
+                self.cam.create_preview_configuration(
+                    main={"size": (W, H), "format": "RGB888"}
+                )
+            )
+
+            self.cam.start()
+            self.type = "picamera2"
+
+        else:
+
+            cap = cv2.VideoCapture(CAM_ID)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+
+            if not cap.isOpened():
+                raise RuntimeError("Camera not found")
+
+            self.cam = cap
+            self.type = "opencv"
+
+    def read(self):
+
+        if self.type == "picamera2":
+
+            frame = self.cam.capture_array()
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+
+            return True, frame
+
+        else:
+
+            ret, frame = self.cam.read()
+            return ret, frame
+
+    def release(self):
+
+        if self.type == "opencv":
+            self.cam.release()

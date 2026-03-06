@@ -1,81 +1,135 @@
 # controller.py
 from __future__ import annotations
-from dataclasses import dataclass
-import time
+import numpy as np
 
 from config import (
-    W, BASE_SPEED, MIN_SPEED, MAX_SPEED,
-    W_LOOK, W_BOTTOM, KP, DEADBAND, STEER_LPF_ALPHA,
-    LINE_LOST_TIMEOUT_S, SEARCH_FORWARD,
-    SEARCH_STEER_START, SEARCH_STEER_MAX, SEARCH_RAMP_TIME
+    W,
+    BASE_SPEED, TURN_SPEED, BLIND_SPEED, SEARCH_SPEED,
+    STEER_GAIN, STEER_SMOOTH_ALPHA, STEER_DEADZONE,
+    HARD_TURN_THRESH,
+    BLIND_TURN_FRAMES, SEARCH_FRAMES,
+    BLIND_TURN_STEER, SEARCH_TURN_STEER
 )
 
-def clamp(x, lo, hi):
-    return lo if x < lo else hi if x > hi else x
 
-@dataclass
-class ControlOut:
-    left: float
-    right: float
-    state: str
-    e: float
-    steer: float
-    last_turn_sign: int
+def clamp(x: float, lo: float, hi: float) -> float:
+    return max(lo, min(hi, x))
 
-class LineFollower:
+
+def smooth(prev: float, target: float, alpha: float) -> float:
+    return (1 - alpha) * prev + alpha * target
+
+
+def normalize_error(err_px: float) -> float:
+    half = max(W / 2, 1)
+    return clamp(err_px / half, -1.0, 1.0)
+
+
+def steering_to_wheels(speed: float, steer: float):
+    steer = clamp(steer, -1.0, 1.0)
+
+    left = speed - STEER_GAIN * steer
+    right = speed + STEER_GAIN * steer
+
+    return clamp(left, -1, 1), clamp(right, -1, 1)
+
+
+class Controller:
+
     def __init__(self):
-        self.last_seen_time = time.time()
+        self.mode = "TRACK"
+
+        self.steer_cmd = 0.0
+        self.last_good_steer = 0.0
         self.last_turn_sign = 1
-        self.steer_prev = 0.0
 
-    def update(self, pick) -> ControlOut:
-        now = time.time()
+        self.lost_count = 0
+        self.hard_turn_pending = False
 
-        if pick is None:
-            # LINE LOST
-            lost_dt = now - self.last_seen_time
+    def update(self, vision_result):
 
-            if lost_dt < LINE_LOST_TIMEOUT_S:
-                # hold last steering briefly
-                left = clamp(BASE_SPEED - self.steer_prev, MIN_SPEED, MAX_SPEED)
-                right = clamp(BASE_SPEED + self.steer_prev, MIN_SPEED, MAX_SPEED)
-                return ControlOut(left, right, "LOST_HOLD", 0.0, self.steer_prev, self.last_turn_sign)
+        # ------------------------------------------------
+        # LINE VISIBLE
+        # ------------------------------------------------
+        if vision_result.any_seen:
 
-            # search ramp
-            r = clamp(lost_dt / SEARCH_RAMP_TIME, 0.0, 1.0)
-            steer_mag = SEARCH_STEER_START + r * (SEARCH_STEER_MAX - SEARCH_STEER_START)
-            steer = self.last_turn_sign * steer_mag
+            self.mode = "TRACK"
+            self.lost_count = 0
 
-            base = SEARCH_FORWARD  # 0 => turn in place
-            left = clamp(base - steer, -MAX_SPEED, MAX_SPEED)
-            right = clamp(base + steer, -MAX_SPEED, MAX_SPEED)
+            steer_target = normalize_error(vision_result.steer_error)
 
-            self.steer_prev = steer
-            return ControlOut(left, right, "SEARCH", 0.0, steer, self.last_turn_sign)
+            # detect strong turn
+            if abs(vision_result.steer_error) > HARD_TURN_THRESH:
+                self.hard_turn_pending = True
+            else:
+                self.hard_turn_pending = False
 
-        # LINE FOUND
-        self.last_seen_time = now
+            # smooth command
+            self.steer_cmd = smooth(
+                self.steer_cmd,
+                steer_target,
+                STEER_SMOOTH_ALPHA
+            )
 
-        # normalized errors [-1, 1]
-        e_look = (pick.cx_look - (W / 2.0)) / (W / 2.0)
-        e_bot  = (pick.cx_bottom - (W / 2.0)) / (W / 2.0)
+            self.last_good_steer = self.steer_cmd
 
-        e = W_LOOK * e_look + W_BOTTOM * e_bot
+            # update turn direction
+            if vision_result.steer_error > STEER_DEADZONE:
+                self.last_turn_sign = +1
+            elif vision_result.steer_error < -STEER_DEADZONE:
+                self.last_turn_sign = -1
 
-        if abs(e) < DEADBAND:
-            steer = 0.0
+            if abs(self.steer_cmd) > 0.55:
+                speed = TURN_SPEED
+            else:
+                speed = BASE_SPEED
+
+        # ------------------------------------------------
+        # LINE LOST
+        # ------------------------------------------------
         else:
-            steer = KP * e
 
-        # LPF
-        steer = (1.0 - STEER_LPF_ALPHA) * self.steer_prev + STEER_LPF_ALPHA * steer
-        self.steer_prev = steer
+            self.lost_count += 1
 
-        # remember turn direction for recovery
-        if abs(steer) > 1e-3:
-            self.last_turn_sign = 1 if steer > 0 else -1
+            if self.lost_count <= BLIND_TURN_FRAMES:
 
-        left = clamp(BASE_SPEED - steer, MIN_SPEED, MAX_SPEED)
-        right = clamp(BASE_SPEED + steer, MIN_SPEED, MAX_SPEED)
+                self.mode = "BLIND_TURN"
 
-        return ControlOut(left, right, "TRACK", e, steer, self.last_turn_sign)
+                remembered = self.last_good_steer
+                forced = self.last_turn_sign * BLIND_TURN_STEER
+
+                if np.sign(remembered) == np.sign(forced):
+                    if abs(remembered) < abs(forced):
+                        steer_target = forced
+                    else:
+                        steer_target = remembered
+                else:
+                    steer_target = forced
+
+                self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.45)
+
+                speed = BLIND_SPEED
+
+            elif self.lost_count <= SEARCH_FRAMES:
+
+                self.mode = "SEARCH"
+
+                steer_target = self.last_turn_sign * SEARCH_TURN_STEER
+
+                self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.25)
+
+                speed = SEARCH_SPEED
+
+            else:
+
+                self.mode = "SEARCH"
+
+                steer_target = self.last_turn_sign * SEARCH_TURN_STEER
+
+                self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.18)
+
+                speed = SEARCH_SPEED
+
+        left, right = steering_to_wheels(speed, self.steer_cmd)
+
+        return left, right, speed, self.steer_cmd, self.mode
