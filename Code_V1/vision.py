@@ -1,4 +1,4 @@
-# vision.py
+# vision_top_down.py
 from __future__ import annotations
 from dataclasses import dataclass
 import cv2
@@ -39,87 +39,112 @@ class VisionResult:
     mask: np.ndarray
 
 
+def correct_top_down(mask: np.ndarray, angle_deg: float = 20) -> np.ndarray:
+    """
+    Approximate top-down view of a flat surface given the camera tilt.
+    Stretches the vertical axis to undo foreshortening.
+    """
+    scale = 1 / np.cos(np.radians(angle_deg))  # stretch vertical
+    h, w = mask.shape
+    new_h = int(h * scale)
+    top_down = cv2.resize(mask, (w, new_h))
+    return top_down
+
+
 def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
+    """
+    Compute a cleaned mask for the ROI (line detection).
+    """
     roi_start = int(H * ROI_START_FRAC)
     roi = frame_bgr[roi_start:H, :]
 
     gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
     gray = cv2.GaussianBlur(gray, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
 
-    thresh_type = cv2.THRESH_BINARY_INV if USE_BINARY_INV else cv2.THRESH_BINARY
     THRESH = 120
-    _, mask = cv2.threshold( gray, THRESH, 255, cv2.THRESH_BINARY_INV)
+    _, mask = cv2.threshold(gray, THRESH, 255, cv2.THRESH_BINARY_INV)
 
     kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=MORPH_OPEN_IT)
 
-    return mask, roi_start
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    clean_mask = np.zeros_like(mask)
+    center_x = mask.shape[1] // 2
+
+    best_contour = None
+    best_score = float("inf")
+
+    for cnt in contours:
+        if cv2.contourArea(cnt) < 200:
+            continue
+        bottom_point = cnt[cnt[:, :, 1].argmax()][0]
+        x, y = bottom_point
+        dist = abs(x - center_x)
+        score = dist - y * 0.1
+        if score < best_score:
+            best_score = score
+            best_contour = cnt
+
+    if best_contour is not None:
+        cv2.drawContours(clean_mask, [best_contour], -1, 255, thickness=cv2.FILLED)
+
+    return clean_mask, roi_start
 
 
 def get_band_center(mask: np.ndarray, y_frac: float, thickness: int) -> tuple[int | None, int]:
+    """
+    Compute the horizontal center of a band in the mask.
+    """
     h, w = mask.shape
     y = int(h * y_frac)
-
     y0 = max(0, y - thickness)
     y1 = min(h, y + thickness + 1)
-
     band = mask[y0:y1, :]
     ys, xs = np.where(band > 0)
-
     if xs.size == 0:
         return None, y
-
     cx = int(xs.mean())
     return cx, y
 
 
-def detect_line(frame_bgr: np.ndarray) -> VisionResult:
+def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
+    """
+    Detect the line and compute top-down slices and steering error.
+    """
     mask, roi_start = compute_mask_from_frame(frame_bgr)
 
-    h, w = mask.shape
-    cx_ref = w // 2
+    # Apply top-down correction
+    mask_td = correct_top_down(mask, angle_deg)
+    h_td, w_td = mask_td.shape
+    cx_ref = w_td // 2
 
-    cx_top, y_top = get_band_center(mask, SLICE_TOP_FRAC, BAND_THICKNESS)
-    cx_mid, y_mid = get_band_center(mask, SLICE_MID_FRAC, BAND_THICKNESS)
-    cx_bot, y_bot = get_band_center(mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+    # Compute slice positions relative to top-down mask
+    y_top = int(SLICE_TOP_FRAC * h_td)
+    y_mid = int(SLICE_MID_FRAC * h_td)
+    y_bot = int(SLICE_BOT_FRAC * h_td)
+
+    cx_top, _ = get_band_center(mask_td, SLICE_TOP_FRAC, BAND_THICKNESS)
+    cx_mid, _ = get_band_center(mask_td, SLICE_MID_FRAC, BAND_THICKNESS)
+    cx_bot, _ = get_band_center(mask_td, SLICE_BOT_FRAC, BAND_THICKNESS)
 
     seen_top = cx_top is not None
     seen_mid = cx_mid is not None
     seen_bot = cx_bot is not None
-
     any_seen = seen_top or seen_mid or seen_bot
     all_seen = seen_top and seen_mid and seen_bot
 
-    # fallback local pour calculer une erreur même si une tranche manque
-    if cx_bot is None and cx_mid is not None:
-        cx_bot_use = cx_mid
-    elif cx_bot is None and cx_top is not None:
-        cx_bot_use = cx_top
-    elif cx_bot is None:
-        cx_bot_use = cx_ref
-    else:
-        cx_bot_use = cx_bot
-
-    if cx_mid is None:
-        cx_mid_use = cx_bot_use
-    else:
-        cx_mid_use = cx_mid
-
-    if cx_top is None:
-        cx_top_use = cx_mid_use
-    else:
-        cx_top_use = cx_top
+    # Fallbacks for missing slices
+    cx_bot_use = cx_bot or cx_mid or cx_top or cx_ref
+    cx_mid_use = cx_mid or cx_bot_use
+    cx_top_use = cx_top or cx_mid_use
 
     err_top = float(cx_top_use - cx_ref)
     err_mid = float(cx_mid_use - cx_ref)
     err_bot = float(cx_bot_use - cx_ref)
 
-    steer_error = (
-        W_TOP * err_top +
-        W_MID * err_mid +
-        W_BOT * err_bot
-    )
+    steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
     return VisionResult(
         cx_top=cx_top,
@@ -138,88 +163,50 @@ def detect_line(frame_bgr: np.ndarray) -> VisionResult:
         y_top=y_top,
         y_mid=y_mid,
         y_bot=y_bot,
-        mask=mask
+        mask=mask_td
     )
 
 
-def draw_debug(frame_bgr: np.ndarray, res: VisionResult) -> np.ndarray:
-    out = frame_bgr.copy()
-    h_roi, w_roi = res.mask.shape
-    roi_y0 = res.roi_start
-    roi_y1 = roi_y0 + h_roi
-
-    # rectangle ROI
-    cv2.rectangle(out, (0, roi_y0), (w_roi - 1, roi_y1 - 1), (0, 255, 255), 2)
-
-    # centre image
-    cx_ref = w_roi // 2
-    cv2.line(out, (cx_ref, roi_y0), (cx_ref, roi_y1 - 1), (255, 0, 0), 2)
-
-    # lignes des tranches
-    for y in [res.y_top, res.y_mid, res.y_bot]:
-        yy = roi_y0 + y
-        cv2.line(out, (0, yy), (w_roi - 1, yy), (180, 180, 180), 1)
-
-    # points détectés
-    if res.cx_top is not None:
-        cv2.circle(out, (res.cx_top, roi_y0 + res.y_top), 6, (0, 255, 0), -1)
-    if res.cx_mid is not None:
-        cv2.circle(out, (res.cx_mid, roi_y0 + res.y_mid), 6, (0, 200, 255), -1)
-    if res.cx_bot is not None:
-        cv2.circle(out, (res.cx_bot, roi_y0 + res.y_bot), 6, (0, 0, 255), -1)
-
-    return out
-
 def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
-                      cx_top, cx_mid, cx_bot, band_thickness):
+                      cx_top, cx_mid, cx_bot, band_thickness, steer_error):
     """
-    Affiche sur l'image :
-    - la ROI
-    - les 3 tranches
-    - les centres détectés pour chaque tranche
-    - le centre de l'image
+    Draw ROI, slices, centers, and steering error on the frame.
     """
-    out = frame_bgr.copy()
+    out = cv2.cvtColor(frame_bgr.copy(), cv2.COLOR_BGR2RGB)
     h_roi, w_roi = mask.shape
-
-    # rectangle ROI
-    cv2.rectangle(out, (0, roi_start), (w_roi - 1, roi_start + h_roi - 1), (0, 255, 255), 2)
-
-    # centre image
     cx_ref = w_roi // 2
+
+    # ROI rectangle
+    cv2.rectangle(out, (0, roi_start), (w_roi - 1, roi_start + h_roi - 1), (0, 255, 255), 2)
     cv2.line(out, (cx_ref, roi_start), (cx_ref, roi_start + h_roi - 1), (255, 0, 0), 2)
 
-    # fonction locale pour dessiner une tranche
     def draw_one_slice(y, cx, color, name):
-        yy = roi_start + y
-
-        # bande horizontale
-        y0 = max(roi_start, yy - band_thickness)
-        y1 = min(roi_start + h_roi - 1, yy + band_thickness)
-
-        cv2.rectangle(out, (0, y0), (w_roi - 1, y1), color, 1)
-        cv2.line(out, (0, yy), (w_roi - 1, yy), color, 1)
-
-        # centre détecté
+        y0 = max(0, y - band_thickness)
+        y1 = min(h_roi - 1, y + band_thickness)
+        cv2.rectangle(out, (0, roi_start + y0), (w_roi - 1, roi_start + y1), color, 1)
+        cv2.line(out, (0, roi_start + y), (w_roi - 1, roi_start + y), color, 1)
         if cx is not None:
-            cv2.circle(out, (cx, yy), 6, color, -1)
-            cv2.putText(out, f"{name}: {cx}", (10, yy - 8),
+            cv2.circle(out, (cx, roi_start + y), 6, color, -1)
+            cv2.putText(out, f"{name}: {cx}", (10, roi_start + y - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
         else:
-            cv2.putText(out, f"{name}: None", (10, yy - 8),
+            cv2.putText(out, f"{name}: None", (10, roi_start + y - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
     draw_one_slice(y_top, cx_top, (0, 255, 0), "TOP")
     draw_one_slice(y_mid, cx_mid, (0, 200, 255), "MID")
     draw_one_slice(y_bot, cx_bot, (0, 0, 255), "BOT")
-
+    cv2.putText(out, f"Steer error: {steer_error:.2f}", (10, 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     return out
+
 
 def draw_mask_slices(mask, y_top, y_mid, y_bot, cx_top, cx_mid, cx_bot):
     """
-    Retourne une image couleur du masque pour visualiser les tranches.
+    Return a color image of the mask with slice overlays.
     """
     vis = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    cx_ref = mask.shape[1] // 2
 
     def draw_one(y, cx, color):
         cv2.line(vis, (0, y), (mask.shape[1] - 1, y), color, 1)
@@ -229,8 +216,5 @@ def draw_mask_slices(mask, y_top, y_mid, y_bot, cx_top, cx_mid, cx_bot):
     draw_one(y_top, cx_top, (0, 255, 0))
     draw_one(y_mid, cx_mid, (0, 200, 255))
     draw_one(y_bot, cx_bot, (0, 0, 255))
-
-    cx_ref = mask.shape[1] // 2
     cv2.line(vis, (cx_ref, 0), (cx_ref, mask.shape[0] - 1), (255, 0, 0), 1)
-
     return vis
