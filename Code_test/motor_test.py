@@ -5,14 +5,14 @@ GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
 # Motor A
-ENA = 18
-IN1 = 23
-IN2 = 24
+ENA = 13
+IN1 = 14
+IN2 = 15
 
 # Motor B
-ENB = 13
-IN3 = 27
-IN4 = 22
+ENB = 12
+IN3 = 16
+IN4 = 17
 
 pins = [ENA,IN1,IN2,ENB,IN3,IN4]
 
@@ -50,27 +50,7 @@ try:
         pwmA.ChangeDutyCycle(speed)
         pwmB.ChangeDutyCycle(speed)
 
-        time.sleep(3)
 
-        print("Stop")
-        stop()
-        time.sleep(2)
-
-        print("Backward slow")
-
-        GPIO.output(IN1,0)
-        GPIO.output(IN2,1)
-        GPIO.output(IN3,0)
-        GPIO.output(IN4,1)
-
-        pwmA.ChangeDutyCycle(speed)
-        pwmB.ChangeDutyCycle(speed)
-
-        time.sleep(3)
-
-        print("Stop")
-        stop()
-        time.sleep(3)
 
 except KeyboardInterrupt:
     stop()
