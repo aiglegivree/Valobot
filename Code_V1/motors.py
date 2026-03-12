@@ -37,10 +37,10 @@ class MotorDriver:
         value = max(-1.0, min(1.0, value))
         duty = abs(value) * 100.0
 
-        if value > 0:
+        if value < 0:
             GPIO.output(in1, GPIO.HIGH)
             GPIO.output(in2, GPIO.LOW)
-        elif value < 0:
+        elif value > 0:
             GPIO.output(in1, GPIO.LOW)
             GPIO.output(in2, GPIO.HIGH)
         else:
