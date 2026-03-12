@@ -130,7 +130,7 @@ while True:
     edges = cv2.Canny(blur, 20, 40)
 
     # # ROI
-    # height, width = edges.shape
+    height, width = edges.shape
     # mask = np.zeros_like(edges)
 
     # roi_top = int(height * 0.4)
