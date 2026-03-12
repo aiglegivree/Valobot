@@ -129,25 +129,25 @@ while True:
     # Canny
     edges = cv2.Canny(blur, 20, 40)
 
-    # ROI
-    height, width = edges.shape
-    mask = np.zeros_like(edges)
+    # # ROI
+    # height, width = edges.shape
+    # mask = np.zeros_like(edges)
 
-    roi_top = int(height * 0.4)
+    # roi_top = int(height * 0.4)
 
-    polygon = np.array([[
-        (0, height - 1),
-        (0, roi_top),
-        (width - 1, roi_top),
-        (width - 1, height - 1)
-    ]], dtype=np.int32)
+    # polygon = np.array([[
+    #     (0, height - 1),
+    #     (0, roi_top),
+    #     (width - 1, roi_top),
+    #     (width - 1, height - 1)
+    # ]], dtype=np.int32)
 
-    cv2.fillPoly(mask, polygon, 255)
-    edges_roi = cv2.bitwise_and(edges, mask)
+    # cv2.fillPoly(mask, polygon, 255)
+    # edges_roi = cv2.bitwise_and(edges, mask)
 
     # Hough lines
     lines = cv2.HoughLinesP(
-        edges_roi,
+        edges,
         rho=1,
         theta=np.pi / 180,
         threshold=20,
