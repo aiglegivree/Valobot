@@ -1,21 +1,22 @@
-# motors.py
 from __future__ import annotations
 import RPi.GPIO as GPIO
 
+# Based on your working test code
 
+# Right motor
+RIGHT_EN = 13
+RIGHT_IN1 = 14
+RIGHT_IN2 = 15
 
-LEFT_EN = 12 
-LEFT_IN1 = 14 
-LEFT_IN2 = 15 
-
-RIGHT_EN = 13 
-RIGHT_IN1 = 16 
-RIGHT_IN2 = 17
+# Left motor
+LEFT_EN = 12
+LEFT_IN1 = 16
+LEFT_IN2 = 17
 
 PWM_FREQ = 1000
 
 LEFT_TRIM = 1.00
-RIGHT_TRIM = 1.00
+RIGHT_TRIM = 0.96   # same correction as your working test
 
 
 class MotorDriver:
@@ -23,13 +24,14 @@ class MotorDriver:
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
 
-        for pin in [LEFT_EN, LEFT_IN1, LEFT_IN2, RIGHT_EN, RIGHT_IN1, RIGHT_IN2]:
+        for pin in [RIGHT_EN, RIGHT_IN1, RIGHT_IN2, LEFT_EN, LEFT_IN1, LEFT_IN2]:
             GPIO.setup(pin, GPIO.OUT)
 
-        self.pwm_left = GPIO.PWM(LEFT_EN, PWM_FREQ)
         self.pwm_right = GPIO.PWM(RIGHT_EN, PWM_FREQ)
-        self.pwm_left.start(0)
+        self.pwm_left = GPIO.PWM(LEFT_EN, PWM_FREQ)
+
         self.pwm_right.start(0)
+        self.pwm_left.start(0)
 
         self.stop()
 
@@ -37,10 +39,11 @@ class MotorDriver:
         value = max(-1.0, min(1.0, value))
         duty = abs(value) * 100.0
 
-        if value < 0:
+        # forward direction = same as your working code: in1=1, in2=0
+        if value > 0:
             GPIO.output(in1, GPIO.HIGH)
             GPIO.output(in2, GPIO.LOW)
-        elif value > 0:
+        elif value < 0:
             GPIO.output(in1, GPIO.LOW)
             GPIO.output(in2, GPIO.HIGH)
         else:

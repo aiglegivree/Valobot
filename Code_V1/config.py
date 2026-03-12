@@ -52,10 +52,12 @@ SEARCH_TURN_STEER = 0.60       # steering forcé pendant recherche
 # ============================================================
 # SPEED
 # ============================================================
-BASE_SPEED = 20              # 0..1
-TURN_SPEED = 23              # gros virage
-BLIND_SPEED = 25             # pendant perte ligne
-SEARCH_SPEED = 15            # recherche
+BASE_SPEED = 0.20              # 0..1
+TURN_SPEED = 0.23              # gros virage
+BLIND_SPEED = 0.25             # pendant perte ligne
+SEARCH_SPEED = 0.15            # recherche
+
+
 
 # mix steering -> roues
 STEER_GAIN = 0.90              # influence du steering sur left/right
