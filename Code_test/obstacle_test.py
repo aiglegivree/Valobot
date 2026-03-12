@@ -292,7 +292,7 @@ while True:
         cv2.putText(line_frame, f"Smooth error: {smooth_error_to_show:.1f}px", (10, 210),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
 
-    cv2.imshow("Edges ROI", edges_roi)
+    cv2.imshow("Edges", edges)
     cv2.imshow("Robust Bounded Fits", line_frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
