@@ -28,8 +28,8 @@ def normalize_error(err_px: float) -> float:
 def steering_to_wheels(speed: float, steer: float):
     steer = clamp(steer, -1.0, 1.0)
 
-    left = speed - STEER_GAIN * steer
-    right = speed + STEER_GAIN * steer
+    left = speed + STEER_GAIN * steer
+    right = speed - STEER_GAIN * steer
 
     return clamp(left, -1, 1), clamp(right, -1, 1)
 
