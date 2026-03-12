@@ -4,12 +4,12 @@ import time
 GPIO.setmode(GPIO.BCM)
 GPIO.setwarnings(False)
 
-# Motor A
+# Motor Right
 ENA = 13
 IN1 = 14
 IN2 = 15
 
-# Motor B
+# Motor Left
 ENB = 12
 IN3 = 16
 IN4 = 17
@@ -26,7 +26,7 @@ pwmB = GPIO.PWM(ENB,1000)
 pwmA.start(0)
 pwmB.start(0)
 
-speed = 30   # slow speed (0-100)
+speed = 50   # slow speed (0-100)
 
 def stop():
     pwmA.ChangeDutyCycle(0)
@@ -40,15 +40,13 @@ try:
 
     while True:
 
-        print("Forward slow")
-
         GPIO.output(IN1,1)
         GPIO.output(IN2,0)
         GPIO.output(IN3,1)
         GPIO.output(IN4,0)
 
-        pwmA.ChangeDutyCycle(speed)
-        pwmB.ChangeDutyCycle(speed)
+        pwmA.ChangeDutyCycle(speed * 0.96)
+        pwmB.ChangeDutyCycle(speed )
 
 
 
