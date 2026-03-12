@@ -169,7 +169,7 @@ while True:
             dy = y2 - y1
             length = np.hypot(dx, dy)
 
-            if length < 40:
+            if length < 10:
                 continue
 
             x_mid = (x1 + x2) / 2
