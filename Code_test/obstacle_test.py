@@ -177,11 +177,11 @@ while True:
             ratio = abs(dy) / (abs(dx) + 1e-6)
 
             # Reject almost perfectly vertical lines
-            if ratio > 4.0:
+            if ratio > 5.0:
                 continue
 
             # Side-boundary candidates
-            if ratio > 0.8:
+            if ratio > 0.3:
                 # Side lines should reach low enough in the image
                 if y_bottom < int(height * 0.65):
                     continue
