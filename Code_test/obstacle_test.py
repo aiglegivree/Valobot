@@ -7,10 +7,7 @@ from picamera2 import Picamera2
 # =========================
 picam2 = Picamera2()
 
-preview_config = picam2.create_preview_configuration(
-    main={"size": (1280, 720), "format": "RGB888"}
-)
-picam2.configure(preview_config)
+picam2.configure(picam2.create_preview_configuration())
 picam2.start()
 
 print("Press 'q' to quit.")
@@ -270,29 +267,6 @@ while True:
 
         smooth_error_to_show = smoothed_error
 
-    # Debug text
-    cv2.putText(line_frame, f"Left raw: {len(left_segments)}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
-    cv2.putText(line_frame, f"Left filt: {len(left_segments_filtered)}", (10, 55),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-
-    cv2.putText(line_frame, f"Right raw: {len(right_segments)}", (10, 85),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-    cv2.putText(line_frame, f"Right filt: {len(right_segments_filtered)}", (10, 110),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-
-    cv2.putText(line_frame, f"Front: {len(front_segments)}", (10, 140),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-
-    if raw_error is not None:
-        cv2.putText(line_frame, f"Raw error: {raw_error:.1f}px", (10, 180),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
-
-    if smooth_error_to_show is not None:
-        cv2.putText(line_frame, f"Smooth error: {smooth_error_to_show:.1f}px", (10, 210),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-
-    cv2.imshow("Edges", edges)
     cv2.imshow("Robust Bounded Fits", line_frame)
 
     if cv2.waitKey(1) & 0xFF == ord('q'):
