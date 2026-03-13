@@ -9,7 +9,7 @@ H = 480
 # ============================================================
 # VISION
 # ============================================================
-ROI_START_FRAC = 0.50          # on traite seulement la moitié basse
+ROI_START_FRAC = 0.70          # on traite seulement la moitié basse
 GAUSS_KSIZE = 5
 
 # ligne noire sur fond blanc
@@ -27,9 +27,9 @@ SLICE_MID_FRAC = 0.50
 SLICE_BOT_FRAC = 0.95
 
 # poids pour l'erreur de steering
-W_TOP = 0.0
-W_MID = 0.0
-W_BOT = 1.0
+W_TOP = 0.05
+W_MID = 0.05
+W_BOT = 0.85
 
 # ============================================================
 # CONTROL
@@ -53,14 +53,14 @@ SEARCH_TURN_STEER = 0.60       # steering forcé pendant recherche
 # SPEED
 # ============================================================
 BASE_SPEED = 0.40              # 0..1
-TURN_SPEED = 0.23              # gros virage
+TURN_SPEED = 0.30              # gros virage
 BLIND_SPEED = 0.25             # pendant perte ligne
 SEARCH_SPEED = 0.15            # recherche
 
 
 
 # mix steering -> roues
-STEER_GAIN = 0.1              # influence du steering sur left/right
+STEER_GAIN = 0.1             # influence du steering sur left/right
 
 # ============================================================
 # DEBUG
