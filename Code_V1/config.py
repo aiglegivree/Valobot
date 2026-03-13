@@ -43,8 +43,8 @@ HARD_TURN_THRESH = 90.0
 # ============================================================
 # LOST LINE / STATES
 # ============================================================
-BLIND_TURN_FRAMES = 8          # nb de frames pendant lesquelles on continue à tourner
-SEARCH_FRAMES = 18             # au-delà -> mode recherche
+BLIND_TURN_FRAMES = 100          # nb de frames pendant lesquelles on continue à tourner
+SEARCH_FRAMES = 200             # au-delà -> mode recherche
 
 BLIND_TURN_STEER = 0.85        # steering forcé pendant blind turn
 SEARCH_TURN_STEER = 0.60       # steering forcé pendant recherche
