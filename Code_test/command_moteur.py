@@ -5,13 +5,14 @@ import tty
 import select
 import time
 
-from motors import MotorDriver   # <-- ton fichier avec la classe
+from motors import MotorDriver
 
 SPEED = 0.6
 TURN = 0.5
+KEY_TIMEOUT = 0.15   # temps max sans input → stop
+
 
 def get_key():
-    """Lecture clavier non bloquante"""
     dr, _, _ = select.select([sys.stdin], [], [], 0)
     if dr:
         return sys.stdin.read(1)
@@ -25,8 +26,9 @@ def main():
     old_settings = termios.tcgetattr(fd)
     tty.setcbreak(fd)
 
-    print("Control robot: W S A D | SPACE stop | Q quit")
+    print("Hold keys: Z S Q D | SPACE stop | A quit")
 
+    last_key_time = time.time()
     left = 0.0
     right = 0.0
 
@@ -35,7 +37,9 @@ def main():
             key = get_key()
 
             if key is not None:
-                if key.lower() == 'w':
+                last_key_time = time.time()
+
+                if key.lower() == 'z':
                     left = SPEED
                     right = SPEED
 
@@ -43,7 +47,7 @@ def main():
                     left = -SPEED
                     right = -SPEED
 
-                elif key.lower() == 'a':
+                elif key.lower() == 'q':
                     left = -TURN
                     right = TURN
 
@@ -55,12 +59,16 @@ def main():
                     left = 0.0
                     right = 0.0
 
-                elif key.lower() == 'q':
+                elif key.lower() == 'a':
                     break
 
                 motor.set_speeds(left, right)
 
-            time.sleep(0.02)
+            # sécurité : si on relâche → stop
+            if time.time() - last_key_time > KEY_TIMEOUT:
+                motor.set_speeds(0, 0)
+
+            time.sleep(0.01)
 
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
