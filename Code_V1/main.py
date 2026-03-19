@@ -29,7 +29,7 @@ while True:
     frame_top_down = cv2.resize(frame_roi, (w_td, h_td))
 
     # 4 Draw debug overlays on top-down frame
-    dbg = debug = draw_debug_slices( res)
+    dbg = draw_debug_slices(frame, res, BAND_THICKNESS)
 
     # 5 Draw mask visualization (top-down)
     mask_dbg = draw_mask_slices(res)
