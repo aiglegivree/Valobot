@@ -8,7 +8,8 @@ from config import (
     STEER_GAIN, STEER_SMOOTH_ALPHA, STEER_DEADZONE,
     HARD_TURN_THRESH,
     BLIND_TURN_FRAMES, SEARCH_FRAMES,
-    BLIND_TURN_STEER, SEARCH_TURN_STEER
+    BLIND_TURN_STEER, SEARCH_TURN_STEER,
+    T_CONFIRM_FRAMES, T_MEMORY_FRAMES, STOP_ON_T_END
 )
 
 
@@ -46,7 +47,44 @@ class Controller:
         self.lost_count = 0
         self.hard_turn_pending = False
 
+        # -----------------------------
+        # T detection temporal memory
+        # -----------------------------
+        self.t_count = 0               # consecutive frames with T detected
+        self.t_memory = 0              # remember recent T for a few frames
+        self.t_confirmed = False
+        self.t_end_confirmed = False
+
     def update(self, vision_result):
+
+        # =========================================================
+        # STEP 3: TEMPORAL CONFIRMATION OF T
+        # =========================================================
+
+        # consecutive T detection
+        if getattr(vision_result, "t_detected", False):
+            self.t_count += 1
+        else:
+            self.t_count = 0
+
+        # confirmed T if seen enough consecutive frames
+        self.t_confirmed = self.t_count >= T_CONFIRM_FRAMES
+
+        # remember that a T was recently seen
+        if self.t_confirmed:
+            self.t_memory = T_MEMORY_FRAMES
+        elif self.t_memory > 0:
+            self.t_memory -= 1
+
+        # end-of-line T:
+        # a T was seen recently, and now the bottom stem disappears
+        self.t_end_confirmed = (self.t_memory > 0) and (not vision_result.seen_bot)
+
+        # optional special behavior
+        if STOP_ON_T_END and self.t_end_confirmed:
+            self.mode = "T_END"
+            self.steer_cmd = 0.0
+            return 0.0, 0.0, 0.0, self.steer_cmd, self.mode
 
         # ------------------------------------------------
         # LINE VISIBLE

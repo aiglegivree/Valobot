@@ -12,7 +12,10 @@ from config import (
     SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
     W_TOP, W_MID, W_BOT,
     BOTTOM_SLICE_MAX_DIST,
-    CENTER_EXCEPTION_DIST
+    CENTER_EXCEPTION_DIST,
+    T_WIDTH_RATIO,
+    T_MIN_ABS_WIDTH,
+    T_SIDE_MARGIN,
 )
 
 
@@ -37,6 +40,12 @@ class VisionResult:
     y_top: int
     y_mid: int
     y_bot: int
+
+    width_top: int
+    width_mid: int
+    width_bot: int
+
+    t_detected: bool
 
     mask: np.ndarray
 
@@ -63,7 +72,7 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
     lower_black = np.array([0, 0, 0])
-    upper_black = np.array([180, 160, 100])
+    upper_black = np.array([180, 100, 100])
 
     mask = cv2.inRange(hsv, lower_black, upper_black)
 
@@ -74,12 +83,16 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     return mask, roi_start
 
 
-def get_band_center(mask: np.ndarray, y_frac: float, thickness: int,
-                    x_center: int | None = None,
-                    max_x_dist: int | None = None) -> tuple[int | None, int]:
+def get_band_info(
+    mask: np.ndarray,
+    y_frac: float,
+    thickness: int,
+    x_center: int | None = None,
+    max_x_dist: int | None = None,
+) -> tuple[int | None, int, int | None, int | None, int, int]:
     """
-    Compute the horizontal center of a band in the mask.
-    Optionally restrict pixels to a horizontal window around x_center.
+    Returns:
+        cx, y, x_min, x_max, width, count
     """
     h, w = mask.shape
     y = int(h * y_frac)
@@ -88,30 +101,34 @@ def get_band_center(mask: np.ndarray, y_frac: float, thickness: int,
     y1 = min(h, y + thickness + 1)
     band = mask[y0:y1, :]
 
+    x_offset = 0
     if x_center is not None and max_x_dist is not None:
         x0 = max(0, x_center - max_x_dist)
         x1 = min(w, x_center + max_x_dist + 1)
-        band_used = band[:, x0:x1]
-        ys, xs = np.where(band_used > 0)
-        if xs.size == 0:
-            return None, y
-        cx = int(xs.mean()) + x0
-        return cx, y
+        band = band[:, x0:x1]
+        x_offset = x0
 
     ys, xs = np.where(band > 0)
     if xs.size == 0:
-        return None, y
+        return None, y, None, None, 0, 0
 
-    cx = int(xs.mean())
-    return cx, y
+    xs_full = xs + x_offset
+    x_min = int(xs_full.min())
+    x_max = int(xs_full.max())
+    cx = int(xs_full.mean())
+    width = x_max - x_min
+    count = int(xs_full.size)
+
+    return cx, y, x_min, x_max, width, count
 
 
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     """
-    Detect the line and compute top-down slices and steering error.
-    Top/mid are only accepted if:
-      - bottom is seen, OR
-      - they are close enough to the image center.
+    Detect the line and compute top-down slices, steering error, and T-end signature.
+    Rules:
+      - bottom slice is constrained near the image center
+      - if bottom is missing, top/mid are ignored unless close to center
+      - t_detected is a frame-level T signature; temporal confirmation is done in controller.py
     """
     mask, roi_start = compute_mask_from_frame(frame_bgr)
 
@@ -123,9 +140,13 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     y_mid = int(SLICE_MID_FRAC * h_td)
     y_bot = int(SLICE_BOT_FRAC * h_td)
 
-    cx_top, _ = get_band_center(mask_td, SLICE_TOP_FRAC, BAND_THICKNESS)
-    cx_mid, _ = get_band_center(mask_td, SLICE_MID_FRAC, BAND_THICKNESS)
-    cx_bot, _ = get_band_center(
+    cx_top, _, x_min_top, x_max_top, width_top, count_top = get_band_info(
+        mask_td, SLICE_TOP_FRAC, BAND_THICKNESS
+    )
+    cx_mid, _, x_min_mid, x_max_mid, width_mid, count_mid = get_band_info(
+        mask_td, SLICE_MID_FRAC, BAND_THICKNESS
+    )
+    cx_bot, _, x_min_bot, x_max_bot, width_bot, count_bot = get_band_info(
         mask_td,
         SLICE_BOT_FRAC,
         BAND_THICKNESS,
@@ -133,13 +154,12 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         max_x_dist=BOTTOM_SLICE_MAX_DIST
     )
 
-    # raw visibility
+    # Raw visibility
     seen_top_raw = cx_top is not None
     seen_mid_raw = cx_mid is not None
     seen_bot = cx_bot is not None
 
-    # exception: allow top/mid even if bottom is missing,
-    # but only when they are close enough to the center
+    # If bottom is missing, only keep top/mid if they are near image center
     top_near_center = (
         cx_top is not None and abs(cx_top - cx_ref) <= CENTER_EXCEPTION_DIST
     )
@@ -152,20 +172,28 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 
     if not allow_top:
         cx_top = None
+        width_top = 0
+        x_min_top = None
+        x_max_top = None
+
     if not allow_mid:
         cx_mid = None
+        width_mid = 0
+        x_min_mid = None
+        x_max_mid = None
 
     seen_top = cx_top is not None
     seen_mid = cx_mid is not None
+
     any_seen = seen_bot or seen_mid or seen_top
     all_seen = seen_bot and seen_mid and seen_top
 
+    # Steering fallback logic
     if seen_bot:
         cx_bot_use = cx_bot
         cx_mid_use = cx_mid if cx_mid is not None else cx_bot
         cx_top_use = cx_top if cx_top is not None else cx_mid_use
     else:
-        # no bottom: only near-center top/mid may survive
         if seen_mid:
             cx_mid_use = cx_mid
             cx_top_use = cx_top if cx_top is not None else cx_mid
@@ -185,6 +213,36 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 
     steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
+    # ------------------------------------------------
+    # Instantaneous T detection
+    # ------------------------------------------------
+    t_detected = False
+
+    if seen_bot and width_bot > 0:
+        stem_x = cx_bot
+
+        top_has_bar = (
+            seen_top and
+            x_min_top is not None and
+            x_max_top is not None and
+            width_top >= T_MIN_ABS_WIDTH and
+            width_top > T_WIDTH_RATIO * max(1, width_bot) and
+            x_min_top < stem_x - T_SIDE_MARGIN and
+            x_max_top > stem_x + T_SIDE_MARGIN
+        )
+
+        mid_has_bar = (
+            seen_mid and
+            x_min_mid is not None and
+            x_max_mid is not None and
+            width_mid >= T_MIN_ABS_WIDTH and
+            width_mid > T_WIDTH_RATIO * max(1, width_bot) and
+            x_min_mid < stem_x - T_SIDE_MARGIN and
+            x_max_mid > stem_x + T_SIDE_MARGIN
+        )
+
+        t_detected = top_has_bar or mid_has_bar
+
     return VisionResult(
         cx_top=cx_top,
         cx_mid=cx_mid,
@@ -202,13 +260,19 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         y_top=y_top,
         y_mid=y_mid,
         y_bot=y_bot,
+        width_top=width_top,
+        width_mid=width_mid,
+        width_bot=width_bot,
+        t_detected=t_detected,
         mask=mask_td
     )
 
+
 def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
-                      cx_top, cx_mid, cx_bot, band_thickness, steer_error):
+                      cx_top, cx_mid, cx_bot, band_thickness, steer_error,
+                      t_detected=False):
     """
-    Draw ROI, slices, centers, and steering error on the frame.
+    Draw ROI, slices, centers, steering error, and bottom allowed zone.
     """
     out = cv2.cvtColor(frame_bgr.copy(), cv2.COLOR_BGR2RGB)
     h_roi, w_roi = mask.shape
@@ -242,10 +306,15 @@ def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
 
     cv2.putText(out, f"Steer error: {steer_error:.2f}", (10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+
+    if t_detected:
+        cv2.putText(out, "T DETECTED", (10, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
+
     return out
 
 
-def draw_mask_slices(mask, y_top, y_mid, y_bot, cx_top, cx_mid, cx_bot):
+def draw_mask_slices(mask, y_top, y_mid, y_bot, cx_top, cx_mid, cx_bot, t_detected=False):
     """
     Return a color image of the mask with slice overlays.
     """
@@ -271,4 +340,9 @@ def draw_mask_slices(mask, y_top, y_mid, y_bot, cx_top, cx_mid, cx_bot):
     draw_one(y_mid, cx_mid, (0, 200, 255))
     draw_one(y_bot, cx_bot, (0, 0, 255), draw_limit=True)
     cv2.line(vis, (cx_ref, 0), (cx_ref, mask.shape[0] - 1), (255, 0, 0), 1)
+
+    if t_detected:
+        cv2.putText(vis, "T DETECTED", (10, 25),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
+
     return vis

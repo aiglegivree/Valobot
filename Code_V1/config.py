@@ -33,8 +33,10 @@ W_BOT = 0.85
 
 BOTTOM_SLICE_MAX_DIST = 200   # pixels from image center on bottom slice
 CENTER_EXCEPTION_DIST = 60   # pixels
-MIN_CONTOUR_AREA = 0
 
+T_WIDTH_RATIO = 2.0
+T_MIN_ABS_WIDTH = 120
+T_SIDE_MARGIN = 20
 # ============================================================
 # CONTROL
 # ============================================================
@@ -44,6 +46,9 @@ STEER_DEADZONE = 5.0           # pour mettre à jour last_turn_sign
 # seuil à partir duquel on considère qu'on prépare un gros virage
 HARD_TURN_THRESH = 90.0
 
+T_CONFIRM_FRAMES = 3
+T_MEMORY_FRAMES = 5
+STOP_ON_T_END = True
 # ============================================================
 # LOST LINE / STATES
 # ============================================================

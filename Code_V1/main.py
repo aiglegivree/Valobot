@@ -3,6 +3,7 @@ from vision import detect_line, draw_debug_slices, draw_mask_slices
 from controller import Controller
 from motors import MotorDriver
 import cv2
+from config import BAND_THICKNESS
 
 cam = Camera()
 controller = Controller()
@@ -29,17 +30,18 @@ while True:
 
     # 4 Draw debug overlays on top-down frame
     dbg = draw_debug_slices(
-        frame_bgr=frame_top_down,
-        mask=res.mask,
-        roi_start=0,  # already top-down, so ROI is at top
-        y_top=res.y_top,
-        y_mid=res.y_mid,
-        y_bot=res.y_bot,
-        cx_top=res.cx_top,
-        cx_mid=res.cx_mid,
-        cx_bot=res.cx_bot,
-        band_thickness=6,  # or BAND_THICKNESS from config
-        steer_error=res.steer_error
+        frame,
+        res.mask,
+        res.roi_start,
+        res.y_top,
+        res.y_mid,
+        res.y_bot,
+        res.cx_top,
+        res.cx_mid,
+        res.cx_bot,
+        BAND_THICKNESS,
+        res.steer_error,
+        res.t_detected,
     )
 
     # 5 Draw mask visualization (top-down)
