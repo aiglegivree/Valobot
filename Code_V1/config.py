@@ -34,13 +34,17 @@ W_BOT = 0.85
 BOTTOM_SLICE_MAX_DIST = 200   # pixels from image center on bottom slice
 CENTER_EXCEPTION_DIST = 60   # pixels
 
-T_WIDTH_RATIO = 2.0
-T_MIN_ABS_WIDTH = 120
 T_SIDE_MARGIN = 20
 
-T_SCAN_Y_START_FRAC = 0.15   # upper part of mask
-T_SCAN_Y_END_FRAC   = 0.75   # lower part of scan zone
-T_MIN_BAR_ROWS = 3           # require bar condition on several nearby rows
+T_SCAN_Y_START_FRAC = 0.15
+T_SCAN_Y_END_FRAC   = 0.75
+T_MIN_BAR_ROWS = 3
+
+T_WIDTH_RATIO = 2.2
+T_MIN_ABS_WIDTH = 110
+T_MIN_SIDE_EXT = 35
+T_MAX_SIDE_RATIO = 1.8
+
 # ============================================================
 # CONTROL
 # ============================================================

@@ -11,11 +11,19 @@ from config import (
     BAND_THICKNESS,
     SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
     W_TOP, W_MID, W_BOT,
+
+    # bottom gating
     BOTTOM_SLICE_MAX_DIST,
     CENTER_EXCEPTION_DIST,
+
+    # T detection
     T_WIDTH_RATIO,
     T_MIN_ABS_WIDTH,
     T_SIDE_MARGIN,
+    T_MIN_SIDE_EXT,
+    T_MAX_SIDE_RATIO,
+
+    # vertical scan
     T_SCAN_Y_START_FRAC,
     T_SCAN_Y_END_FRAC,
     T_MIN_BAR_ROWS,
@@ -146,14 +154,17 @@ def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray
     out[labels == best_label] = 255
     return out
 
-
 def detect_t_on_connected_mask(
     connected_mask: np.ndarray,
     cx_bot: int | None,
     width_bot: int,
 ) -> tuple[bool, int | None]:
     """
-    Scan many rows to find a horizontal bar connected to the stem.
+    Robust T detection:
+    - scan multiple rows
+    - find the horizontal run that contains the stem x-position
+    - require strong extension on both sides of the stem
+    - reject one-sided 90-degree turns
     """
     if cx_bot is None or width_bot <= 0:
         return False, None
@@ -166,37 +177,68 @@ def detect_t_on_connected_mask(
         y_start, y_end = y_end, y_start
 
     consecutive_hits = 0
-    best_row = None
+    first_hit_row = None
 
     for y in range(y_end, y_start - 1, -1):
-        row = connected_mask[y, :]
-        xs = np.where(row > 0)[0]
+        row = connected_mask[y, :] > 0
 
-        if xs.size == 0:
+        if not np.any(row):
             consecutive_hits = 0
+            first_hit_row = None
             continue
 
-        x_min = int(xs.min())
-        x_max = int(xs.max())
-        width = x_max - x_min
+        # Find contiguous runs of foreground pixels
+        padded = np.concatenate([[0], row.astype(np.uint8), [0]])
+        diff = np.diff(padded)
+        starts = np.where(diff == 1)[0]
+        ends = np.where(diff == -1)[0] - 1
 
-        bar_ok = (
+        run_found = False
+        x_min = None
+        x_max = None
+
+        for s, e in zip(starts, ends):
+            if s <= cx_bot <= e:
+                x_min = int(s)
+                x_max = int(e)
+                run_found = True
+                break
+
+        if not run_found:
+            consecutive_hits = 0
+            first_hit_row = None
+            continue
+
+        width = x_max - x_min
+        left_ext = cx_bot - x_min
+        right_ext = x_max - cx_bot
+
+        width_ok = (
             width >= T_MIN_ABS_WIDTH and
-            width > T_WIDTH_RATIO * max(1, width_bot) and
-            x_min < cx_bot - T_SIDE_MARGIN and
-            x_max > cx_bot + T_SIDE_MARGIN
+            width > T_WIDTH_RATIO * max(1, width_bot)
         )
+
+        both_sides_present = (
+            left_ext >= T_MIN_SIDE_EXT and
+            right_ext >= T_MIN_SIDE_EXT
+        )
+
+        smaller = max(1, min(left_ext, right_ext))
+        larger = max(left_ext, right_ext)
+        balanced = larger / smaller <= T_MAX_SIDE_RATIO
+
+        bar_ok = width_ok and both_sides_present and balanced
 
         if bar_ok:
             consecutive_hits += 1
-            if best_row is None:
-                best_row = y
+            if first_hit_row is None:
+                first_hit_row = y
         else:
             consecutive_hits = 0
-            best_row = None
+            first_hit_row = None
 
         if consecutive_hits >= T_MIN_BAR_ROWS:
-            return True, best_row
+            return True, first_hit_row
 
     return False, None
 
