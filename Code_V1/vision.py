@@ -58,11 +58,15 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     roi_start = int(H * ROI_START_FRAC)
     roi = frame_bgr[roi_start:H, :]
 
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-    gray = cv2.GaussianBlur(gray, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
+    gray = cv2.GaussianBlur(roi, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
 
-    THRESH = 120
-    _, mask = cv2.threshold(gray, THRESH, 255, cv2.THRESH_BINARY_INV)
+
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+    lower_black = np.array([0, 0, 0])
+    upper_black = np.array([180, 255, 80])
+
+    mask = cv2.inRange(hsv, lower_black, upper_black)
 
     kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)

@@ -6,9 +6,19 @@ import select
 import time
 
 from motors import MotorDriver
+from picamera2 import Picamera2
+import cv2
 
-SPEED = 0.6
-TURN = 0.5
+# Initialiser la caméra
+picam2 = Picamera2()
+picam2.start()
+
+
+
+
+
+SPEED = 0.95
+delta = 0.78
 KEY_TIMEOUT = 0.15   # temps max sans input → stop
 
 
@@ -35,25 +45,34 @@ def main():
     try:
         while True:
             key = get_key()
+                # capturer une image
+            frame = picam2.capture_array()
+
+            # afficher l'image
+            cv2.imshow("PiCam", frame)
+
+            # quitter avec la touche q
+            if cv2.waitKey(1) & 0xFF == ord('a'):
+                break
 
             if key is not None:
                 last_key_time = time.time()
 
                 if key.lower() == 'z':
                     left = SPEED
-                    right = SPEED
+                    right = delta*SPEED
 
                 elif key.lower() == 's':
                     left = -SPEED
-                    right = -SPEED
+                    right = -delta*SPEED
 
                 elif key.lower() == 'q':
-                    left = -TURN
-                    right = TURN
+                    left = -SPEED
+                    right = delta*SPEED
 
                 elif key.lower() == 'd':
-                    left = TURN
-                    right = -TURN
+                    left = SPEED
+                    right = -delta*SPEED
 
                 elif key == ' ':
                     left = 0.0
@@ -77,3 +96,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
+
+cv2.destroyAllWindows()
+picam2.stop()
