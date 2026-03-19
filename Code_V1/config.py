@@ -9,7 +9,7 @@ H = 480
 # ============================================================
 # VISION
 # ============================================================
-ROI_START_FRAC = 0.70          # on traite seulement la moitié basse
+ROI_START_FRAC = 0.50          # on traite seulement la moitié basse
 GAUSS_KSIZE = 5
 
 # ligne noire sur fond blanc
@@ -37,6 +37,10 @@ CENTER_EXCEPTION_DIST = 60   # pixels
 T_WIDTH_RATIO = 2.0
 T_MIN_ABS_WIDTH = 120
 T_SIDE_MARGIN = 20
+
+T_SCAN_Y_START_FRAC = 0.15   # upper part of mask
+T_SCAN_Y_END_FRAC   = 0.75   # lower part of scan zone
+T_MIN_BAR_ROWS = 3           # require bar condition on several nearby rows
 # ============================================================
 # CONTROL
 # ============================================================
