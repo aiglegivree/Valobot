@@ -60,7 +60,14 @@ class Controller:
         # =========================================================
         # STEP 3: TEMPORAL CONFIRMATION OF T
         # =========================================================
-
+         # -----------------------------
+        # STOP IF T DETECTED
+        # -----------------------------
+        if getattr(vision_result, "t_detected", False):
+            self.mode = "T_STOP"
+            self.steer_cmd = 0.0
+            return 0.0, 0.0, 0.0, self.steer_cmd, self.mode
+    
         # consecutive T detection
         if getattr(vision_result, "t_detected", False):
             self.t_count += 1
