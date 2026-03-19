@@ -32,6 +32,7 @@ W_MID = 0.05
 W_BOT = 0.85
 
 BOTTOM_SLICE_MAX_DIST = 100   # pixels from image center on bottom slice
+CENTER_EXCEPTION_DIST = 60   # pixels
 MIN_CONTOUR_AREA = 0
 
 # ============================================================

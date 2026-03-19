@@ -11,7 +11,8 @@ from config import (
     BAND_THICKNESS,
     SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
     W_TOP, W_MID, W_BOT,
-    BOTTOM_SLICE_MAX_DIST
+    BOTTOM_SLICE_MAX_DIST,
+    CENTER_EXCEPTION_DIST
 )
 
 
@@ -108,7 +109,9 @@ def get_band_center(mask: np.ndarray, y_frac: float, thickness: int,
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     """
     Detect the line and compute top-down slices and steering error.
-    Only the bottom slice is constrained near the image center.
+    Top/mid are only accepted if:
+      - bottom is seen, OR
+      - they are close enough to the image center.
     """
     mask, roi_start = compute_mask_from_frame(frame_bgr)
 
@@ -130,15 +133,51 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         max_x_dist=BOTTOM_SLICE_MAX_DIST
     )
 
+    # raw visibility
+    seen_top_raw = cx_top is not None
+    seen_mid_raw = cx_mid is not None
+    seen_bot = cx_bot is not None
+
+    # exception: allow top/mid even if bottom is missing,
+    # but only when they are close enough to the center
+    top_near_center = (
+        cx_top is not None and abs(cx_top - cx_ref) <= CENTER_EXCEPTION_DIST
+    )
+    mid_near_center = (
+        cx_mid is not None and abs(cx_mid - cx_ref) <= CENTER_EXCEPTION_DIST
+    )
+
+    allow_top = seen_bot or top_near_center
+    allow_mid = seen_bot or mid_near_center
+
+    if not allow_top:
+        cx_top = None
+    if not allow_mid:
+        cx_mid = None
+
     seen_top = cx_top is not None
     seen_mid = cx_mid is not None
-    seen_bot = cx_bot is not None
-    any_seen = seen_top or seen_mid or seen_bot
-    all_seen = seen_top and seen_mid and seen_bot
+    any_seen = seen_bot or seen_mid or seen_top
+    all_seen = seen_bot and seen_mid and seen_top
 
-    cx_bot_use = cx_bot or cx_mid or cx_top or cx_ref
-    cx_mid_use = cx_mid or cx_bot_use
-    cx_top_use = cx_top or cx_mid_use
+    if seen_bot:
+        cx_bot_use = cx_bot
+        cx_mid_use = cx_mid if cx_mid is not None else cx_bot
+        cx_top_use = cx_top if cx_top is not None else cx_mid_use
+    else:
+        # no bottom: only near-center top/mid may survive
+        if seen_mid:
+            cx_mid_use = cx_mid
+            cx_top_use = cx_top if cx_top is not None else cx_mid
+            cx_bot_use = cx_mid
+        elif seen_top:
+            cx_top_use = cx_top
+            cx_mid_use = cx_top
+            cx_bot_use = cx_top
+        else:
+            cx_bot_use = cx_ref
+            cx_mid_use = cx_ref
+            cx_top_use = cx_ref
 
     err_top = float(cx_top_use - cx_ref)
     err_mid = float(cx_mid_use - cx_ref)
@@ -165,7 +204,6 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         y_bot=y_bot,
         mask=mask_td
     )
-
 
 def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
                       cx_top, cx_mid, cx_bot, band_thickness, steer_error):
