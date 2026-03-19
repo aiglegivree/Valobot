@@ -41,8 +41,15 @@ while True:
     if not USE_FULLSCREEN_ROI:
         cv2.rectangle(display, (0, ROI_START), (W - 1, H - 1), (0, 255, 0), 2)
 
-    cv2.putText(display, "c: capture | q: quit", (20, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
+    cv2.putText(
+        display,
+        "c: capture | q: quit",
+        (20, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0),
+        2
+    )
 
     cv2.imshow("Camera", display)
     key = cv2.waitKey(1) & 0xFF
@@ -69,13 +76,13 @@ if len(captured_files) == 0:
 # ============================================================
 # ROI SELECTION + HSV COLLECTION
 # ============================================================
-all_h = []
-all_s = []
-all_v = []
+line_h, line_s, line_v = [], [], []
+bg_h, bg_s, bg_v = [], [], []
 
 for filename in captured_files:
     img = cv2.imread(filename)
     if img is None:
+        print(f"Could not read: {filename}")
         continue
 
     if USE_FULLSCREEN_ROI:
@@ -83,35 +90,84 @@ for filename in captured_files:
     else:
         roi_for_selection = img[ROI_START:H, :].copy()
 
+    # Show reminder image
+    preview = roi_for_selection.copy()
+    cv2.putText(
+        preview,
+        "Select LINE ROI, then NON-LINE ROI",
+        (20, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 255, 0),
+        2
+    )
+    cv2.imshow(f"Preview - {filename}", preview)
+    cv2.waitKey(500)
+    cv2.destroyWindow(f"Preview - {filename}")
+
+    # ---------------- LINE ROI ----------------
     print(f"\nSelect the LINE region in: {filename}")
     print("Draw a rectangle around the line, then press ENTER or SPACE.")
-    print("Press c to cancel this image.")
+    print("Press c to cancel this selection.")
 
-    rect = cv2.selectROI(f"Select LINE ROI - {filename}", roi_for_selection, fromCenter=False, showCrosshair=True)
-    cv2.destroyWindow(f"Select LINE ROI - {filename}")
+    rect_line = cv2.selectROI(
+        f"LINE ROI - {filename}",
+        roi_for_selection,
+        fromCenter=False,
+        showCrosshair=True
+    )
+    cv2.destroyWindow(f"LINE ROI - {filename}")
 
-    x, y, w, h = rect
+    x, y, w, h = rect_line
     if w == 0 or h == 0:
-        print(f"Skipped: {filename}")
+        print(f"Skipped LINE ROI for: {filename}")
         continue
 
     line_roi = roi_for_selection[y:y+h, x:x+w]
+    hsv_line = cv2.cvtColor(line_roi, cv2.COLOR_BGR2HSV)
 
-    hsv = cv2.cvtColor(line_roi, cv2.COLOR_BGR2HSV)
-    h_chan = hsv[:, :, 0].flatten()
-    s_chan = hsv[:, :, 1].flatten()
-    v_chan = hsv[:, :, 2].flatten()
+    line_h.extend(hsv_line[:, :, 0].flatten().tolist())
+    line_s.extend(hsv_line[:, :, 1].flatten().tolist())
+    line_v.extend(hsv_line[:, :, 2].flatten().tolist())
 
-    all_h.extend(h_chan.tolist())
-    all_s.extend(s_chan.tolist())
-    all_v.extend(v_chan.tolist())
+    # ---------------- NON-LINE ROI ----------------
+    print(f"Select a NON-LINE region in: {filename}")
+    print("Choose floor/table/background pixels, not the line.")
+    print("Press ENTER or SPACE to validate, c to cancel.")
 
-if len(all_h) == 0:
-    raise RuntimeError("No ROI selected. No HSV data collected.")
+    rect_bg = cv2.selectROI(
+        f"NON-LINE ROI - {filename}",
+        roi_for_selection,
+        fromCenter=False,
+        showCrosshair=True
+    )
+    cv2.destroyWindow(f"NON-LINE ROI - {filename}")
 
-all_h = np.array(all_h)
-all_s = np.array(all_s)
-all_v = np.array(all_v)
+    x, y, w, h = rect_bg
+    if w == 0 or h == 0:
+        print(f"Skipped NON-LINE ROI for: {filename}")
+        continue
+
+    bg_roi = roi_for_selection[y:y+h, x:x+w]
+    hsv_bg = cv2.cvtColor(bg_roi, cv2.COLOR_BGR2HSV)
+
+    bg_h.extend(hsv_bg[:, :, 0].flatten().tolist())
+    bg_s.extend(hsv_bg[:, :, 1].flatten().tolist())
+    bg_v.extend(hsv_bg[:, :, 2].flatten().tolist())
+
+if len(line_h) == 0:
+    raise RuntimeError("No LINE ROI selected. No line HSV data collected.")
+
+if len(bg_h) == 0:
+    raise RuntimeError("No NON-LINE ROI selected. No background HSV data collected.")
+
+line_h = np.array(line_h)
+line_s = np.array(line_s)
+line_v = np.array(line_v)
+
+bg_h = np.array(bg_h)
+bg_s = np.array(bg_s)
+bg_v = np.array(bg_v)
 
 # ============================================================
 # STATS
@@ -132,30 +188,66 @@ def describe_channel(name, arr):
     print(f"  p95   = {np.percentile(arr, 95):.2f}")
     print(f"  p99   = {np.percentile(arr, 99):.2f}")
 
-describe_channel("H", all_h)
-describe_channel("S", all_s)
-describe_channel("V", all_v)
+print("\n================ LINE PIXELS ================")
+describe_channel("H", line_h)
+describe_channel("S", line_s)
+describe_channel("V", line_v)
+
+print("\n============== NON-LINE PIXELS ==============")
+describe_channel("H", bg_h)
+describe_channel("S", bg_s)
+describe_channel("V", bg_v)
 
 # ============================================================
 # THRESHOLD SUGGESTION
 # ============================================================
-# For a black line, H is usually not very useful.
-# A practical first guess is:
-# - allow all H
-# - set Smax around the 95th percentile
-# - set Vmax around the 95th percentile
-s_max = int(np.percentile(all_s, 95))
-v_max = int(np.percentile(all_v, 95))
+# For a black line:
+# - H is usually not very useful
+# - S and especially V matter more
+# A practical first guess is based on upper percentiles of line pixels.
+line_s95 = int(np.percentile(line_s, 95))
+line_v95 = int(np.percentile(line_v, 95))
 
-print("\nSuggested first black threshold:")
-print(f"lower_black = np.array([0, 0, 0])")
-print(f"upper_black = np.array([180, {s_max}, {v_max}])")
+print("\nSuggested first black threshold from LINE pixels only:")
+print("lower_black = np.array([0, 0, 0])")
+print(f"upper_black = np.array([180, {line_s95}, {line_v95}])")
+
+# Optional separation-based suggestion
+line_v95_sep = np.percentile(line_v, 95)
+bg_v05_sep = np.percentile(bg_v, 5)
+line_s95_sep = np.percentile(line_s, 95)
+bg_s05_sep = np.percentile(bg_s, 5)
+
+print("\nSeparation hints:")
+print(f"LINE V p95       = {line_v95_sep:.2f}")
+print(f"NON-LINE V p5    = {bg_v05_sep:.2f}")
+print(f"LINE S p95       = {line_s95_sep:.2f}")
+print(f"NON-LINE S p5    = {bg_s05_sep:.2f}")
+
+if line_v95_sep < bg_v05_sep:
+    suggested_v = int((line_v95_sep + bg_v05_sep) / 2)
+    print(f"Suggested Vmax from separation = {suggested_v}")
+else:
+    suggested_v = int(line_v95_sep)
+    print("V distributions overlap too much; using LINE p95 as fallback.")
+
+if line_s95_sep < bg_s05_sep:
+    suggested_s = int((line_s95_sep + bg_s05_sep) / 2)
+    print(f"Suggested Smax from separation = {suggested_s}")
+else:
+    suggested_s = int(line_s95_sep)
+    print("S distributions overlap too much; using LINE p95 as fallback.")
+
+print("\nPractical threshold to test:")
+print("lower_black = np.array([0, 0, 0])")
+print(f"upper_black = np.array([180, {suggested_s}, {suggested_v}])")
 
 # ============================================================
 # HISTOGRAM DISPLAY
 # ============================================================
 def draw_histogram(values, bins, width, height, title, color_bgr):
-    hist, bin_edges = np.histogram(values, bins=bins, range=(0, bins))
+    max_value = 180 if bins == 180 else 256
+    hist, _ = np.histogram(values, bins=bins, range=(0, max_value))
     hist = hist.astype(np.float32)
 
     if hist.max() > 0:
@@ -166,21 +258,44 @@ def draw_histogram(values, bins, width, height, title, color_bgr):
     for i in range(bins):
         x1 = int(i * width / bins)
         x2 = int((i + 1) * width / bins)
-        bar_h = int(hist[i] * (height - 30))
-        cv2.rectangle(canvas, (x1, height - 1), (x2, height - 1 - bar_h), color_bgr, -1)
+        bar_h = int(hist[i] * (height - 40))
+        cv2.rectangle(
+            canvas,
+            (x1, height - 1),
+            (x2, height - 1 - bar_h),
+            color_bgr,
+            -1
+        )
 
-    cv2.putText(canvas, title, (10, 25),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    cv2.putText(
+        canvas,
+        title,
+        (10, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (255, 255, 255),
+        2
+    )
     return canvas
 
-hist_h = draw_histogram(all_h, 180, 900, 300, "Hue distribution", (255, 200, 0))
-hist_s = draw_histogram(all_s, 256, 900, 300, "Saturation distribution", (0, 255, 255))
-hist_v = draw_histogram(all_v, 256, 900, 300, "Value distribution", (200, 200, 200))
+# LINE histograms
+hist_line_h = draw_histogram(line_h, 180, 900, 300, "LINE H distribution", (255, 200, 0))
+hist_line_s = draw_histogram(line_s, 256, 900, 300, "LINE S distribution", (0, 255, 255))
+hist_line_v = draw_histogram(line_v, 256, 900, 300, "LINE V distribution", (200, 200, 200))
 
-cv2.imshow("H histogram", hist_h)
-cv2.imshow("S histogram", hist_s)
-cv2.imshow("V histogram", hist_v)
+# NON-LINE histograms
+hist_bg_h = draw_histogram(bg_h, 180, 900, 300, "NON-LINE H distribution", (0, 100, 255))
+hist_bg_s = draw_histogram(bg_s, 256, 900, 300, "NON-LINE S distribution", (0, 0, 255))
+hist_bg_v = draw_histogram(bg_v, 256, 900, 300, "NON-LINE V distribution", (255, 255, 255))
 
-print("\nPress any key on the histogram windows to close.")
+cv2.imshow("LINE H histogram", hist_line_h)
+cv2.imshow("LINE S histogram", hist_line_s)
+cv2.imshow("LINE V histogram", hist_line_v)
+
+cv2.imshow("NON-LINE H histogram", hist_bg_h)
+cv2.imshow("NON-LINE S histogram", hist_bg_s)
+cv2.imshow("NON-LINE V histogram", hist_bg_v)
+
+print("\nPress any key on a histogram window to close.")
 cv2.waitKey(0)
 cv2.destroyAllWindows()
