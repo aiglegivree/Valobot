@@ -77,7 +77,7 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
     lower_black = np.array([0, 0, 0])
-    upper_black = np.array([180, 100, 100])
+    upper_black = np.array([255, 255, 60])
 
     mask = cv2.inRange(hsv, lower_black, upper_black)
 
