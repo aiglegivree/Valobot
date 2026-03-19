@@ -6,17 +6,17 @@ from camera import Camera
 picam = Camera()
 
 # Get frame size (grab one frame first)
-frame = picam.get_frame()
+ret, frame = picam.read()
 height, width, _ = frame.shape
 
 # Define video writer (adjust codec if needed)
 fourcc = cv2.VideoWriter_fourcc(*'XVID')
-out = cv2.VideoWriter('output.avi', fourcc, 20.0, (width, height))
+out = cv2.VideoWriter('output2.avi', fourcc, 20.0, (width, height))
 
 start_time = time.time()
 
 while True:
-    frame = picam.get_frame()
+    ret, frame = picam.read()
 
     # Write frame to video
     out.write(frame)
