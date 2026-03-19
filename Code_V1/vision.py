@@ -10,7 +10,8 @@ from config import (
     KERNEL_SIZE, MORPH_CLOSE_IT, MORPH_OPEN_IT,
     BAND_THICKNESS,
     SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
-    W_TOP, W_MID, W_BOT
+    W_TOP, W_MID, W_BOT,
+    MAX_DIST_FROM_BOTTOM_CENTER, MIN_CONTOUR_AREA
 )
 
 
@@ -44,22 +45,31 @@ def correct_top_down(mask: np.ndarray, angle_deg: float = 20) -> np.ndarray:
     Approximate top-down view of a flat surface given the camera tilt.
     Stretches the vertical axis to undo foreshortening.
     """
-    scale = 1 / np.cos(np.radians(angle_deg))  # stretch vertical
+    scale = 1 / np.cos(np.radians(angle_deg))
     h, w = mask.shape
     new_h = int(h * scale)
     top_down = cv2.resize(mask, (w, new_h))
     return top_down
 
 
+def contour_min_distance_to_point(cnt: np.ndarray, px: int, py: int) -> float:
+    """
+    Return the minimum Euclidean distance between a contour and a point.
+    """
+    pts = cnt[:, 0, :].astype(np.float32)   # shape (N, 2)
+    dx = pts[:, 0] - px
+    dy = pts[:, 1] - py
+    d2 = dx * dx + dy * dy
+    return float(np.sqrt(d2.min()))
+
+
 def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     """
     Compute a cleaned mask for the ROI (line detection).
+    Keep only contours that pass close enough to the bottom-center anchor.
     """
     roi_start = int(H * ROI_START_FRAC)
     roi = frame_bgr[roi_start:H, :]
-
-    gray = cv2.GaussianBlur(roi, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
-
 
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
@@ -75,18 +85,30 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     clean_mask = np.zeros_like(mask)
-    center_x = mask.shape[1] // 2
+
+    h_roi, w_roi = mask.shape
+    anchor_x = w_roi // 2
+    anchor_y = h_roi - 1
 
     best_contour = None
     best_score = float("inf")
 
     for cnt in contours:
-        if cv2.contourArea(cnt) < 200:
+        area = cv2.contourArea(cnt)
+        if area < MIN_CONTOUR_AREA:
             continue
+
+        # contrainte de distance au centre bas
+        min_dist = contour_min_distance_to_point(cnt, anchor_x, anchor_y)
+        if min_dist > MAX_DIST_FROM_BOTTOM_CENTER:
+            continue
+
+        # parmi les contours valides, on garde celui qui est le plus proche
+        # du centre bas et qui descend le plus bas
         bottom_point = cnt[cnt[:, :, 1].argmax()][0]
-        x, y = bottom_point
-        dist = abs(x - center_x)
-        score = dist - y * 0.1
+        x_bottom, y_bottom = bottom_point
+
+        score = min_dist - 0.2 * y_bottom
         if score < best_score:
             best_score = score
             best_contour = cnt
@@ -119,12 +141,10 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     """
     mask, roi_start = compute_mask_from_frame(frame_bgr)
 
-    # Apply top-down correction
     mask_td = correct_top_down(mask, angle_deg)
     h_td, w_td = mask_td.shape
     cx_ref = w_td // 2
 
-    # Compute slice positions relative to top-down mask
     y_top = int(SLICE_TOP_FRAC * h_td)
     y_mid = int(SLICE_MID_FRAC * h_td)
     y_bot = int(SLICE_BOT_FRAC * h_td)
@@ -139,7 +159,6 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     any_seen = seen_top or seen_mid or seen_bot
     all_seen = seen_top and seen_mid and seen_bot
 
-    # Fallbacks for missing slices
     cx_bot_use = cx_bot or cx_mid or cx_top or cx_ref
     cx_mid_use = cx_mid or cx_bot_use
     cx_top_use = cx_top or cx_mid_use
@@ -174,15 +193,19 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
                       cx_top, cx_mid, cx_bot, band_thickness, steer_error):
     """
-    Draw ROI, slices, centers, and steering error on the frame.
+    Draw ROI, slices, centers, steering error, and anchor zone on the frame.
     """
     out = cv2.cvtColor(frame_bgr.copy(), cv2.COLOR_BGR2RGB)
     h_roi, w_roi = mask.shape
     cx_ref = w_roi // 2
 
-    # ROI rectangle
     cv2.rectangle(out, (0, roi_start), (w_roi - 1, roi_start + h_roi - 1), (0, 255, 255), 2)
     cv2.line(out, (cx_ref, roi_start), (cx_ref, roi_start + h_roi - 1), (255, 0, 0), 2)
+
+    # cercle de validation autour du centre bas
+    anchor = (cx_ref, roi_start + h_roi - 1)
+    cv2.circle(out, anchor, MAX_DIST_FROM_BOTTOM_CENTER, (255, 255, 0), 2)
+    cv2.circle(out, anchor, 5, (255, 255, 0), -1)
 
     def draw_one_slice(y, cx, color, name):
         y0 = max(0, y - band_thickness)
@@ -200,6 +223,7 @@ def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
     draw_one_slice(y_top, cx_top, (0, 255, 0), "TOP")
     draw_one_slice(y_mid, cx_mid, (0, 200, 255), "MID")
     draw_one_slice(y_bot, cx_bot, (0, 0, 255), "BOT")
+
     cv2.putText(out, f"Steer error: {steer_error:.2f}", (10, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
     return out
