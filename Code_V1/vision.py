@@ -11,7 +11,7 @@ from config import (
     BAND_THICKNESS,
     SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
     W_TOP, W_MID, W_BOT,
-    MAX_DIST_FROM_BOTTOM_CENTER, MIN_CONTOUR_AREA
+    BOTTOM_SLICE_MAX_DIST
 )
 
 
@@ -52,21 +52,9 @@ def correct_top_down(mask: np.ndarray, angle_deg: float = 20) -> np.ndarray:
     return top_down
 
 
-def contour_min_distance_to_point(cnt: np.ndarray, px: int, py: int) -> float:
-    """
-    Return the minimum Euclidean distance between a contour and a point.
-    """
-    pts = cnt[:, 0, :].astype(np.float32)   # shape (N, 2)
-    dx = pts[:, 0] - px
-    dy = pts[:, 1] - py
-    d2 = dx * dx + dy * dy
-    return float(np.sqrt(d2.min()))
-
-
 def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     """
     Compute a cleaned mask for the ROI (line detection).
-    Keep only contours that pass close enough to the bottom-center anchor.
     """
     roi_start = int(H * ROI_START_FRAC)
     roi = frame_bgr[roi_start:H, :]
@@ -82,55 +70,37 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=MORPH_OPEN_IT)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    clean_mask = np.zeros_like(mask)
-
-    h_roi, w_roi = mask.shape
-    anchor_x = w_roi // 2
-    anchor_y = h_roi - 1
-
-    best_contour = None
-    best_score = float("inf")
-
-    for cnt in contours:
-        area = cv2.contourArea(cnt)
-        if area < MIN_CONTOUR_AREA:
-            continue
-
-        # contrainte de distance au centre bas
-        min_dist = contour_min_distance_to_point(cnt, anchor_x, anchor_y)
-        if min_dist > MAX_DIST_FROM_BOTTOM_CENTER:
-            continue
-
-        # parmi les contours valides, on garde celui qui est le plus proche
-        # du centre bas et qui descend le plus bas
-        bottom_point = cnt[cnt[:, :, 1].argmax()][0]
-        x_bottom, y_bottom = bottom_point
-
-        score = min_dist - 0.2 * y_bottom
-        if score < best_score:
-            best_score = score
-            best_contour = cnt
-
-    if best_contour is not None:
-        cv2.drawContours(clean_mask, [best_contour], -1, 255, thickness=cv2.FILLED)
-
-    return clean_mask, roi_start
+    return mask, roi_start
 
 
-def get_band_center(mask: np.ndarray, y_frac: float, thickness: int) -> tuple[int | None, int]:
+def get_band_center(mask: np.ndarray, y_frac: float, thickness: int,
+                    x_center: int | None = None,
+                    max_x_dist: int | None = None) -> tuple[int | None, int]:
     """
     Compute the horizontal center of a band in the mask.
+    Optionally restrict pixels to a horizontal window around x_center.
     """
     h, w = mask.shape
     y = int(h * y_frac)
+
     y0 = max(0, y - thickness)
     y1 = min(h, y + thickness + 1)
     band = mask[y0:y1, :]
+
+    if x_center is not None and max_x_dist is not None:
+        x0 = max(0, x_center - max_x_dist)
+        x1 = min(w, x_center + max_x_dist + 1)
+        band_used = band[:, x0:x1]
+        ys, xs = np.where(band_used > 0)
+        if xs.size == 0:
+            return None, y
+        cx = int(xs.mean()) + x0
+        return cx, y
+
     ys, xs = np.where(band > 0)
     if xs.size == 0:
         return None, y
+
     cx = int(xs.mean())
     return cx, y
 
@@ -138,6 +108,7 @@ def get_band_center(mask: np.ndarray, y_frac: float, thickness: int) -> tuple[in
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     """
     Detect the line and compute top-down slices and steering error.
+    Only the bottom slice is constrained near the image center.
     """
     mask, roi_start = compute_mask_from_frame(frame_bgr)
 
@@ -151,7 +122,13 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 
     cx_top, _ = get_band_center(mask_td, SLICE_TOP_FRAC, BAND_THICKNESS)
     cx_mid, _ = get_band_center(mask_td, SLICE_MID_FRAC, BAND_THICKNESS)
-    cx_bot, _ = get_band_center(mask_td, SLICE_BOT_FRAC, BAND_THICKNESS)
+    cx_bot, _ = get_band_center(
+        mask_td,
+        SLICE_BOT_FRAC,
+        BAND_THICKNESS,
+        x_center=cx_ref,
+        max_x_dist=BOTTOM_SLICE_MAX_DIST
+    )
 
     seen_top = cx_top is not None
     seen_mid = cx_mid is not None
@@ -193,7 +170,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
                       cx_top, cx_mid, cx_bot, band_thickness, steer_error):
     """
-    Draw ROI, slices, centers, steering error, and anchor zone on the frame.
+    Draw ROI, slices, centers, and steering error on the frame.
     """
     out = cv2.cvtColor(frame_bgr.copy(), cv2.COLOR_BGR2RGB)
     h_roi, w_roi = mask.shape
@@ -202,16 +179,17 @@ def draw_debug_slices(frame_bgr, mask, roi_start, y_top, y_mid, y_bot,
     cv2.rectangle(out, (0, roi_start), (w_roi - 1, roi_start + h_roi - 1), (0, 255, 255), 2)
     cv2.line(out, (cx_ref, roi_start), (cx_ref, roi_start + h_roi - 1), (255, 0, 0), 2)
 
-    # cercle de validation autour du centre bas
-    anchor = (cx_ref, roi_start + h_roi - 1)
-    cv2.circle(out, anchor, MAX_DIST_FROM_BOTTOM_CENTER, (255, 255, 0), 2)
-    cv2.circle(out, anchor, 5, (255, 255, 0), -1)
-
     def draw_one_slice(y, cx, color, name):
         y0 = max(0, y - band_thickness)
         y1 = min(h_roi - 1, y + band_thickness)
         cv2.rectangle(out, (0, roi_start + y0), (w_roi - 1, roi_start + y1), color, 1)
         cv2.line(out, (0, roi_start + y), (w_roi - 1, roi_start + y), color, 1)
+
+        if name == "BOT":
+            x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
+            x1 = min(w_roi - 1, cx_ref + BOTTOM_SLICE_MAX_DIST)
+            cv2.rectangle(out, (x0, roi_start + y0), (x1, roi_start + y1), (255, 255, 0), 2)
+
         if cx is not None:
             cv2.circle(out, (cx, roi_start + y), 6, color, -1)
             cv2.putText(out, f"{name}: {cx}", (10, roi_start + y - 8),
@@ -236,13 +214,23 @@ def draw_mask_slices(mask, y_top, y_mid, y_bot, cx_top, cx_mid, cx_bot):
     vis = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
     cx_ref = mask.shape[1] // 2
 
-    def draw_one(y, cx, color):
+    def draw_one(y, cx, color, draw_limit=False):
         cv2.line(vis, (0, y), (mask.shape[1] - 1, y), color, 1)
+        if draw_limit:
+            x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
+            x1 = min(mask.shape[1] - 1, cx_ref + BOTTOM_SLICE_MAX_DIST)
+            cv2.rectangle(
+                vis,
+                (x0, max(0, y - BAND_THICKNESS)),
+                (x1, min(mask.shape[0] - 1, y + BAND_THICKNESS)),
+                (255, 255, 0),
+                2
+            )
         if cx is not None:
             cv2.circle(vis, (cx, y), 5, color, -1)
 
     draw_one(y_top, cx_top, (0, 255, 0))
     draw_one(y_mid, cx_mid, (0, 200, 255))
-    draw_one(y_bot, cx_bot, (0, 0, 255))
+    draw_one(y_bot, cx_bot, (0, 0, 255), draw_limit=True)
     cv2.line(vis, (cx_ref, 0), (cx_ref, mask.shape[0] - 1), (255, 0, 0), 1)
     return vis
