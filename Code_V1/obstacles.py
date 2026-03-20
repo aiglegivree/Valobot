@@ -1,102 +1,140 @@
 import cv2
 import numpy as np
-from camera import Camera
 import math
+from camera import Camera
 
-# Function to fit a line through segment endpoints
-def fit_one_line(segments):
-	if len(segments) == 0:
-		return None
-	points = []
-	for x1, y1, x2, y2 in segments:
-		points.append([x1, y1])
-		points.append([x2, y2])
-	points = np.array(points)
 
-	# Fit line
-	vx, vy, x0, y0 = cv2.fitLine(points, cv2.DIST_L2, 0, 0.01, 0.01)
+proto = False
 
-	height, width = original.shape[:2]
+def fill_holes(mask):
+    h, w = mask.shape
 
-	# Extend line to image borders
-	if abs(vx) < 1e-5:
-		# vertical line
-		x1, y1 = int(x0), 0
-		x2, y2 = int(x0), height
-	else:
-		# y = vy/vx * (x - x0) + y0
-		y1 = int((-x0 * vy / vx) + y0)
-		y2 = int(((width - x0) * vy / vx) + y0)
-		x1, x2 = 0, width
+    flood = mask.copy()
+    flood_mask = np.zeros((h + 2, w + 2), np.uint8)
 
-	return (x1, y1, x2, y2)
+    cv2.floodFill(flood, flood_mask, (0, 0), 255)
+    flood_inv = cv2.bitwise_not(flood)
+    filled = cv2.bitwise_or(mask, flood_inv)
 
-picam = Camera()
+    return filled
+
+
+def draw_hough_line(image, rho, theta, color, thickness=2):
+    a = np.cos(theta)
+    b = np.sin(theta)
+
+    x0 = a * rho
+    y0 = b * rho
+
+    x1 = int(x0 + 1000 * (-b))
+    y1 = int(y0 + 1000 * (a))
+    x2 = int(x0 - 1000 * (-b))
+    y2 = int(y0 - 1000 * (a))
+
+    cv2.line(image, (x1, y1), (x2, y2), color, thickness)
+
+
+def median_line(lines):
+    """
+    lines: list of (rho, theta)
+    returns: (median_rho, median_theta) or None
+    """
+    if not lines:
+        return None
+
+    rhos = np.array([line[0] for line in lines], dtype=np.float32)
+    thetas = np.array([line[1] for line in lines], dtype=np.float32)
+
+    median_rho = float(np.median(rhos))
+    median_theta = float(np.median(thetas))
+
+    return median_rho, median_theta
+
+if proto == True:
+    cap = cv2.VideoCapture("movement.avi")
+
+    if not cap.isOpened():
+        print("Error: Cannot open video")
+        exit()
+else:
+    cap = Camera()
 
 while True:
-	ret, frame = picam.read()
-	original = frame.copy()
-	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-	
-	height, width = gray.shape
-	_, mask = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-	
-	blur = cv2.GaussianBlur(mask, (7,7), 0)
-	edges = cv2.Canny(blur, 115, 150, apertureSize = 3)
-	
-	kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (9,9))
-	edges_closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
-	
-	lines = cv2.HoughLinesP(
-		edges_closed,
-		rho=1,
-		theta=np.pi/180,
-		threshold=20,
-		minLineLength = 30,
-		maxLineGap = 30
-	)
-	left_segments = []
-	right_segments = []
-	front_segments = []
+    ret, frame = cap.read()
+
+    if proto and not ret:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        continue
+
+    original = frame.copy()
+    H, W, _ = original.shape
+
+    blur = cv2.GaussianBlur(original, (3, 3), 1)
+    hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
+
+    lower = np.array([31, 98, 0], dtype=np.uint8)
+    upper = np.array([74, 255, 255], dtype=np.uint8)
+    mask = cv2.inRange(hsv, lower, upper)
+
+    mask = fill_holes(mask)
+
+    kernel = np.ones((5, 5), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    kernel = np.ones((17, 17), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    edges = cv2.Canny(mask, 50, 150)
+
+    lines = cv2.HoughLines(
+        edges,
+        rho=1,
+        theta=np.pi / 180,
+        threshold=34
+    )
+
+    horizontal_lines = []
+    left_lines = []
+    right_lines = []
 
     if lines is not None:
         for line in lines:
-            x1, y1, x2, y2 = line[0]
+            rho, theta = line[0]
+            deg = math.degrees(theta)
 
-            # Ignore very short segments
-            if np.hypot(x2-x1, y2-y1) < 20:
-                continue
+            # Horizontal-ish: theta near 90 deg
+            if 85 < deg < 95:
+                horizontal_lines.append((rho, theta))
 
-            delta_x = x2 - x1
-            delta_y = y1 - y2  # careful with y-axis in images
-            angle = math.degrees(math.atan2(delta_y, delta_x))
+            # Left-leaning group
+            elif 30 < deg < 80:
+                left_lines.append((rho, theta))
 
-            # Classify by angle
-            if 10 < angle < 70:
-                left_segments.append([x1, y1, x2, y2])
-            elif -70 < angle < -10:
-                right_segments.append([x1, y1, x2, y2])
-            elif -10 <= angle <= 10:
-                front_segments.append([x1, y1, x2, y2])
+            # Right-leaning group
+            elif 100 < deg < 150:
+                right_lines.append((rho, theta))
 
-    # Draw fitted lines
-    left_line = fit_one_line(left_segments)
-    right_line = fit_one_line(right_segments)
-    front_line = fit_one_line(front_segments)
+    # Get one representative per class
+    horizontal_rep = median_line(horizontal_lines)
+    left_rep = median_line(left_lines)
+    right_rep = median_line(right_lines)
 
-    if left_line:
-        cv2.line(original, (left_line[0], left_line[1]), (left_line[2], left_line[3]), (0,0,255), 3)
-    if right_line:
-        cv2.line(original, (right_line[0], right_line[1]), (right_line[2], right_line[3]), (0,255,0), 3)
-    if front_line:
-        cv2.line(original, (front_line[0], front_line[1]), (front_line[2], front_line[3]), (255,0,0), 3)
-			
-			
-			
-			
-			#cv2.line(original, (x1, y1), (x2, y2), (0,255,0), 2)
-	
-	cv2.imshow("Original frame", original)
-	cv2.imshow("edges frame", edges_closed)
+    # Draw only representatives
+    if horizontal_rep is not None:
+        draw_hough_line(original, horizontal_rep[0], horizontal_rep[1], (0, 255, 255), 3)  # yellow
 
-	cv2.waitKey(1)
+    if left_rep is not None:
+        draw_hough_line(original, left_rep[0], left_rep[1], (0, 0, 255), 3)  # red
+
+    if right_rep is not None:
+        draw_hough_line(original, right_rep[0], right_rep[1], (0, 255, 0), 3)  # green
+
+    cv2.imshow("Video Playback", original)
+    cv2.imshow("Mask", mask)
+    cv2.imshow("Edges", edges)
+
+    if cv2.waitKey(30) & 0xFF == ord("q"):
+        break
+
+cap.release()
+cv2.destroyAllWindows()
