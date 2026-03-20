@@ -90,7 +90,7 @@ while True:
         edges,
         rho=1,
         theta=np.pi / 180,
-        threshold=34
+        threshold=25
     )
 
     horizontal_lines = []
@@ -130,8 +130,8 @@ while True:
         draw_hough_line(original, right_rep[0], right_rep[1], (0, 255, 0), 3)  # green
 
     cv2.imshow("Video Playback", original)
-    cv2.imshow("Mask", mask)
-    cv2.imshow("Edges", edges)
+    #cv2.imshow("Mask", mask)
+    #cv2.imshow("Edges", edges)
 
     if cv2.waitKey(30) & 0xFF == ord("q"):
         break
