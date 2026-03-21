@@ -7,10 +7,6 @@ import time
 from config import W, H
 from camera import Camera
 from motors import MotorDriver
-<<<<<<< HEAD
-=======
-from camera import read  
->>>>>>> 89e3b16 (before pull)
 
 # ============================================================
 # CONFIG
@@ -62,13 +58,8 @@ def run():
 
     try:
         while True:
-<<<<<<< HEAD
             ret, frame = cam.read()
             if not ret or frame is None:
-=======
-            frame = read()
-            if frame is None:
->>>>>>> 89e3b16 (before pull)
                 motor.set_speed(0, 0)
                 continue
 
@@ -138,8 +129,4 @@ def run():
 
 
 if __name__ == "__main__":
-<<<<<<< HEAD
     run()
-=======
-    aim_and_fire()
->>>>>>> 89e3b16 (before pull)
