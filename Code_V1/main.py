@@ -25,6 +25,11 @@ while True:
     left, right, speed, steer, mode = controller.update(res)
     motors.set_speeds(left, right)
 
+    #end
+    if mode == "T_STOP":
+        leds.turn_off_all()
+        leds.aura_farm()
+
     # 3 Prepare top-down ROI for debug visualization
     # The mask is already top-down corrected; warp the frame ROI to match
     roi_start = res.roi_start
