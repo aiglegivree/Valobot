@@ -10,11 +10,11 @@ motor = MotorDriver()
 try:
     while True:
         # Turn right
-        motor.set_speed(TURN_SPEED, -TURN_SPEED)
+        motor.set_speeds(TURN_SPEED, -TURN_SPEED)
         time.sleep(2)
 
         # Turn left
-        motor.set_speed(-TURN_SPEED, TURN_SPEED)
+        motor.set_speeds(-TURN_SPEED, TURN_SPEED)
         time.sleep(2)
 
 except KeyboardInterrupt:

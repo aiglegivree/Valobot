@@ -11,13 +11,15 @@ import time
 import cv2
 import numpy as np
 from picamera2 import Picamera2
+from leds import LED
 
 
 WINDOW_CONTROLS = "HSV Controls"
 WINDOW_PREVIEW = "Camera Preview"
 WINDOW_MASK = "Mask"
 WINDOW_RESULT = "Segmented Result"
-
+leds = LED()
+leds.turn_off_all()
 
 def nothing(_):
     pass
