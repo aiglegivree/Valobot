@@ -196,6 +196,8 @@ class CorridorNavigator:
 
         kernel = np.ones((17, 17), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+        
+        cv2.imshow("Mask", mask)
 
         return mask
 

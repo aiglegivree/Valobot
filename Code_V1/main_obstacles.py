@@ -19,8 +19,8 @@ def main():
     # ------------------------------------------------------------
     # Forward-control tuning
     # ------------------------------------------------------------
-    base_speed = 0.20       # forward speed in [-1, 1]
-    k_p = 0.80               # proportional steering gain
+    base_speed = 0.2       # forward speed in [-1, 1]
+    k_p = 0.3               # proportional steering gain
     max_correction = 0.20    # limits steering effect
 
     # Fallback behavior when target is temporarily not visible
@@ -76,12 +76,6 @@ def main():
 
                     motors.set_speeds(left_speed, right_speed)
 
-                    # Debug text
-                    debug_text = (
-                        f"FORWARD | err={error_norm:.3f} | "
-                        f"L={left_speed:.3f} R={right_speed:.3f}"
-                    )
-                    print(debug_text)
 
                 else:
                     # If target is not visible, slow down instead of steering blindly
