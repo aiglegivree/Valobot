@@ -5,6 +5,7 @@ import math
 import cv2
 import numpy as np
 import RPi.GPIO as GPIO
+from leds import LED
 
 from config import (
     W, H,
@@ -22,7 +23,7 @@ from config import (
 from camera import Camera
 from motors import MotorDriver
 
-
+leds =LED()
 # ============================================================
 # SHOOTER
 # ============================================================
@@ -378,6 +379,7 @@ def main():
     cam = Camera()
     drive = MotorDriver()
     shooter = Shooter()
+    leds.turn_off_all()
 
     try:
         hits, shots = auto_fire_blue_targets(
@@ -387,6 +389,8 @@ def main():
             nb_targets_to_hit=NOMBRE_DE_CIBLES,
         )
         print(f"Final result: hits={hits}, shots={shots}")
+        aura_farm()
+        time.sleep(2)
 
     finally:
         drive.set_speeds(0, 0)
