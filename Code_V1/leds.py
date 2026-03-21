@@ -14,7 +14,12 @@ class LED:
 
         for pin in self.pins:
             GPIO.setup(pin, GPIO.OUT)
-            GPIO.output(pin, GPIO.HIGH)  # start OFF
+            GPIO.output(pin, GPIO.HIGH)  # OFF
+
+        self._running = False
+        self._index = 0
+        self._direction = 1
+        self._last_step_time = 0.0
 
     def turn_on_all(self):
         for pin in self.pins:
@@ -24,34 +29,38 @@ class LED:
         for pin in self.pins:
             GPIO.output(pin, GPIO.HIGH)
 
-    def aura_farm(self, stop=False, delay=0.05):
-        # Stop the running pattern
-        if stop:
-            self._running = False
-            return
-        
+    def aura_farm_start(self):
         self.turn_off_all()
         self._running = True
+        self._index = 0
+        self._direction = 1
+        self._last_step_time = 0.0
 
-        while self._running:
-            # Forward: 23 → 24 → 25 → 8
-            for pin in self.pins:
-                if not self._running:
-                    break
-                GPIO.output(pin, GPIO.LOW)
-                time.sleep(delay)
-                GPIO.output(pin, GPIO.HIGH)
+    def aura_farm_stop(self):
+        self._running = False
+        self.turn_off_all()
 
-            # Backward: 8 → 25 → 24 → 23
-            for pin in reversed(self.pins):
-                if not self._running:
-                    break
-                GPIO.output(pin, GPIO.LOW)
-                time.sleep(delay)
-                GPIO.output(pin, GPIO.HIGH)
+    def aura_farm_step(self, delay=0.05):
+        if not self._running:
+            return
+
+        now = time.time()
+        if now - self._last_step_time < delay:
+            return
+
+        self._last_step_time = now
+
+        self.turn_off_all()
+        GPIO.output(self.pins[self._index], GPIO.LOW)
+
+        self._index += self._direction
+
+        if self._index >= len(self.pins):
+            self._index = len(self.pins) - 2
+            self._direction = -1
+        elif self._index < 0:
+            self._index = 1
+            self._direction = 1
 
     def cleanup(self):
         GPIO.cleanup()
-
-
-

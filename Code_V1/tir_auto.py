@@ -205,18 +205,27 @@ def confirm_target_hit(
 # ============================================================
 def run_end_animation(cam: Camera, duration_s: float = 10.0):
     start = time.time()
+    leds.aura_farm_start()
 
     try:
-        while time.time() - start < duration_s:
-            leds.aura_farm()
+        while True:
+            now = time.time()
+            elapsed = now - start
 
+            if elapsed >= duration_s:
+                break
+
+            # met à jour l'animation LED sans bloquer
+            leds.aura_farm_step(delay=0.05)
+
+            # garde la caméra active
             ret, frame = cam.read()
             if ret and frame is not None:
                 frame = cv2.resize(frame, (W, H))
 
                 if SHOW_DEBUG:
-                    remaining = max(0.0, duration_s - (time.time() - start))
                     debug = frame.copy()
+                    remaining = max(0.0, duration_s - elapsed)
 
                     cv2.putText(
                         debug,
@@ -228,29 +237,14 @@ def run_end_animation(cam: Camera, duration_s: float = 10.0):
                         2,
                     )
                     cv2.imshow("debug", debug)
-
-                    key = cv2.waitKey(1) & 0xFF
-                    if key == 27:
-                        break
-            else:
-                if SHOW_DEBUG:
-                    blank = np.zeros((H, W, 3), dtype=np.uint8)
-                    cv2.putText(
-                        blank,
-                        "AURA FARM - no frame",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        (255, 255, 255),
-                        2,
-                    )
-                    cv2.imshow("debug", blank)
                     cv2.waitKey(1)
+            else:
+                cv2.waitKey(1)
 
-            time.sleep(0.02)
+            time.sleep(0.01)
 
     finally:
-        leds.turn_off_all()
+        leds.aura_farm_stop()
 
 
 # ============================================================
