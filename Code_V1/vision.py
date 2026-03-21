@@ -160,16 +160,25 @@ def detect_t_on_connected_mask(
     width_bot: int,
 ) -> tuple[bool, int | None]:
     """
-    Robust T detection:
-    - scan multiple rows
-    - find the horizontal run that contains the stem x-position
-    - require strong extension on both sides of the stem
-    - reject one-sided 90-degree turns
+    More robust T detection:
+    - bottom stem must be near image center
+    - detect a true horizontal bar around the stem x
+    - require strong width increase relative to bottom
+    - require balanced side extensions
+    - require vertical continuity below the detected bar (true stem)
     """
     if cx_bot is None or width_bot <= 0:
         return False, None
 
     h, w = connected_mask.shape
+    cx_ref = w // 2
+
+    # --------------------------------------------------
+    # 1) Reject if the bottom stem is too far from center
+    # --------------------------------------------------
+    if abs(cx_bot - cx_ref) > T_CENTER_MAX_ERR:
+        return False, None
+
     y_start = int(T_SCAN_Y_START_FRAC * h)
     y_end = int(T_SCAN_Y_END_FRAC * h)
 
@@ -178,6 +187,8 @@ def detect_t_on_connected_mask(
 
     consecutive_hits = 0
     first_hit_row = None
+    candidate_row = None
+    candidate_x = None
 
     for y in range(y_end, y_start - 1, -1):
         row = connected_mask[y, :] > 0
@@ -187,7 +198,7 @@ def detect_t_on_connected_mask(
             first_hit_row = None
             continue
 
-        # Find contiguous runs of foreground pixels
+        # contiguous runs
         padded = np.concatenate([[0], row.astype(np.uint8), [0]])
         diff = np.diff(padded)
         starts = np.where(diff == 1)[0]
@@ -215,7 +226,8 @@ def detect_t_on_connected_mask(
 
         width_ok = (
             width >= T_MIN_ABS_WIDTH and
-            width > T_WIDTH_RATIO * max(1, width_bot)
+            width > T_WIDTH_RATIO * max(1, width_bot) and
+            (width - width_bot) >= T_MIN_WIDTH_GAIN
         )
 
         both_sides_present = (
@@ -225,7 +237,7 @@ def detect_t_on_connected_mask(
 
         smaller = max(1, min(left_ext, right_ext))
         larger = max(left_ext, right_ext)
-        balanced = larger / smaller <= T_MAX_SIDE_RATIO
+        balanced = (larger / smaller) <= T_MAX_SIDE_RATIO
 
         bar_ok = width_ok and both_sides_present and balanced
 
@@ -233,14 +245,40 @@ def detect_t_on_connected_mask(
             consecutive_hits += 1
             if first_hit_row is None:
                 first_hit_row = y
+            candidate_row = y
+            candidate_x = cx_bot
         else:
             consecutive_hits = 0
             first_hit_row = None
+            candidate_row = None
+            candidate_x = None
 
         if consecutive_hits >= T_MIN_BAR_ROWS:
-            return True, first_hit_row
+            break
 
-    return False, None
+    if candidate_row is None or candidate_x is None:
+        return False, None
+
+    # --------------------------------------------------
+    # 2) Validate vertical stem continuity below bar
+    # --------------------------------------------------
+    y0 = candidate_row
+    y1 = min(h - 1, candidate_row + T_STEM_MIN_ROWS)
+
+    stem_hits = 0
+    required_hits = max(6, int(0.6 * (y1 - y0 + 1)))
+
+    for y in range(y0, y1 + 1):
+        x_left = max(0, candidate_x - T_STEM_X_TOL)
+        x_right = min(w, candidate_x + T_STEM_X_TOL + 1)
+
+        if np.any(connected_mask[y, x_left:x_right] > 0):
+            stem_hits += 1
+
+    if stem_hits < required_hits:
+        return False, None
+
+    return True, first_hit_row
 
 
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
