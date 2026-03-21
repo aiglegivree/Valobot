@@ -207,7 +207,6 @@ def main():
     post_shot_ignore_frames = 0
 
     try:
-        shooter.spin_flywheel(True)
 
         while True:
             ret, frame = cam.read()
@@ -226,7 +225,8 @@ def main():
 
                 if mode == "T_STOP" or getattr(res, "is_T", False):
                     motors.set_speeds(0, 0)
-                    time.sleep(0.2)
+                    shooter.spin_flywheel(True)     # <<< START flywheels HERE
+                    time.sleep(0.5)                 # allow spin-up
                     state = STATE_SHOOTING
                     lock_frames = 0
                     last_target_center = None
@@ -279,6 +279,7 @@ def main():
 
                 if mission_done:
                     motors.set_speeds(0, 0)
+                    shooter.spin_flywheel(False)    # <<< STOP flywheels HERE
                     time.sleep(0.2)
                     state = STATE_RETURN_TO_T
 
