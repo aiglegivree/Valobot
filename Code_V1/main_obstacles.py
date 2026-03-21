@@ -20,7 +20,7 @@ def main():
     # ------------------------------------------------------------
     # Forward-control tuning
     # ------------------------------------------------------------
-    base_speed = 0.35       # forward speed in [-1, 1]
+    base_speed = 0.2       # forward speed in [-1, 1]
     k_p = 0.2               # proportional steering gain
     max_correction = 0.20    # limits steering effect
 
@@ -29,7 +29,7 @@ def main():
 
     try:
         while True:
-            ret, vis = navigator.step(draw=True)
+            ret, vis = navigator.step(draw=False)
             if not ret:
                 print("No frame received. Stopping.")
                 break

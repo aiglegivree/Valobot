@@ -214,8 +214,6 @@ class CorridorNavigator:
     def detect_edges(mask):
         canny = cv2.Canny(mask, 50, 150)
         
-        cv2.imshow('Canny', canny)
-        
         return canny
 
     @staticmethod
