@@ -170,7 +170,7 @@ def confirm_target_hit(
     last_mask = None
     last_targets = None
 
-    time.sleep(0.35)   # laisse la cible tomber
+    time.sleep(0.35)
 
     no_target_count = 0
     checked_frames = 0
@@ -198,13 +198,57 @@ def confirm_target_hit(
 
     hit_confirmed = no_target_count >= 2
     return hit_confirmed, last_frame, last_mask, last_targets
+
+
 # ============================================================
-# LED END ANIMATION
+# LED END ANIMATION WITH CAMERA OPEN
 # ============================================================
-def run_end_animation(duration_s: float = 10.0):
+def run_end_animation(cam: Camera, duration_s: float = 10.0):
+    start = time.time()
+
     try:
-        leds.aura_farm()
-        time.sleep(duration_s)
+        while time.time() - start < duration_s:
+            leds.aura_farm()
+
+            ret, frame = cam.read()
+            if ret and frame is not None:
+                frame = cv2.resize(frame, (W, H))
+
+                if SHOW_DEBUG:
+                    remaining = max(0.0, duration_s - (time.time() - start))
+                    debug = frame.copy()
+
+                    cv2.putText(
+                        debug,
+                        f"AURA FARM {remaining:.1f}s",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (255, 255, 255),
+                        2,
+                    )
+                    cv2.imshow("debug", debug)
+
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == 27:
+                        break
+            else:
+                if SHOW_DEBUG:
+                    blank = np.zeros((H, W, 3), dtype=np.uint8)
+                    cv2.putText(
+                        blank,
+                        "AURA FARM - no frame",
+                        (10, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (255, 255, 255),
+                        2,
+                    )
+                    cv2.imshow("debug", blank)
+                    cv2.waitKey(1)
+
+            time.sleep(0.02)
+
     finally:
         leds.turn_off_all()
 
@@ -218,14 +262,6 @@ def auto_fire_blue_targets(
     shooter: Shooter,
     nb_targets_to_hit: int,
 ) -> tuple[int, int]:
-    """
-    Tire automatiquement jusqu'à:
-    - nb_targets_to_hit cibles touchées
-    - ou chargeur vide
-
-    Retourne:
-      (targets_hit, shots_fired)
-    """
     targets_hit = 0
     shots_fired = 0
     lock_count = 0
@@ -296,7 +332,6 @@ def auto_fire_blue_targets(
                         status = f"HIT confirmed | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
                         print(f"HIT confirmed -> {targets_hit}/{nb_targets_to_hit}")
 
-                        # arrêt immédiat si mission finie
                         if targets_hit >= nb_targets_to_hit:
                             drive.set_speeds(0, 0)
                             break
@@ -392,7 +427,10 @@ def main():
         )
         print(f"Final result: hits={hits}, shots={shots}")
 
-        run_end_animation(10.0)
+        drive.set_speeds(0, 0)
+        shooter.motor_stop()
+
+        run_end_animation(cam, 10.0)
 
     finally:
         drive.set_speeds(0, 0)
