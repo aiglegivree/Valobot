@@ -45,11 +45,11 @@ T_MAX_SIDE_RATIO = 1.8
 # vertical scan zone
 T_SCAN_Y_START_FRAC = 0.18
 T_SCAN_Y_END_FRAC   = 0.72
-T_MIN_BAR_ROWS = 4
+T_MIN_BAR_ROWS = 5
 
 # NEW robustness constraints
-T_CENTER_MAX_ERR = 45        # reject T if bottom stem too far from robot center
-T_MIN_WIDTH_GAIN = 60        # bar must be significantly wider than bottom
+T_CENTER_MAX_ERR = 80        # reject T if bottom stem too far from robot center
+T_MIN_WIDTH_GAIN = 70        # bar must be significantly wider than bottom
 T_STEM_MIN_ROWS = 18         # require vertical stem continuity
 T_STEM_X_TOL = 28            # tolerance around stem x when checking continuity
 
