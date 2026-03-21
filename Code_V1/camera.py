@@ -40,7 +40,6 @@ class Camera:
 
             frame = self.cam.capture_array()
             frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-
             return True, frame
 
         else:
