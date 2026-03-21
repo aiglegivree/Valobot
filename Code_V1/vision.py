@@ -19,9 +19,12 @@ from config import (
     # T detection
     T_WIDTH_RATIO,
     T_MIN_ABS_WIDTH,
-    T_SIDE_MARGIN,
+    T_CENTER_MAX_ERR,
     T_MIN_SIDE_EXT,
     T_MAX_SIDE_RATIO,
+    T_MIN_WIDTH_GAIN,
+    T_STEM_MIN_ROWS,
+    T_STEM_X_TOL,
 
     # vertical scan
     T_SCAN_Y_START_FRAC,
