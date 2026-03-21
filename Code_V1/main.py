@@ -2,14 +2,18 @@ from camera import Camera
 from vision import detect_line, draw_debug_slices, draw_mask_slices
 from controller import Controller
 from motors import MotorDriver
+from leds import LED
 import cv2
 from config import BAND_THICKNESS
 
 cam = Camera()
 controller = Controller()
 motors = MotorDriver()
+leds = LED()
 
 while True:
+    leds.turn_on_all()
+
     ret, frame = cam.read()
     if not ret:
         continue
@@ -40,6 +44,7 @@ while True:
 
     key = cv2.waitKey(1) & 0xFF
     if key == 27 or key == ord('q'):
+        leds.turn_off_all()
         break
 
 cv2.destroyAllWindows()

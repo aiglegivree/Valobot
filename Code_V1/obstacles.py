@@ -4,137 +4,544 @@ import math
 from camera import Camera
 
 
-proto = False
+class CorridorNavigator:
+    def __init__(
+        self,
+        proto=False,
+        video="movement.avi",
+        alpha=0.25,
+        stop_y_threshold=300,
+        candidate_miss_threshold=5,
+        hsv_lower=(31, 98, 0),
+        hsv_upper=(74, 255, 255),
+    ):
+        # --- Input source configuration ---
+        self.proto = proto
+        self.video = video
 
-def fill_holes(mask):
-    h, w = mask.shape
+        if self.proto:
+            self.cap = cv2.VideoCapture(self.video)
+            if not self.cap.isOpened():
+                raise RuntimeError(f"Error: Cannot open video '{self.video}'")
+        else:
+            self.cap = Camera()
 
-    flood = mask.copy()
-    flood_mask = np.zeros((h + 2, w + 2), np.uint8)
+        # --- Parameters ---
+        self.alpha = alpha
+        self.stop_y_threshold = stop_y_threshold
+        self.candidate_miss_threshold = candidate_miss_threshold
 
-    cv2.floodFill(flood, flood_mask, (0, 0), 255)
-    flood_inv = cv2.bitwise_not(flood)
-    filled = cv2.bitwise_or(mask, flood_inv)
+        self.hsv_lower = np.array(hsv_lower, dtype=np.uint8)
+        self.hsv_upper = np.array(hsv_upper, dtype=np.uint8)
 
-    return filled
+        # --- Temporal smoothing state ---
+        self.horizontal_smooth = None
+        self.left_smooth = None
+        self.right_smooth = None
 
+        self.horizontal_misses = 0
+        self.left_misses = 0
+        self.right_misses = 0
 
-def draw_hough_line(image, rho, theta, color, thickness=2):
-    a = np.cos(theta)
-    b = np.sin(theta)
+        # --- Turn-candidate memory ---
+        # Candidate must be lost first AND never reappear before TURN.
+        self.turn_candidate = None   # "LEFT", "RIGHT", or None
+        self.candidate_locked = False
 
-    x0 = a * rho
-    y0 = b * rho
+        # --- Public state/output attributes ---
+        self.state = "FORWARD"
+        self.target_x = None
+        self.target_visible = False
+        self.intersection = None
 
-    x1 = int(x0 + 1000 * (-b))
-    y1 = int(y0 + 1000 * (a))
-    x2 = int(x0 - 1000 * (-b))
-    y2 = int(y0 - 1000 * (a))
+        # --- Frame/cache attributes ---
+        self.frame = None
+        self.original = None
+        self.mask = None
+        self.edges = None
 
-    cv2.line(image, (x1, y1), (x2, y2), color, thickness)
+        self.H = None
+        self.W = None
 
+    # ------------------------------------------------------------------
+    # Geometry helpers
+    # ------------------------------------------------------------------
 
-def median_line(lines):
-    """
-    lines: list of (rho, theta)
-    returns: (median_rho, median_theta) or None
-    """
-    if not lines:
-        return None
+    @staticmethod
+    def intersect_hough_lines(line1, line2):
+        """
+        line1, line2: (rho, theta)
+        returns: (x, y) intersection point or None if lines are parallel
+        """
+        rho1, theta1 = line1
+        rho2, theta2 = line2
 
-    rhos = np.array([line[0] for line in lines], dtype=np.float32)
-    thetas = np.array([line[1] for line in lines], dtype=np.float32)
+        a1 = np.cos(theta1)
+        b1 = np.sin(theta1)
+        a2 = np.cos(theta2)
+        b2 = np.sin(theta2)
 
-    median_rho = float(np.median(rhos))
-    median_theta = float(np.median(thetas))
+        A = np.array([
+            [a1, b1],
+            [a2, b2]
+        ], dtype=np.float32)
 
-    return median_rho, median_theta
+        B = np.array([rho1, rho2], dtype=np.float32)
 
-if proto == True:
-    cap = cv2.VideoCapture("movement.avi")
+        det = np.linalg.det(A)
+        if abs(det) < 1e-6:
+            return None
 
-    if not cap.isOpened():
-        print("Error: Cannot open video")
-        exit()
-else:
-    cap = Camera()
+        x, y = np.linalg.solve(A, B)
+        return float(x), float(y)
 
-while True:
-    ret, frame = cap.read()
+    @staticmethod
+    def hough_y_at_x(line, x):
+        """
+        line: (rho, theta)
+        x: x coordinate where we want the corresponding y
+        returns: y or None if line is too vertical
+        """
+        rho, theta = line
+        a = np.cos(theta)
+        b = np.sin(theta)
 
-    if proto and not ret:
-        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-        continue
+        if abs(b) < 1e-6:
+            return None
 
-    original = frame.copy()
-    H, W, _ = original.shape
+        y = (rho - a * x) / b
+        return float(y)
 
-    blur = cv2.GaussianBlur(original, (3, 3), 1)
-    hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
+    @staticmethod
+    def hough_line_endpoints(rho, theta, length=1000):
+        a = np.cos(theta)
+        b = np.sin(theta)
 
-    lower = np.array([31, 98, 0], dtype=np.uint8)
-    upper = np.array([74, 255, 255], dtype=np.uint8)
-    mask = cv2.inRange(hsv, lower, upper)
+        x0 = a * rho
+        y0 = b * rho
 
-    mask = fill_holes(mask)
+        x1 = int(x0 + length * (-b))
+        y1 = int(y0 + length * (a))
+        x2 = int(x0 - length * (-b))
+        y2 = int(y0 - length * (a))
 
-    kernel = np.ones((5, 5), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        return (x1, y1), (x2, y2)
 
-    kernel = np.ones((17, 17), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    @staticmethod
+    def median_line(lines):
+        """
+        lines: list of (rho, theta)
+        returns: (median_rho, median_theta) or None
+        """
+        if not lines:
+            return None
 
-    edges = cv2.Canny(mask, 50, 150)
+        rhos = np.array([line[0] for line in lines], dtype=np.float32)
+        thetas = np.array([line[1] for line in lines], dtype=np.float32)
 
-    lines = cv2.HoughLines(
-        edges,
-        rho=1,
-        theta=np.pi / 180,
-        threshold=25
-    )
+        median_rho = float(np.median(rhos))
+        median_theta = float(np.median(thetas))
 
-    horizontal_lines = []
-    left_lines = []
-    right_lines = []
+        return median_rho, median_theta
 
-    if lines is not None:
-        for line in lines:
-            rho, theta = line[0]
-            deg = math.degrees(theta)
+    @staticmethod
+    def smooth_line(previous, current, alpha=0.25):
+        """
+        Exponential smoothing for a line represented as (rho, theta).
+        previous: previous smoothed line or None
+        current: current measured line or None
+        alpha: weight for current measurement
+        returns: updated smoothed line or None
+        """
+        if current is None:
+            return previous
 
-            # Horizontal-ish: theta near 90 deg
-            if 85 < deg < 95:
-                horizontal_lines.append((rho, theta))
+        if previous is None:
+            return current
 
-            # Left-leaning group
-            elif 30 < deg < 80:
-                left_lines.append((rho, theta))
+        prev_rho, prev_theta = previous
+        curr_rho, curr_theta = current
 
-            # Right-leaning group
-            elif 100 < deg < 150:
-                right_lines.append((rho, theta))
+        rho = alpha * curr_rho + (1.0 - alpha) * prev_rho
+        theta = alpha * curr_theta + (1.0 - alpha) * prev_theta
 
-    # Get one representative per class
-    horizontal_rep = median_line(horizontal_lines)
-    left_rep = median_line(left_lines)
-    right_rep = median_line(right_lines)
+        return (rho, theta)
 
-    # Draw only representatives
-    if horizontal_rep is not None:
-        draw_hough_line(original, horizontal_rep[0], horizontal_rep[1], (0, 255, 255), 3)  # yellow
+    # ------------------------------------------------------------------
+    # Image processing helpers
+    # ------------------------------------------------------------------
 
-    if left_rep is not None:
-        draw_hough_line(original, left_rep[0], left_rep[1], (0, 0, 255), 3)  # red
+    @staticmethod
+    def fill_holes(mask):
+        h, w = mask.shape
 
-    if right_rep is not None:
-        draw_hough_line(original, right_rep[0], right_rep[1], (0, 255, 0), 3)  # green
+        flood = mask.copy()
+        flood_mask = np.zeros((h + 2, w + 2), np.uint8)
 
-    cv2.imshow("Video Playback", original)
-    #cv2.imshow("Mask", mask)
-    #cv2.imshow("Edges", edges)
+        cv2.floodFill(flood, flood_mask, (0, 0), 255)
+        flood_inv = cv2.bitwise_not(flood)
+        filled = cv2.bitwise_or(mask, flood_inv)
 
-    if cv2.waitKey(30) & 0xFF == ord("q"):
-        break
+        return filled
 
-cap.release()
-cv2.destroyAllWindows()
+    def create_mask(self, frame):
+        blur = cv2.GaussianBlur(frame, (3, 3), 1)
+        hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
+
+        mask = cv2.inRange(hsv, self.hsv_lower, self.hsv_upper)
+        mask = self.fill_holes(mask)
+
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+        kernel = np.ones((17, 17), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+        return mask
+
+    @staticmethod
+    def detect_edges(mask):
+        return cv2.Canny(mask, 50, 150)
+
+    @staticmethod
+    def detect_hough_lines(edges):
+        return cv2.HoughLines(
+            edges,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=34
+        )
+
+    @staticmethod
+    def classify_lines(lines):
+        horizontal_lines = []
+        left_lines = []
+        right_lines = []
+
+        if lines is not None:
+            for line in lines:
+                rho, theta = line[0]
+                deg = math.degrees(theta)
+
+                if 85 < deg < 95:
+                    horizontal_lines.append((rho, theta))
+                elif 30 < deg < 80:
+                    left_lines.append((rho, theta))
+                elif 100 < deg < 150:
+                    right_lines.append((rho, theta))
+
+        return horizontal_lines, left_lines, right_lines
+
+    # ------------------------------------------------------------------
+    # State update helpers
+    # ------------------------------------------------------------------
+
+    def update_smoothed_lines(self, horizontal_rep, left_rep, right_rep):
+        # Update horizontal line
+        if horizontal_rep is not None:
+            self.horizontal_smooth = self.smooth_line(
+                self.horizontal_smooth, horizontal_rep, self.alpha
+            )
+            self.horizontal_misses = 0
+        else:
+            self.horizontal_misses += 1
+
+        # Update left line
+        if left_rep is not None:
+            self.left_smooth = self.smooth_line(
+                self.left_smooth, left_rep, self.alpha
+            )
+            self.left_misses = 0
+        else:
+            self.left_misses += 1
+
+        # Update right line
+        if right_rep is not None:
+            self.right_smooth = self.smooth_line(
+                self.right_smooth, right_rep, self.alpha
+            )
+            self.right_misses = 0
+        else:
+            self.right_misses += 1
+
+    def update_state(self):
+        self.state = "FORWARD"
+
+        if self.horizontal_smooth is not None:
+            y_center = self.hough_y_at_x(self.horizontal_smooth, self.W / 2)
+            if y_center is not None and y_center > self.stop_y_threshold:
+                self.state = "TURN"
+
+        if self.state == "TURN":
+            self.candidate_locked = True
+
+    def update_turn_candidate(self, left_rep, right_rep):
+        if self.state != "FORWARD" or self.candidate_locked:
+            return
+
+        # If current candidate reappears, drop it immediately
+        if self.turn_candidate == "LEFT" and left_rep is not None:
+            self.turn_candidate = None
+
+        elif self.turn_candidate == "RIGHT" and right_rep is not None:
+            self.turn_candidate = None
+
+        # If no candidate currently active, assign the first side
+        # that has become persistently missing
+        if self.turn_candidate is None:
+            if (
+                self.left_misses >= self.candidate_miss_threshold
+                and self.right_misses < self.candidate_miss_threshold
+            ):
+                self.turn_candidate = "LEFT"
+
+            elif (
+                self.right_misses >= self.candidate_miss_threshold
+                and self.left_misses < self.candidate_miss_threshold
+            ):
+                self.turn_candidate = "RIGHT"
+
+    def update_target(self):
+        self.target_x = None
+        self.target_visible = False
+        self.intersection = None
+
+        if self.left_smooth is not None and self.right_smooth is not None:
+            intersection = self.intersect_hough_lines(
+                self.left_smooth, self.right_smooth
+            )
+
+            if intersection is not None:
+                ix, iy = intersection
+                ix_clamped = int(round(ix))
+                ix_clamped = max(0, min(self.W - 1, ix_clamped))
+
+                self.intersection = (ix, iy)
+                self.target_x = ix_clamped
+                self.target_visible = True
+
+    # ------------------------------------------------------------------
+    # Drawing helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def draw_dashed_line(image, pt1, pt2, color, thickness=2, dash_length=20, gap_length=12):
+        x1, y1 = pt1
+        x2, y2 = pt2
+
+        dx = x2 - x1
+        dy = y2 - y1
+        line_len = math.hypot(dx, dy)
+
+        if line_len < 1:
+            return
+
+        ux = dx / line_len
+        uy = dy / line_len
+
+        dist = 0
+        while dist < line_len:
+            start_x = int(x1 + ux * dist)
+            start_y = int(y1 + uy * dist)
+
+            end_dist = min(dist + dash_length, line_len)
+            end_x = int(x1 + ux * end_dist)
+            end_y = int(y1 + uy * end_dist)
+
+            cv2.line(image, (start_x, start_y), (end_x, end_y), color, thickness)
+            dist += dash_length + gap_length
+
+    def draw_hough_line(self, image, rho, theta, color, thickness=2, dashed=False):
+        pt1, pt2 = self.hough_line_endpoints(rho, theta)
+
+        if dashed:
+            self.draw_dashed_line(image, pt1, pt2, color, thickness)
+        else:
+            cv2.line(image, pt1, pt2, color, thickness)
+
+    def draw_overlay(self, image):
+        # Stop threshold line
+        cv2.line(
+            image,
+            (0, self.stop_y_threshold),
+            (self.W - 1, self.stop_y_threshold),
+            (0, 0, 0),
+            2
+        )
+
+        # Horizontal line
+        if self.horizontal_smooth is not None:
+            self.draw_hough_line(
+                image,
+                self.horizontal_smooth[0],
+                self.horizontal_smooth[1],
+                (0, 255, 255),
+                3,
+                dashed=(self.horizontal_misses > 0)
+            )
+
+        # Left line
+        if self.left_smooth is not None:
+            self.draw_hough_line(
+                image,
+                self.left_smooth[0],
+                self.left_smooth[1],
+                (0, 0, 255),
+                3,
+                dashed=(self.left_misses > 0)
+            )
+
+        # Right line
+        if self.right_smooth is not None:
+            self.draw_hough_line(
+                image,
+                self.right_smooth[0],
+                self.right_smooth[1],
+                (0, 255, 0),
+                3,
+                dashed=(self.right_misses > 0)
+            )
+
+        # Target
+        if self.target_visible:
+            target_color = (
+                (255, 0, 255)
+                if (self.left_misses == 0 and self.right_misses == 0)
+                else (0, 165, 255)
+            )
+
+            cv2.circle(image, (self.target_x, self.H - 1), 8, target_color, -1)
+            cv2.line(image, (self.W // 2, self.H - 1), (self.target_x, self.H - 1), target_color, 2)
+
+        # State text
+        cv2.putText(
+            image,
+            self.state,
+            (20, 40),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            1.0,
+            (0, 0, 0),
+            3
+        )
+
+        # Candidate text
+        candidate_text = f"CANDIDATE: {self.turn_candidate if self.turn_candidate is not None else 'NONE'}"
+        cv2.putText(
+            image,
+            candidate_text,
+            (20, 80),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 0, 0),
+            2
+        )
+
+        return image
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def read_frame(self):
+        ret, frame = self.cap.read()
+
+        if self.proto and not ret:
+            self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, frame = self.cap.read()
+
+        return ret, frame
+
+    def process_frame(self, frame, draw=True):
+        """
+        Processes one frame and updates all public attributes.
+
+        Returns:
+            output_frame: annotated frame if draw=True, otherwise original copy
+        """
+        self.frame = frame
+        self.original = frame.copy()
+        self.H, self.W, _ = self.original.shape
+
+        self.mask = self.create_mask(self.original)
+        self.edges = self.detect_edges(self.mask)
+        lines = self.detect_hough_lines(self.edges)
+
+        horizontal_lines, left_lines, right_lines = self.classify_lines(lines)
+
+        horizontal_rep = self.median_line(horizontal_lines)
+        left_rep = self.median_line(left_lines)
+        right_rep = self.median_line(right_lines)
+
+        self.update_smoothed_lines(horizontal_rep, left_rep, right_rep)
+        self.update_state()
+        self.update_turn_candidate(left_rep, right_rep)
+        self.update_target()
+
+        output = self.original.copy()
+        if draw:
+            output = self.draw_overlay(output)
+
+        return output
+
+    def step(self, draw=True):
+        """
+        Reads and processes one frame from the configured source.
+
+        Returns:
+            ret, output_frame
+        """
+        ret, frame = self.read_frame()
+        if not ret or frame is None:
+            return False, None
+
+        output = self.process_frame(frame, draw=draw)
+        return True, output
+
+    def get_control_data(self):
+        """
+        Helper for the main robot code.
+        Returns a compact dictionary with the most useful outputs.
+        """
+        return {
+            "state": self.state,
+            "turn_candidate": self.turn_candidate,
+            "candidate_locked": self.candidate_locked,
+            "target_x": self.target_x,
+            "target_visible": self.target_visible,
+            "intersection": self.intersection,
+            "left_line": self.left_smooth,
+            "right_line": self.right_smooth,
+            "front_line": self.horizontal_smooth,
+            "left_misses": self.left_misses,
+            "right_misses": self.right_misses,
+            "front_misses": self.horizontal_misses,
+            "frame_width": self.W,
+            "frame_height": self.H,
+        }
+
+    def run(self, window_name="Video Playback", show_mask=False, show_edges=False):
+        """
+        Prototype/demo loop, equivalent to your original while-loop.
+        """
+        while True:
+            ret, output = self.step(draw=True)
+            if not ret:
+                break
+
+            cv2.imshow(window_name, output)
+
+            if show_mask and self.mask is not None:
+                cv2.imshow("Mask", self.mask)
+
+            if show_edges and self.edges is not None:
+                cv2.imshow("Edges", self.edges)
+
+            if cv2.waitKey(30) & 0xFF == ord("q"):
+                break
+
+        self.release()
+
+    def release(self):
+        self.cap.release()
+        cv2.destroyAllWindows()
+
