@@ -11,8 +11,8 @@ from motors import MotorDriver
 # ============================================================
 # CONFIG
 # ============================================================
-BLUE_LOW = np.array([90, 80, 50], dtype=np.uint8)
-BLUE_HIGH = np.array([130, 255, 255], dtype=np.uint8)
+BLUE_LOW  = np.array([100, 140, 60], dtype=np.uint8)
+BLUE_HIGH = np.array([135, 255, 255], dtype=np.uint8)
 
 MIN_TARGET_AREA = 1200
 TURN_SPEED = 0.28
