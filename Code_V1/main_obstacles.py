@@ -20,12 +20,12 @@ def main():
     # ------------------------------------------------------------
     # Forward-control tuning
     # ------------------------------------------------------------
-    base_speed = 0.2       # forward speed in [-1, 1]
+    base_speed = 0.35       # forward speed in [-1, 1]
     k_p = 0.3               # proportional steering gain
     max_correction = 0.20    # limits steering effect
 
     # Fallback behavior when target is temporarily not visible
-    lost_target_speed = 0.20
+    lost_target_speed = 0.25
 
     try:
         while True:
@@ -81,7 +81,6 @@ def main():
                 else:
                     # If target is not visible, slow down instead of steering blindly
                     motors.set_speeds(lost_target_speed, lost_target_speed)
-                    print("FORWARD | target lost -> slow forward")
 
             cv2.imshow("Navigation", vis)
 
