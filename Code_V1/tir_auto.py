@@ -11,7 +11,7 @@ from config import (
     W, H,
     BLUE_LOW, BLUE_HIGH,
     MIN_TARGET_AREA,
-    TURN_SPEED, CENTER_TOL, LOCK_FRAMES_REQUIRED,
+    TURN_SHOT_SPEED, CENTER_TOL, LOCK_FRAMES_REQUIRED,
     SHOW_DEBUG,
     MOTEUR_PIN, SERVO_PIN,
     PWM_FREQ, ANGLE_LOADED, ANGLE_FIRE_START, ANGLE_INCREMENT,
@@ -165,20 +165,17 @@ def confirm_target_hit(
     cam: Camera,
     old_target: dict
 ) -> tuple[bool, np.ndarray | None, np.ndarray | None, list[dict] | None]:
-    """
-    On confirme le hit si la cible visée n'est plus retrouvée
-    sur plusieurs frames après le tir.
-    """
+
     last_frame = None
     last_mask = None
     last_targets = None
 
-    time.sleep(POST_SHOT_SETTLE_TIME)
+    time.sleep(0.35)   # laisse la cible tomber
 
-    missing_count = 0
+    no_target_count = 0
     checked_frames = 0
 
-    for _ in range(POST_SHOT_CONFIRM_FRAMES):
+    for _ in range(6):
         ret, frame = cam.read()
         if not ret or frame is None:
             continue
@@ -191,21 +188,16 @@ def confirm_target_hit(
         last_mask = mask
         last_targets = targets
 
-        same = find_same_target(targets, old_target, TARGET_MATCH_DIST_PX)
-
-        if same is None:
-            missing_count += 1
+        if len(targets) == 0:
+            no_target_count += 1
 
         time.sleep(0.05)
 
     if checked_frames == 0:
         return False, last_frame, last_mask, last_targets
 
-    # Validation plus simple et plus robuste
-    hit_confirmed = missing_count >= 2
+    hit_confirmed = no_target_count >= 2
     return hit_confirmed, last_frame, last_mask, last_targets
-
-
 # ============================================================
 # LED END ANIMATION
 # ============================================================
@@ -268,7 +260,7 @@ def auto_fire_blue_targets(
         target = choose_target(targets, center_x)
 
         if target is None:
-            drive.set_speeds(-TURN_SPEED, TURN_SPEED)
+            drive.set_speeds(-TURN_SHOT_SPEED, TURN_SHOT_SPEED)
             lock_count = 0
             status = f"search | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
 
@@ -316,10 +308,10 @@ def auto_fire_blue_targets(
                 lock_count = 0
 
                 if err < 0:
-                    drive.set_speeds(-TURN_SPEED, TURN_SPEED)
+                    drive.set_speeds(-TURN_SHOT_SPEED, TURN_SHOT_SPEED)
                     status = f"turn left | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
                 else:
-                    drive.set_speeds(TURN_SPEED, -TURN_SPEED)
+                    drive.set_speeds(TURN_SHOT_SPEED, -TURN_SHOT_SPEED)
                     status = f"turn right | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
 
         if SHOW_DEBUG and last_frame is not None:

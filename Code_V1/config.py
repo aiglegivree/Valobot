@@ -104,6 +104,7 @@ MIN_TARGET_AREA = 1200
 # aiming
 CENTER_TOL = 15
 LOCK_FRAMES_REQUIRED = 5
+TURN_SHOT_SPEED = 0.2
 
 # same target check after shot
 TARGET_MATCH_DIST_PX = 80
