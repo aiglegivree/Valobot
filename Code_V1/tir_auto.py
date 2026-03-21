@@ -22,7 +22,7 @@ from config import (
 
 from camera import Camera
 from motors import MotorDriver
-from vision_top_down import detect_line, draw_debug_slices, draw_mask_slices
+from vision import detect_line, draw_debug_slices, draw_mask_slices
 
 leds = LED()
 
