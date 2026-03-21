@@ -23,7 +23,9 @@ from config import (
 from camera import Camera
 from motors import MotorDriver
 
-leds =LED()
+leds = LED()
+
+
 # ============================================================
 # SHOOTER
 # ============================================================
@@ -48,7 +50,7 @@ class Shooter:
         duty_cycle = (angle / 18.0) + 2.5
         self.pwm.ChangeDutyCycle(duty_cycle)
         time.sleep(0.30)
-        self.pwm.ChangeDutyCycle(0)  # réduit les vibrations
+        self.pwm.ChangeDutyCycle(0)
 
     def load_charger(self):
         self.angle = ANGLE_LOADED
@@ -86,10 +88,6 @@ class Shooter:
 # VISION
 # ============================================================
 def detect_blue_targets(frame: np.ndarray) -> tuple[list[dict], np.ndarray]:
-    """
-    Retourne toutes les cibles bleues détectées sous forme de liste triée
-    par aire décroissante.
-    """
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, BLUE_LOW, BLUE_HIGH)
 
@@ -126,10 +124,6 @@ def detect_blue_targets(frame: np.ndarray) -> tuple[list[dict], np.ndarray]:
 
 
 def choose_target(targets: list[dict], image_center_x: int) -> dict | None:
-    """
-    Choisit la meilleure cible à viser.
-    Ici: priorité à la plus grande, avec petit bonus si proche du centre.
-    """
     if not targets:
         return None
 
@@ -138,7 +132,7 @@ def choose_target(targets: list[dict], image_center_x: int) -> dict | None:
 
     for t in targets:
         err = abs(t["cx"] - image_center_x)
-        score = t["area"] - 3.0 * err  # simple compromis taille / centrage
+        score = t["area"] - 3.0 * err
 
         if best_score is None or score > best_score:
             best_score = score
@@ -152,10 +146,6 @@ def target_distance(t1: dict, t2: dict) -> float:
 
 
 def find_same_target(targets: list[dict], old_target: dict, max_dist_px: float) -> dict | None:
-    """
-    Cherche si la cible précédemment visée est toujours visible
-    (centre proche de l'ancienne position).
-    """
     best = None
     best_d = None
 
@@ -171,27 +161,29 @@ def find_same_target(targets: list[dict], old_target: dict, max_dist_px: float) 
 # ============================================================
 # POST SHOT CONFIRMATION
 # ============================================================
-def confirm_target_hit(cam: Camera, old_target: dict) -> tuple[bool, np.ndarray | None, np.ndarray | None, list[dict] | None]:
+def confirm_target_hit(
+    cam: Camera,
+    old_target: dict
+) -> tuple[bool, np.ndarray | None, np.ndarray | None, list[dict] | None]:
     """
-    Après un tir, on vérifie sur plusieurs frames si la cible visée a disparu.
-    Retourne:
-      - hit_confirmed
-      - last_frame
-      - last_mask
-      - last_targets
+    On confirme le hit si la cible visée n'est plus retrouvée
+    sur plusieurs frames après le tir.
     """
-    absent_count = 0
     last_frame = None
     last_mask = None
     last_targets = None
 
     time.sleep(POST_SHOT_SETTLE_TIME)
 
+    missing_count = 0
+    checked_frames = 0
+
     for _ in range(POST_SHOT_CONFIRM_FRAMES):
         ret, frame = cam.read()
         if not ret or frame is None:
             continue
 
+        checked_frames += 1
         frame = cv2.resize(frame, (W, H))
         targets, mask = detect_blue_targets(frame)
 
@@ -202,13 +194,27 @@ def confirm_target_hit(cam: Camera, old_target: dict) -> tuple[bool, np.ndarray 
         same = find_same_target(targets, old_target, TARGET_MATCH_DIST_PX)
 
         if same is None:
-            absent_count += 1
-        else:
-            absent_count = 0
+            missing_count += 1
 
-        time.sleep(0.03)
+        time.sleep(0.05)
 
-    return absent_count >= 2, last_frame, last_mask, last_targets
+    if checked_frames == 0:
+        return False, last_frame, last_mask, last_targets
+
+    # Validation plus simple et plus robuste
+    hit_confirmed = missing_count >= 2
+    return hit_confirmed, last_frame, last_mask, last_targets
+
+
+# ============================================================
+# LED END ANIMATION
+# ============================================================
+def run_end_animation(duration_s: float = 10.0):
+    try:
+        leds.aura_farm()
+        time.sleep(duration_s)
+    finally:
+        leds.turn_off_all()
 
 
 # ============================================================
@@ -236,7 +242,6 @@ def auto_fire_blue_targets(
 
     center_x = W // 2
 
-    # préparation tir
     shooter.load_charger()
     if not shooter.motor_on:
         shooter.motor_start()
@@ -278,7 +283,7 @@ def auto_fire_blue_targets(
                 can_fire = (time.time() - last_shot_time) >= MIN_TIME_BETWEEN_SHOTS
 
                 if lock_count >= LOCK_FRAMES_REQUIRED and can_fire:
-                    aimed_target = dict(target)  # snapshot de la cible visée
+                    aimed_target = dict(target)
 
                     shooter.fire()
                     shots_fired += 1
@@ -298,6 +303,11 @@ def auto_fire_blue_targets(
                         targets_hit += 1
                         status = f"HIT confirmed | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
                         print(f"HIT confirmed -> {targets_hit}/{nb_targets_to_hit}")
+
+                        # arrêt immédiat si mission finie
+                        if targets_hit >= nb_targets_to_hit:
+                            drive.set_speeds(0, 0)
+                            break
                     else:
                         status = f"MISS / target still present | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
                         print("Miss: target still present")
@@ -389,8 +399,8 @@ def main():
             nb_targets_to_hit=NOMBRE_DE_CIBLES,
         )
         print(f"Final result: hits={hits}, shots={shots}")
-        aura_farm()
-        time.sleep(2)
+
+        run_end_animation(10.0)
 
     finally:
         drive.set_speeds(0, 0)
