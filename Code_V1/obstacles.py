@@ -358,6 +358,11 @@ class CorridorNavigator:
         self.target_visible = False
         self.intersection = None
 
+        # If both side lines are currently missing, do not use stale/ghost geometry.
+        # Let the robot go straight by exposing no visual target.
+        if self.left_misses > 0 and self.right_misses > 0:
+            return
+
         if self.left_smooth is not None and self.right_smooth is not None:
             intersection = self.intersect_hough_lines(
                 self.left_smooth, self.right_smooth
