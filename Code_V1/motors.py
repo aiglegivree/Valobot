@@ -16,7 +16,7 @@ LEFT_IN2 = 17
 PWM_FREQ = 1000
 
 LEFT_TRIM = 1.00
-RIGHT_TRIM = 0.96   # same correction as your working test
+RIGHT_TRIM = 1.00   # same correction as your working test
 
 
 class MotorDriver:
