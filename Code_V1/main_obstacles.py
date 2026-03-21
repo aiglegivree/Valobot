@@ -7,8 +7,9 @@ from leds import LED
 def clamp(value, low, high):
     return max(low, min(high, value))
 
-leds = LED()
+
 def main():
+    leds = LED()
     leds.turn_off_all()
     # ------------------------------------------------------------
     # Vision + motors
