@@ -12,7 +12,7 @@ class CorridorNavigator:
         alpha=0.25,
         stop_y_threshold=300,
         candidate_miss_threshold=5,
-        hsv_lower=(31, 98, 0),
+        hsv_lower=(41, 92, 0),
         hsv_upper=(74, 255, 255),
     ):
         # --- Input source configuration ---
@@ -186,7 +186,7 @@ class CorridorNavigator:
 
     def create_mask(self, frame):
         blur = cv2.GaussianBlur(frame, (3, 3), 1)
-        hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
+        hsv = cv2.cvtColor(blur, cv2.COLOR_RGB2HSV)
 
         mask = cv2.inRange(hsv, self.hsv_lower, self.hsv_upper)
         mask = self.fill_holes(mask)
@@ -196,14 +196,16 @@ class CorridorNavigator:
 
         kernel = np.ones((17, 17), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        
-        cv2.imshow("Mask", mask)
 
         return mask
 
     @staticmethod
     def detect_edges(mask):
-        return cv2.Canny(mask, 50, 150)
+        canny = cv2.Canny(mask, 50, 150)
+        
+        cv2.imshow('Canny', canny)
+        
+        return canny
 
     @staticmethod
     def detect_hough_lines(edges):
