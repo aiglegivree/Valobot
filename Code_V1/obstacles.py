@@ -43,6 +43,10 @@ class CorridorNavigator:
         self.left_misses = 0
         self.right_misses = 0
 
+        # --- Previous measured representatives (for ghost-angle updates) ---
+        self.prev_left_rep = None
+        self.prev_right_rep = None
+
         # --- Turn-candidate memory ---
         # Candidate must be lost first AND never reappear before TURN.
         self.turn_candidate = None   # "LEFT", "RIGHT", or None
@@ -167,6 +171,14 @@ class CorridorNavigator:
 
         return (rho, theta)
 
+    @staticmethod
+    def wrap_angle_diff(delta):
+        """
+        Wrap angle difference to [-pi, pi].
+        Useful to avoid rare discontinuities when differencing angles.
+        """
+        return (delta + np.pi) % (2 * np.pi) - np.pi
+
     # ------------------------------------------------------------------
     # Image processing helpers
     # ------------------------------------------------------------------
@@ -196,7 +208,6 @@ class CorridorNavigator:
 
         kernel = np.ones((17, 17), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
         return mask
 
     @staticmethod
@@ -267,6 +278,43 @@ class CorridorNavigator:
             self.right_misses = 0
         else:
             self.right_misses += 1
+
+    def update_ghost_lines(self, left_rep, right_rep):
+        """
+        Minimal angle-only ghost update:
+        - if left is missing, advance left_smooth.theta by the change seen on right
+        - if right is missing, advance right_smooth.theta by the change seen on left
+
+        rho is kept unchanged for now.
+        """
+        # Left missing, right visible
+        if (
+            left_rep is None
+            and self.left_smooth is not None
+            and right_rep is not None
+            and self.prev_right_rep is not None
+        ):
+            delta_theta = self.wrap_angle_diff(right_rep[1] - self.prev_right_rep[1])
+            ghost_rho, ghost_theta = self.left_smooth
+            self.left_smooth = (ghost_rho, ghost_theta + delta_theta)
+
+        # Right missing, left visible
+        elif (
+            right_rep is None
+            and self.right_smooth is not None
+            and left_rep is not None
+            and self.prev_left_rep is not None
+        ):
+            delta_theta = self.wrap_angle_diff(left_rep[1] - self.prev_left_rep[1])
+            ghost_rho, ghost_theta = self.right_smooth
+            self.right_smooth = (ghost_rho, ghost_theta + delta_theta)
+
+        # Save current measurements for next frame's delta computation
+        if left_rep is not None:
+            self.prev_left_rep = left_rep
+
+        if right_rep is not None:
+            self.prev_right_rep = right_rep
 
     def update_state(self):
         self.state = "FORWARD"
@@ -477,6 +525,7 @@ class CorridorNavigator:
         right_rep = self.median_line(right_lines)
 
         self.update_smoothed_lines(horizontal_rep, left_rep, right_rep)
+        self.update_ghost_lines(left_rep, right_rep)
         self.update_state()
         self.update_turn_candidate(left_rep, right_rep)
         self.update_target()
@@ -548,4 +597,3 @@ class CorridorNavigator:
     def release(self):
         self.cap.release()
         cv2.destroyAllWindows()
-
