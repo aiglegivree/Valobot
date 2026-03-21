@@ -60,7 +60,7 @@ def run():
         while True:
             ret, frame = cam.read()
             if not ret or frame is None:
-                motor.set_speed(0, 0)
+                motor.set_speeds(0, 0)
                 continue
 
             frame = cv2.resize(frame, (W, H))
@@ -70,7 +70,7 @@ def run():
 
             if not found:
                 # Search: rotate on the spot
-                motor.set_speed(-TURN_SPEED, TURN_SPEED)
+                motor.set_speeds(-TURN_SPEED, TURN_SPEED)
                 lock_count = 0
                 status = "search"
 
@@ -78,7 +78,7 @@ def run():
                 err = cx - center_x
 
                 if abs(err) <= CENTER_TOL:
-                    motor.set_speed(0, 0)
+                    motor.set_speeds(0, 0)
                     lock_count += 1
                     status = f"locked {lock_count}/{LOCK_FRAMES_REQUIRED}"
 
@@ -91,11 +91,11 @@ def run():
 
                     if err < 0:
                         # target is on the left
-                        motor.set_speed(-TURN_SPEED, TURN_SPEED)
+                        motor.set_speeds(-TURN_SPEED, TURN_SPEED)
                         status = "turn left"
                     else:
                         # target is on the right
-                        motor.set_speed(TURN_SPEED, -TURN_SPEED)
+                        motor.set_speeds(TURN_SPEED, -TURN_SPEED)
                         status = "turn right"
 
             if SHOW_DEBUG:
@@ -123,7 +123,7 @@ def run():
                     break
 
     finally:
-        motor.set_speed(0, 0)
+        motor.set_speeds(0, 0)
         cam.release()
         cv2.destroyAllWindows()
 
