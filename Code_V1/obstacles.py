@@ -358,24 +358,52 @@ class CorridorNavigator:
         self.target_visible = False
         self.intersection = None
 
-        # If both side lines are currently missing, do not use stale/ghost geometry.
-        # Let the robot go straight by exposing no visual target.
-        if self.left_misses > 0 and self.right_misses > 0:
+        # --------------------------------------------------------------
+        # Normal case: at least one side line is currently detected
+        # --------------------------------------------------------------
+        if not (self.left_misses > 0 and self.right_misses > 0):
+            if self.left_smooth is not None and self.right_smooth is not None:
+                intersection = self.intersect_hough_lines(
+                    self.left_smooth, self.right_smooth
+                )
+
+                if intersection is not None:
+                    ix, iy = intersection
+                    ix_clamped = int(round(ix))
+                    ix_clamped = max(0, min(self.W - 1, ix_clamped))
+
+                    self.intersection = (ix, iy)
+                    self.target_x = ix_clamped
+                    self.target_visible = True
             return
 
-        if self.left_smooth is not None and self.right_smooth is not None:
-            intersection = self.intersect_hough_lines(
-                self.left_smooth, self.right_smooth
-            )
+        # --------------------------------------------------------------
+        # Fallback case: both side lines are currently missing
+        # Use front wall line to keep it horizontal if available.
+        # --------------------------------------------------------------
+        if self.horizontal_smooth is not None and self.horizontal_misses == 0:
+            rho, theta = self.horizontal_smooth
+            deg = math.degrees(theta)
 
-            if intersection is not None:
-                ix, iy = intersection
-                ix_clamped = int(round(ix))
-                ix_clamped = max(0, min(self.W - 1, ix_clamped))
+            # For a horizontal line in your Hough convention, theta should be near 90 deg.
+            angle_error_deg = deg - 90.0
 
-                self.intersection = (ix, iy)
-                self.target_x = ix_clamped
-                self.target_visible = True
+            # Convert front-line tilt into a synthetic x target shift.
+            # Positive error -> push target to one side, negative to the other.
+            # You may flip the sign below if steering comes out reversed on your robot.
+            gain_px_per_deg = 4.0
+
+            target_x = int(round((self.W / 2) - gain_px_per_deg * angle_error_deg))
+            target_x = max(0, min(self.W - 1, target_x))
+
+            self.target_x = target_x
+            self.target_visible = True
+            return
+
+        # --------------------------------------------------------------
+        # Last fallback: no side lines, no front line -> go straight
+        # --------------------------------------------------------------
+        return
 
     # ------------------------------------------------------------------
     # Drawing helpers
