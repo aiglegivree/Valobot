@@ -52,3 +52,6 @@ class LED:
 
     def cleanup(self):
         GPIO.cleanup()
+
+leds = LED()
+leds.aura_farm()
