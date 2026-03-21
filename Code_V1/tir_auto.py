@@ -1,42 +1,38 @@
-# tir_auto.py
 from __future__ import annotations
 import time
 import math
 import cv2
 import numpy as np
 import RPi.GPIO as GPIO
-from leds import LED
-
-from config import (
-    W, H,
-    BLUE_LOW, BLUE_HIGH,
-    MIN_TARGET_AREA,
-    TURN_SHOT_SPEED, CENTER_TOL, LOCK_FRAMES_REQUIRED,
-    SHOW_DEBUG,
-    MOTEUR_PIN, SERVO_PIN,
-    PWM_FREQ, ANGLE_LOADED, ANGLE_FIRE_START, ANGLE_INCREMENT,
-    MAG_CAPACITY, MIN_TIME_BETWEEN_SHOTS,
-    NOMBRE_DE_CIBLES,
-    BAND_THICKNESS,
-)
 
 from camera import Camera
 from motors import MotorDriver
+from leds import LED
+from controller import Controller
 from vision import detect_line, draw_debug_slices, draw_mask_slices
 
-leds = LED()
+from config import (
+    W, H,
+    BAND_THICKNESS,
 
-# ============================================================
-# SCAN / HOME PARAMETERS
-# ============================================================
-TURN_LEFT_90_TIME = 0.85
-SWEEP_RIGHT_MAX_TIME = 3.50
-SWEEP_SPEED = 0.18
-RETURN_SPEED = 0.14
-HOME_T_CONFIRM_FRAMES = 4
-HOME_T_CENTER_TOL = 70
-AURA_FARM_DURATION = 10.0
+    # blue detection
+    BLUE_LOW, BLUE_HIGH,
+    MIN_TARGET_AREA,
+    CENTER_TOL,
+    LOCK_FRAMES_REQUIRED,
+    SHOW_DEBUG,
 
+    # shooter
+    MOTEUR_PIN, SERVO_PIN,
+    PWM_FREQ, ANGLE_LOADED, ANGLE_FIRE_START, ANGLE_INCREMENT,
+    MAG_CAPACITY, MIN_TIME_BETWEEN_SHOTS,
+    POST_SHOT_SETTLE_TIME, POST_SHOT_CONFIRM_FRAMES,
+    TARGET_MATCH_DIST_PX,
+    NOMBRE_DE_CIBLES,
+
+    # target aiming
+    TURN_SPEED,
+)
 
 # ============================================================
 # SHOOTER
@@ -49,57 +45,66 @@ class Shooter:
         GPIO.setup(MOTEUR_PIN, GPIO.OUT)
         GPIO.setup(SERVO_PIN, GPIO.OUT)
 
+        self.motor = GPIO.output
         self.pwm = GPIO.PWM(SERVO_PIN, PWM_FREQ)
         self.pwm.start(0)
 
-        self.angle = ANGLE_FIRE_START
-        self.first_fire = False
-        self.motor_on = False
+        self.angle = ANGLE_LOADED
+        self.shots_fired = 0
+        self.last_shot_time = 0.0
+        self.loaded = False
 
-        GPIO.output(MOTEUR_PIN, GPIO.LOW)
+        self.set_servo_angle(ANGLE_LOADED)
+        time.sleep(0.3)
+        self.loaded = True
 
     def set_servo_angle(self, angle: float):
-        duty_cycle = (angle / 18.0) + 2.5
-        self.pwm.ChangeDutyCycle(duty_cycle)
-        time.sleep(0.30)
+        duty = (angle / 18.0) + 2.5
+        self.pwm.ChangeDutyCycle(duty)
+        time.sleep(0.20)
         self.pwm.ChangeDutyCycle(0)
 
-    def load_charger(self):
-        self.angle = ANGLE_LOADED
-        self.first_fire = True
-        self.set_servo_angle(self.angle)
-        print("Reloaded")
+    def spin_flywheel(self, on: bool):
+        GPIO.output(MOTEUR_PIN, GPIO.HIGH if on else GPIO.LOW)
 
-    def fire(self):
-        if self.first_fire:
-            self.angle = ANGLE_FIRE_START
-            self.first_fire = False
-        else:
-            self.angle += ANGLE_INCREMENT
+    def can_shoot(self) -> bool:
+        if self.shots_fired >= MAG_CAPACITY:
+            return False
+        if (time.time() - self.last_shot_time) < MIN_TIME_BETWEEN_SHOTS:
+            return False
+        return True
 
-        self.set_servo_angle(self.angle)
-        print("FIRE")
+    def fire_once(self) -> bool:
+        if not self.can_shoot():
+            return False
 
-    def motor_start(self):
-        self.motor_on = True
-        GPIO.output(MOTEUR_PIN, GPIO.HIGH)
-        print("Shooter motor ON")
+        fire_angle = ANGLE_FIRE_START + self.shots_fired * ANGLE_INCREMENT
+        self.set_servo_angle(fire_angle)
+        time.sleep(0.20)
+        self.set_servo_angle(ANGLE_LOADED)
 
-    def motor_stop(self):
-        self.motor_on = False
-        GPIO.output(MOTEUR_PIN, GPIO.LOW)
-        print("Shooter motor OFF")
+        self.shots_fired += 1
+        self.last_shot_time = time.time()
+        return True
+
+    def is_empty(self) -> bool:
+        return self.shots_fired >= MAG_CAPACITY
 
     def cleanup(self):
-        self.motor_stop()
-        self.pwm.stop()
-        GPIO.cleanup()
+        try:
+            self.spin_flywheel(False)
+        except Exception:
+            pass
+        try:
+            self.pwm.stop()
+        except Exception:
+            pass
 
 
 # ============================================================
 # BLUE TARGET DETECTION
 # ============================================================
-def detect_blue_targets(frame: np.ndarray) -> tuple[list[dict], np.ndarray]:
+def detect_blue_targets(frame: np.ndarray):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, BLUE_LOW, BLUE_HIGH)
 
@@ -107,437 +112,76 @@ def detect_blue_targets(frame: np.ndarray) -> tuple[list[dict], np.ndarray]:
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-    targets: list[dict] = []
-    for c in contours:
+    targets = []
+    for c in cnts:
         area = cv2.contourArea(c)
         if area < MIN_TARGET_AREA:
             continue
 
-        M = cv2.moments(c)
-        if M["m00"] == 0:
-            continue
-
-        cx = int(M["m10"] / M["m00"])
-        cy = int(M["m01"] / M["m00"])
         x, y, w, h = cv2.boundingRect(c)
+        cx = x + w // 2
+        cy = y + h // 2
 
         targets.append({
-            "cx": cx,
-            "cy": cy,
+            "contour": c,
             "area": area,
             "bbox": (x, y, w, h),
-            "contour": c,
+            "cx": cx,
+            "cy": cy,
         })
 
     targets.sort(key=lambda t: t["area"], reverse=True)
-    return targets, mask
+    return mask, targets
 
 
-def choose_target(targets: list[dict], image_center_x: int) -> dict | None:
+def pick_target(targets, last_target_center=None):
     if not targets:
         return None
 
-    best_score = None
-    best_target = None
+    if last_target_center is None:
+        return targets[0]
+
+    best = None
+    best_dist = float("inf")
 
     for t in targets:
-        err = abs(t["cx"] - image_center_x)
-        score = t["area"] - 3.0 * err
+        d = math.hypot(t["cx"] - last_target_center[0], t["cy"] - last_target_center[1])
+        if d < best_dist:
+            best_dist = d
+            best = t
 
-        if best_score is None or score > best_score:
-            best_score = score
-            best_target = t
+    if best is not None and best_dist <= TARGET_MATCH_DIST_PX:
+        return best
 
-    return best_target
+    return targets[0]
 
 
 # ============================================================
-# T DETECTION USING vision_top_down.py
+# TARGET AIMING
 # ============================================================
-def get_home_t_info(frame: np.ndarray) -> tuple[bool, int | None, object]:
+def aim_to_target(motors: MotorDriver, target) -> tuple[bool, float]:
     """
-    Retourne:
-      found_t, stem_cx, vision_result
+    Returns:
+        locked, error_px
     """
-    vr = detect_line(frame)
+    cx = target["cx"]
+    err = cx - (W // 2)
 
-    found_t = bool(vr.t_detected)
-    stem_cx = vr.cx_bot if vr.cx_bot is not None else None
+    if abs(err) <= CENTER_TOL:
+        motors.set_speeds(0, 0)
+        return True, err
 
-    return found_t, stem_cx, vr
+    steer = np.clip(err / (W / 2), -1.0, 1.0)
 
-
-def wait_for_home_t(cam: Camera, timeout_s: float = 2.0) -> bool:
-    center_x = W // 2
-    count = 0
-    start = time.time()
-
-    while time.time() - start < timeout_s:
-        ret, frame = cam.read()
-        if not ret or frame is None:
-            continue
-
-        frame = cv2.resize(frame, (W, H))
-        found_t, stem_cx, vr = get_home_t_info(frame)
-
-        good = found_t and stem_cx is not None and abs(stem_cx - center_x) <= HOME_T_CENTER_TOL
-
-        if good:
-            count += 1
-        else:
-            count = 0
-
-        if SHOW_DEBUG:
-            dbg = draw_debug_slices(frame, vr, BAND_THICKNESS)
-            cv2.putText(
-                dbg,
-                f"HOME CHECK | T={found_t} cx={stem_cx} ok={good} cnt={count}/{HOME_T_CONFIRM_FRAMES}",
-                (10, 80),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
-                2,
-            )
-            cv2.imshow("debug", cv2.cvtColor(dbg, cv2.COLOR_RGB2BGR))
-            cv2.imshow("line_mask", draw_mask_slices(vr))
-            cv2.waitKey(1)
-
-        if count >= HOME_T_CONFIRM_FRAMES:
-            print("Initial T confirmed")
-            return True
-
-    print("Initial T not confirmed")
-    return False
-
-
-def return_to_home_using_t(cam: Camera, drive: MotorDriver) -> bool:
-    center_x = W // 2
-    count = 0
-    success = False
-    start = time.time()
-
-    while time.time() - start < 6.0:
-        ret, frame = cam.read()
-        if not ret or frame is None:
-            drive.set_speeds(-RETURN_SPEED, RETURN_SPEED)
-            continue
-
-        frame = cv2.resize(frame, (W, H))
-        found_t, stem_cx, vr = get_home_t_info(frame)
-
-        if found_t and stem_cx is not None:
-            err = stem_cx - center_x
-
-            if abs(err) <= HOME_T_CENTER_TOL:
-                count += 1
-                drive.set_speeds(-RETURN_SPEED * 0.35, RETURN_SPEED * 0.35)
-            else:
-                count = 0
-                if err < 0:
-                    drive.set_speeds(-RETURN_SPEED, RETURN_SPEED)
-                else:
-                    drive.set_speeds(RETURN_SPEED, -RETURN_SPEED)
-        else:
-            count = 0
-            drive.set_speeds(-RETURN_SPEED, RETURN_SPEED)
-
-        if SHOW_DEBUG:
-            dbg = draw_debug_slices(frame, vr, BAND_THICKNESS)
-            cv2.putText(
-                dbg,
-                f"RETURN HOME | T={found_t} cx={stem_cx} cnt={count}/{HOME_T_CONFIRM_FRAMES}",
-                (10, 80),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                (255, 255, 255),
-                2,
-            )
-            cv2.line(dbg, (center_x, 0), (center_x, H), (0, 255, 0), 2)
-            cv2.imshow("debug", cv2.cvtColor(dbg, cv2.COLOR_RGB2BGR))
-            cv2.imshow("line_mask", draw_mask_slices(vr))
-            cv2.waitKey(1)
-
-        if count >= HOME_T_CONFIRM_FRAMES:
-            success = True
-            break
-
-        time.sleep(0.01)
-
-    drive.set_speeds(0, 0)
-
-    if success:
-        print("HOME reached with T detection")
+    # rotate in place toward target
+    if steer > 0:
+        motors.set_speeds(TURN_SPEED, -TURN_SPEED)
     else:
-        print("HOME return timeout")
+        motors.set_speeds(-TURN_SPEED, TURN_SPEED)
 
-    return success
-
-
-# ============================================================
-# POST SHOT CONFIRMATION
-# ============================================================
-def confirm_target_hit(cam: Camera, old_target: dict) -> tuple[bool, np.ndarray | None, np.ndarray | None, list[dict] | None]:
-    last_frame = None
-    last_mask = None
-    last_targets = None
-
-    time.sleep(0.35)
-
-    no_target_count = 0
-    checked_frames = 0
-
-    for _ in range(6):
-        ret, frame = cam.read()
-        if not ret or frame is None:
-            continue
-
-        checked_frames += 1
-        frame = cv2.resize(frame, (W, H))
-        targets, mask = detect_blue_targets(frame)
-
-        last_frame = frame
-        last_mask = mask
-        last_targets = targets
-
-        if len(targets) == 0:
-            no_target_count += 1
-
-        time.sleep(0.05)
-
-    if checked_frames == 0:
-        return False, last_frame, last_mask, last_targets
-
-    hit_confirmed = no_target_count >= 2
-    return hit_confirmed, last_frame, last_mask, last_targets
-
-
-# ============================================================
-# NON BLOCKING AURA FARM
-# ============================================================
-def run_end_animation(cam: Camera, duration_s: float = AURA_FARM_DURATION):
-    start = time.time()
-    leds.aura_farm_start()
-
-    try:
-        while True:
-            elapsed = time.time() - start
-            if elapsed >= duration_s:
-                break
-
-            leds.aura_farm_step(delay=0.05)
-
-            ret, frame = cam.read()
-            if ret and frame is not None:
-                frame = cv2.resize(frame, (W, H))
-
-                if SHOW_DEBUG:
-                    debug = frame.copy()
-                    remaining = max(0.0, duration_s - elapsed)
-                    cv2.putText(
-                        debug,
-                        f"AURA FARM {remaining:.1f}s",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.8,
-                        (255, 255, 255),
-                        2,
-                    )
-                    cv2.imshow("debug", debug)
-                    cv2.waitKey(1)
-            else:
-                cv2.waitKey(1)
-
-            time.sleep(0.01)
-
-    finally:
-        leds.aura_farm_stop()
-
-
-# ============================================================
-# SWEEP FIRE
-# ============================================================
-def sweep_fire_all_targets(
-    cam: Camera,
-    drive: MotorDriver,
-    shooter: Shooter,
-    nb_targets_to_hit: int,
-) -> tuple[int, int]:
-    targets_hit = 0
-    shots_fired = 0
-    lock_count = 0
-    last_shot_time = -1e9
-    center_x = W // 2
-
-    last_frame = None
-    last_mask = np.zeros((H, W), dtype=np.uint8)
-    last_targets: list[dict] = []
-    status = "init"
-
-    shooter.load_charger()
-    if not shooter.motor_on:
-        shooter.motor_start()
-        time.sleep(1.0)
-
-    wait_for_home_t(cam)
-
-    print("Turn left ~90 deg")
-    drive.set_speeds(-TURN_SHOT_SPEED, TURN_SHOT_SPEED)
-    t0 = time.time()
-    while time.time() - t0 < TURN_LEFT_90_TIME:
-        ret, frame = cam.read()
-        if ret and frame is not None and SHOW_DEBUG:
-            frame = cv2.resize(frame, (W, H))
-            debug = frame.copy()
-            cv2.putText(
-                debug,
-                "TURN LEFT TO START SCAN",
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (255, 255, 255),
-                2,
-            )
-            cv2.imshow("debug", debug)
-            cv2.waitKey(1)
-        time.sleep(0.01)
-
-    drive.set_speeds(0, 0)
-    time.sleep(0.15)
-
-    print("Sweep right + fire")
-    sweep_start = time.time()
-
-    while True:
-        if targets_hit >= nb_targets_to_hit:
-            status = "all targets hit"
-            break
-
-        if shots_fired >= MAG_CAPACITY:
-            status = "out of ammo"
-            break
-
-        if time.time() - sweep_start >= SWEEP_RIGHT_MAX_TIME:
-            status = "sweep max time reached"
-            break
-
-        ret, frame = cam.read()
-        if not ret or frame is None:
-            drive.set_speeds(SWEEP_SPEED, -SWEEP_SPEED)
-            continue
-
-        frame = cv2.resize(frame, (W, H))
-        targets, mask = detect_blue_targets(frame)
-
-        last_frame = frame
-        last_mask = mask
-        last_targets = targets
-
-        target = choose_target(targets, center_x)
-
-        if target is None:
-            drive.set_speeds(SWEEP_SPEED, -SWEEP_SPEED)
-            lock_count = 0
-            status = f"sweep search | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
-
-        else:
-            err = target["cx"] - center_x
-
-            if abs(err) <= CENTER_TOL:
-                drive.set_speeds(0, 0)
-                lock_count += 1
-                status = f"locked {lock_count}/{LOCK_FRAMES_REQUIRED} | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
-
-                can_fire = (time.time() - last_shot_time) >= MIN_TIME_BETWEEN_SHOTS
-
-                if lock_count >= LOCK_FRAMES_REQUIRED and can_fire:
-                    aimed_target = dict(target)
-
-                    shooter.fire()
-                    shots_fired += 1
-                    last_shot_time = time.time()
-                    lock_count = 0
-
-                    hit, frame2, mask2, targets2 = confirm_target_hit(cam, aimed_target)
-
-                    if frame2 is not None:
-                        last_frame = frame2
-                    if mask2 is not None:
-                        last_mask = mask2
-                    if targets2 is not None:
-                        last_targets = targets2
-
-                    if hit:
-                        targets_hit += 1
-                        status = f"HIT confirmed | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
-                        print(f"HIT confirmed -> {targets_hit}/{nb_targets_to_hit}")
-                    else:
-                        status = f"MISS | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
-                        print("Miss: target still present")
-
-            else:
-                lock_count = 0
-                if err < 0:
-                    drive.set_speeds(-TURN_SHOT_SPEED, TURN_SHOT_SPEED)
-                    status = f"turn left to aim | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
-                else:
-                    drive.set_speeds(TURN_SHOT_SPEED, -TURN_SHOT_SPEED)
-                    status = f"turn right to aim | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
-
-        if SHOW_DEBUG and last_frame is not None:
-            debug = last_frame.copy()
-
-            cv2.line(debug, (center_x, 0), (center_x, H), (0, 255, 0), 2)
-            cv2.line(debug, (center_x - CENTER_TOL, 0), (center_x - CENTER_TOL, H), (255, 255, 0), 1)
-            cv2.line(debug, (center_x + CENTER_TOL, 0), (center_x + CENTER_TOL, H), (255, 255, 0), 1)
-
-            for i, t in enumerate(last_targets):
-                x, y, w, h = t["bbox"]
-                color = (0, 255, 255) if i == 0 else (180, 180, 0)
-                cv2.rectangle(debug, (x, y), (x + w, y + h), color, 2)
-                cv2.circle(debug, (t["cx"], t["cy"]), 4, (0, 0, 255), -1)
-                cv2.putText(
-                    debug,
-                    f"A={int(t['area'])}",
-                    (x, max(20, y - 5)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    color,
-                    2,
-                )
-
-            cv2.putText(
-                debug,
-                status,
-                (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (255, 255, 255),
-                2,
-            )
-
-            cv2.putText(
-                debug,
-                f"Hits {targets_hit}/{nb_targets_to_hit} | Shots {shots_fired}/{MAG_CAPACITY}",
-                (10, 60),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.65,
-                (255, 255, 255),
-                2,
-            )
-
-            cv2.imshow("debug", debug)
-            cv2.imshow("blue_mask", last_mask)
-
-            key = cv2.waitKey(1) & 0xFF
-            if key == 27:
-                print("Cancelled by user")
-                break
-
-    drive.set_speeds(0, 0)
-    print(f"Sweep ended: {status}")
-    return targets_hit, shots_fired
+    return False, err
 
 
 # ============================================================
@@ -545,32 +189,178 @@ def sweep_fire_all_targets(
 # ============================================================
 def main():
     cam = Camera()
-    drive = MotorDriver()
+    controller = Controller()
+    motors = MotorDriver()
+    leds = LED()
     shooter = Shooter()
-    leds.turn_off_all()
+
+    STATE_FOLLOW_TO_FIRST_T = "FOLLOW_TO_FIRST_T"
+    STATE_SHOOTING = "SHOOTING"
+    STATE_RETURN_TO_T = "RETURN_TO_T"
+    STATE_AURA = "AURA"
+
+    state = STATE_FOLLOW_TO_FIRST_T
+    aura_mode = False
+
+    lock_frames = 0
+    last_target_center = None
+    post_shot_ignore_frames = 0
 
     try:
-        hits, shots = sweep_fire_all_targets(
-            cam=cam,
-            drive=drive,
-            shooter=shooter,
-            nb_targets_to_hit=NOMBRE_DE_CIBLES,
-        )
+        shooter.spin_flywheel(True)
 
-        print(f"Final result after sweep: hits={hits}, shots={shots}")
+        while True:
+            ret, frame = cam.read()
+            if not ret:
+                continue
 
-        drive.set_speeds(0, 0)
-        shooter.motor_stop()
+            # ------------------------------------------------
+            # STATE 1: FOLLOW LINE UNTIL FIRST T
+            # ------------------------------------------------
+            if state == STATE_FOLLOW_TO_FIRST_T:
+                res = detect_line(frame, angle_deg=20)
+                left, right, _, _, mode = controller.update(res)
 
-        return_to_home_using_t(cam, drive)
+                leds.turn_on_all()
+                motors.set_speeds(left, right)
 
-        drive.set_speeds(0, 0)
-        shooter.motor_stop()
+                if mode == "T_STOP" or getattr(res, "is_T", False):
+                    motors.set_speeds(0, 0)
+                    time.sleep(0.2)
+                    state = STATE_SHOOTING
+                    lock_frames = 0
+                    last_target_center = None
 
-        run_end_animation(cam, AURA_FARM_DURATION)
+                dbg = draw_debug_slices(frame, res, BAND_THICKNESS)
+                mask_dbg = draw_mask_slices(res)
+
+                cv2.imshow("camera debug", dbg)
+                cv2.imshow("mask debug", mask_dbg)
+
+            # ------------------------------------------------
+            # STATE 2: SHOOTING PHASE
+            # ------------------------------------------------
+            elif state == STATE_SHOOTING:
+                leds.turn_on_all()
+
+                blue_mask, targets = detect_blue_targets(frame)
+
+                if post_shot_ignore_frames > 0:
+                    post_shot_ignore_frames -= 1
+                    motors.set_speeds(0, 0)
+                else:
+                    target = pick_target(targets, last_target_center)
+
+                    if target is None:
+                        # no target found -> stay still
+                        motors.set_speeds(0, 0)
+                        lock_frames = 0
+                        last_target_center = None
+                    else:
+                        last_target_center = (target["cx"], target["cy"])
+                        locked, _ = aim_to_target(motors, target)
+
+                        if locked:
+                            lock_frames += 1
+                        else:
+                            lock_frames = 0
+
+                        if lock_frames >= LOCK_FRAMES_REQUIRED:
+                            fired = shooter.fire_once()
+                            lock_frames = 0
+                            if fired:
+                                post_shot_ignore_frames = POST_SHOT_CONFIRM_FRAMES
+                                time.sleep(POST_SHOT_SETTLE_TIME)
+
+                mission_done = (
+                    shooter.shots_fired >= NOMBRE_DE_CIBLES
+                    or shooter.is_empty()
+                )
+
+                if mission_done:
+                    motors.set_speeds(0, 0)
+                    time.sleep(0.2)
+                    state = STATE_RETURN_TO_T
+
+                # debug drawing for shooting
+                dbg = frame.copy()
+                for t in targets:
+                    x, y, w, h = t["bbox"]
+                    cv2.rectangle(dbg, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.circle(dbg, (t["cx"], t["cy"]), 4, (0, 0, 255), -1)
+
+                cv2.line(dbg, (W // 2, 0), (W // 2, H), (255, 255, 255), 1)
+                cv2.putText(
+                    dbg,
+                    f"STATE: SHOOTING | shots={shooter.shots_fired}/{MAG_CAPACITY}",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (255, 255, 255),
+                    2,
+                )
+
+                cv2.imshow("camera debug", dbg)
+                cv2.imshow("mask debug", blue_mask)
+
+            # ------------------------------------------------
+            # STATE 3: RETURN TO T
+            # ------------------------------------------------
+            elif state == STATE_RETURN_TO_T:
+                res = detect_line(frame, angle_deg=20)
+                left, right, _, _, mode = controller.update(res)
+
+                leds.turn_on_all()
+                motors.set_speeds(left, right)
+
+                if mode == "T_STOP" or getattr(res, "is_T", False):
+                    motors.set_speeds(0, 0)
+                    state = STATE_AURA
+                    aura_mode = False
+
+                dbg = draw_debug_slices(frame, res, BAND_THICKNESS)
+                mask_dbg = draw_mask_slices(res)
+
+                cv2.imshow("camera debug", dbg)
+                cv2.imshow("mask debug", mask_dbg)
+
+            # ------------------------------------------------
+            # STATE 4: FINAL AURA
+            # ------------------------------------------------
+            elif state == STATE_AURA:
+                if not aura_mode:
+                    aura_mode = True
+                    motors.set_speeds(0, 0)
+                    shooter.spin_flywheel(False)
+                    leds.aura_farm_start()
+
+                leds.aura_farm_step(delay=0.05)
+
+                aura_dbg = frame.copy()
+                cv2.putText(
+                    aura_dbg,
+                    "STATE: AURA",
+                    (10, 30),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.9,
+                    (255, 255, 255),
+                    2,
+                )
+                cv2.imshow("camera debug", aura_dbg)
+                cv2.imshow("mask debug", np.zeros((H, W), dtype=np.uint8))
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27 or key == ord("q"):
+                break
 
     finally:
-        drive.set_speeds(0, 0)
+        try:
+            leds.aura_farm_stop()
+        except Exception:
+            pass
+
+        leds.turn_off_all()
+        motors.set_speeds(0, 0)
         shooter.cleanup()
         cam.release()
         cv2.destroyAllWindows()
