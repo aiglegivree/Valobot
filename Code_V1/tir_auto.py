@@ -16,14 +16,26 @@ from config import (
     MOTEUR_PIN, SERVO_PIN,
     PWM_FREQ, ANGLE_LOADED, ANGLE_FIRE_START, ANGLE_INCREMENT,
     MAG_CAPACITY, MIN_TIME_BETWEEN_SHOTS,
-    POST_SHOT_SETTLE_TIME, POST_SHOT_CONFIRM_FRAMES,
-    TARGET_MATCH_DIST_PX,
     NOMBRE_DE_CIBLES,
+    BAND_THICKNESS,
 )
+
 from camera import Camera
 from motors import MotorDriver
+from vision_top_down import detect_line, draw_debug_slices, draw_mask_slices
 
 leds = LED()
+
+# ============================================================
+# SCAN / HOME PARAMETERS
+# ============================================================
+TURN_LEFT_90_TIME = 0.85
+SWEEP_RIGHT_MAX_TIME = 3.50
+SWEEP_SPEED = 0.18
+RETURN_SPEED = 0.14
+HOME_T_CONFIRM_FRAMES = 4
+HOME_T_CENTER_TOL = 70
+AURA_FARM_DURATION = 10.0
 
 
 # ============================================================
@@ -85,7 +97,7 @@ class Shooter:
 
 
 # ============================================================
-# VISION
+# BLUE TARGET DETECTION
 # ============================================================
 def detect_blue_targets(frame: np.ndarray) -> tuple[list[dict], np.ndarray]:
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -141,31 +153,132 @@ def choose_target(targets: list[dict], image_center_x: int) -> dict | None:
     return best_target
 
 
-def target_distance(t1: dict, t2: dict) -> float:
-    return math.hypot(t1["cx"] - t2["cx"], t1["cy"] - t2["cy"])
+# ============================================================
+# T DETECTION USING vision_top_down.py
+# ============================================================
+def get_home_t_info(frame: np.ndarray) -> tuple[bool, int | None, object]:
+    """
+    Retourne:
+      found_t, stem_cx, vision_result
+    """
+    vr = detect_line(frame)
+
+    found_t = bool(vr.t_detected)
+    stem_cx = vr.cx_bot if vr.cx_bot is not None else None
+
+    return found_t, stem_cx, vr
 
 
-def find_same_target(targets: list[dict], old_target: dict, max_dist_px: float) -> dict | None:
-    best = None
-    best_d = None
+def wait_for_home_t(cam: Camera, timeout_s: float = 2.0) -> bool:
+    center_x = W // 2
+    count = 0
+    start = time.time()
 
-    for t in targets:
-        d = target_distance(t, old_target)
-        if d <= max_dist_px and (best_d is None or d < best_d):
-            best = t
-            best_d = d
+    while time.time() - start < timeout_s:
+        ret, frame = cam.read()
+        if not ret or frame is None:
+            continue
 
-    return best
+        frame = cv2.resize(frame, (W, H))
+        found_t, stem_cx, vr = get_home_t_info(frame)
+
+        good = found_t and stem_cx is not None and abs(stem_cx - center_x) <= HOME_T_CENTER_TOL
+
+        if good:
+            count += 1
+        else:
+            count = 0
+
+        if SHOW_DEBUG:
+            dbg = draw_debug_slices(frame, vr, BAND_THICKNESS)
+            cv2.putText(
+                dbg,
+                f"HOME CHECK | T={found_t} cx={stem_cx} ok={good} cnt={count}/{HOME_T_CONFIRM_FRAMES}",
+                (10, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+            )
+            cv2.imshow("debug", cv2.cvtColor(dbg, cv2.COLOR_RGB2BGR))
+            cv2.imshow("line_mask", draw_mask_slices(vr))
+            cv2.waitKey(1)
+
+        if count >= HOME_T_CONFIRM_FRAMES:
+            print("Initial T confirmed")
+            return True
+
+    print("Initial T not confirmed")
+    return False
+
+
+def return_to_home_using_t(cam: Camera, drive: MotorDriver) -> bool:
+    center_x = W // 2
+    count = 0
+    success = False
+    start = time.time()
+
+    while time.time() - start < 6.0:
+        ret, frame = cam.read()
+        if not ret or frame is None:
+            drive.set_speeds(-RETURN_SPEED, RETURN_SPEED)
+            continue
+
+        frame = cv2.resize(frame, (W, H))
+        found_t, stem_cx, vr = get_home_t_info(frame)
+
+        if found_t and stem_cx is not None:
+            err = stem_cx - center_x
+
+            if abs(err) <= HOME_T_CENTER_TOL:
+                count += 1
+                drive.set_speeds(-RETURN_SPEED * 0.35, RETURN_SPEED * 0.35)
+            else:
+                count = 0
+                if err < 0:
+                    drive.set_speeds(-RETURN_SPEED, RETURN_SPEED)
+                else:
+                    drive.set_speeds(RETURN_SPEED, -RETURN_SPEED)
+        else:
+            count = 0
+            drive.set_speeds(-RETURN_SPEED, RETURN_SPEED)
+
+        if SHOW_DEBUG:
+            dbg = draw_debug_slices(frame, vr, BAND_THICKNESS)
+            cv2.putText(
+                dbg,
+                f"RETURN HOME | T={found_t} cx={stem_cx} cnt={count}/{HOME_T_CONFIRM_FRAMES}",
+                (10, 80),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 255),
+                2,
+            )
+            cv2.line(dbg, (center_x, 0), (center_x, H), (0, 255, 0), 2)
+            cv2.imshow("debug", cv2.cvtColor(dbg, cv2.COLOR_RGB2BGR))
+            cv2.imshow("line_mask", draw_mask_slices(vr))
+            cv2.waitKey(1)
+
+        if count >= HOME_T_CONFIRM_FRAMES:
+            success = True
+            break
+
+        time.sleep(0.01)
+
+    drive.set_speeds(0, 0)
+
+    if success:
+        print("HOME reached with T detection")
+    else:
+        print("HOME return timeout")
+
+    return success
 
 
 # ============================================================
 # POST SHOT CONFIRMATION
 # ============================================================
-def confirm_target_hit(
-    cam: Camera,
-    old_target: dict
-) -> tuple[bool, np.ndarray | None, np.ndarray | None, list[dict] | None]:
-
+def confirm_target_hit(cam: Camera, old_target: dict) -> tuple[bool, np.ndarray | None, np.ndarray | None, list[dict] | None]:
     last_frame = None
     last_mask = None
     last_targets = None
@@ -201,24 +314,20 @@ def confirm_target_hit(
 
 
 # ============================================================
-# LED END ANIMATION WITH CAMERA OPEN
+# NON BLOCKING AURA FARM
 # ============================================================
-def run_end_animation(cam: Camera, duration_s: float = 10.0):
+def run_end_animation(cam: Camera, duration_s: float = AURA_FARM_DURATION):
     start = time.time()
     leds.aura_farm_start()
 
     try:
         while True:
-            now = time.time()
-            elapsed = now - start
-
+            elapsed = time.time() - start
             if elapsed >= duration_s:
                 break
 
-            # met à jour l'animation LED sans bloquer
             leds.aura_farm_step(delay=0.05)
 
-            # garde la caméra active
             ret, frame = cam.read()
             if ret and frame is not None:
                 frame = cv2.resize(frame, (W, H))
@@ -226,7 +335,6 @@ def run_end_animation(cam: Camera, duration_s: float = 10.0):
                 if SHOW_DEBUG:
                     debug = frame.copy()
                     remaining = max(0.0, duration_s - elapsed)
-
                     cv2.putText(
                         debug,
                         f"AURA FARM {remaining:.1f}s",
@@ -248,9 +356,9 @@ def run_end_animation(cam: Camera, duration_s: float = 10.0):
 
 
 # ============================================================
-# AUTO FIRE
+# SWEEP FIRE
 # ============================================================
-def auto_fire_blue_targets(
+def sweep_fire_all_targets(
     cam: Camera,
     drive: MotorDriver,
     shooter: Shooter,
@@ -260,24 +368,63 @@ def auto_fire_blue_targets(
     shots_fired = 0
     lock_count = 0
     last_shot_time = -1e9
-    status = "init"
-
     center_x = W // 2
+
+    last_frame = None
+    last_mask = np.zeros((H, W), dtype=np.uint8)
+    last_targets: list[dict] = []
+    status = "init"
 
     shooter.load_charger()
     if not shooter.motor_on:
         shooter.motor_start()
         time.sleep(1.0)
 
-    last_frame = None
-    last_mask = np.zeros((H, W), dtype=np.uint8)
-    last_targets: list[dict] = []
+    wait_for_home_t(cam)
 
-    while targets_hit < nb_targets_to_hit and shots_fired < MAG_CAPACITY:
+    print("Turn left ~90 deg")
+    drive.set_speeds(-TURN_SHOT_SPEED, TURN_SHOT_SPEED)
+    t0 = time.time()
+    while time.time() - t0 < TURN_LEFT_90_TIME:
+        ret, frame = cam.read()
+        if ret and frame is not None and SHOW_DEBUG:
+            frame = cv2.resize(frame, (W, H))
+            debug = frame.copy()
+            cv2.putText(
+                debug,
+                "TURN LEFT TO START SCAN",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.65,
+                (255, 255, 255),
+                2,
+            )
+            cv2.imshow("debug", debug)
+            cv2.waitKey(1)
+        time.sleep(0.01)
+
+    drive.set_speeds(0, 0)
+    time.sleep(0.15)
+
+    print("Sweep right + fire")
+    sweep_start = time.time()
+
+    while True:
+        if targets_hit >= nb_targets_to_hit:
+            status = "all targets hit"
+            break
+
+        if shots_fired >= MAG_CAPACITY:
+            status = "out of ammo"
+            break
+
+        if time.time() - sweep_start >= SWEEP_RIGHT_MAX_TIME:
+            status = "sweep max time reached"
+            break
+
         ret, frame = cam.read()
         if not ret or frame is None:
-            drive.set_speeds(0, 0)
-            status = "no frame"
+            drive.set_speeds(SWEEP_SPEED, -SWEEP_SPEED)
             continue
 
         frame = cv2.resize(frame, (W, H))
@@ -290,9 +437,9 @@ def auto_fire_blue_targets(
         target = choose_target(targets, center_x)
 
         if target is None:
-            drive.set_speeds(-TURN_SHOT_SPEED, TURN_SHOT_SPEED)
+            drive.set_speeds(SWEEP_SPEED, -SWEEP_SPEED)
             lock_count = 0
-            status = f"search | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
+            status = f"sweep search | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
 
         else:
             err = target["cx"] - center_x
@@ -325,23 +472,18 @@ def auto_fire_blue_targets(
                         targets_hit += 1
                         status = f"HIT confirmed | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
                         print(f"HIT confirmed -> {targets_hit}/{nb_targets_to_hit}")
-
-                        if targets_hit >= nb_targets_to_hit:
-                            drive.set_speeds(0, 0)
-                            break
                     else:
-                        status = f"MISS / target still present | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
+                        status = f"MISS | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
                         print("Miss: target still present")
 
             else:
                 lock_count = 0
-
                 if err < 0:
                     drive.set_speeds(-TURN_SHOT_SPEED, TURN_SHOT_SPEED)
-                    status = f"turn left | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
+                    status = f"turn left to aim | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
                 else:
                     drive.set_speeds(TURN_SHOT_SPEED, -TURN_SHOT_SPEED)
-                    status = f"turn right | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
+                    status = f"turn right to aim | hits={targets_hit} shots={shots_fired}/{MAG_CAPACITY}"
 
         if SHOW_DEBUG and last_frame is not None:
             debug = last_frame.copy()
@@ -394,12 +536,7 @@ def auto_fire_blue_targets(
                 break
 
     drive.set_speeds(0, 0)
-
-    if targets_hit >= nb_targets_to_hit:
-        print("MISSION COMPLETE")
-    elif shots_fired >= MAG_CAPACITY:
-        print("OUT OF AMMO")
-
+    print(f"Sweep ended: {status}")
     return targets_hit, shots_fired
 
 
@@ -413,18 +550,24 @@ def main():
     leds.turn_off_all()
 
     try:
-        hits, shots = auto_fire_blue_targets(
+        hits, shots = sweep_fire_all_targets(
             cam=cam,
             drive=drive,
             shooter=shooter,
             nb_targets_to_hit=NOMBRE_DE_CIBLES,
         )
-        print(f"Final result: hits={hits}, shots={shots}")
+
+        print(f"Final result after sweep: hits={hits}, shots={shots}")
 
         drive.set_speeds(0, 0)
         shooter.motor_stop()
 
-        run_end_animation(cam, 10.0)
+        return_to_home_using_t(cam, drive)
+
+        drive.set_speeds(0, 0)
+        shooter.motor_stop()
+
+        run_end_animation(cam, AURA_FARM_DURATION)
 
     finally:
         drive.set_speeds(0, 0)
