@@ -1,13 +1,15 @@
 import cv2
 from obstacles import CorridorNavigator
 from motors import MotorDriver
+from leds import LED
 
 
 def clamp(value, low, high):
     return max(low, min(high, value))
 
-
+leds = LED()
 def main():
+    leds.turn_off_all()
     # ------------------------------------------------------------
     # Vision + motors
     # ------------------------------------------------------------
@@ -17,12 +19,12 @@ def main():
     # ------------------------------------------------------------
     # Forward-control tuning
     # ------------------------------------------------------------
-    base_speed = 0.38        # forward speed in [-1, 1]
+    base_speed = 0.20       # forward speed in [-1, 1]
     k_p = 0.80               # proportional steering gain
-    max_correction = 0.22    # limits steering effect
+    max_correction = 0.20    # limits steering effect
 
     # Fallback behavior when target is temporarily not visible
-    lost_target_speed = 0.25
+    lost_target_speed = 0.20
 
     try:
         while True:

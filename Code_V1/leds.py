@@ -14,17 +14,17 @@ class LED:
 
         for pin in self.pins:
             GPIO.setup(pin, GPIO.OUT)
-            GPIO.output(pin, GPIO.LOW)  # start OFF
+            GPIO.output(pin, GPIO.HIGH)  # start OFF
 
     def turn_on_all(self):
         for pin in self.pins:
-            GPIO.output(pin, GPIO.HIGH)
+            GPIO.output(pin, GPIO.LOW)
 
     def turn_off_all(self):
         for pin in self.pins:
-            GPIO.output(pin, GPIO.LOW)
+            GPIO.output(pin, GPIO.HIGH)
 
-    def aura_farm(self, stop=False, delay=0.2):
+    def aura_farm(self, stop=False, delay=0.05):
         # Stop the running pattern
         if stop:
             self._running = False
@@ -38,20 +38,20 @@ class LED:
             for pin in self.pins:
                 if not self._running:
                     break
-                GPIO.output(pin, GPIO.HIGH)
-                time.sleep(delay)
                 GPIO.output(pin, GPIO.LOW)
+                time.sleep(delay)
+                GPIO.output(pin, GPIO.HIGH)
 
             # Backward: 8 → 25 → 24 → 23
             for pin in reversed(self.pins):
                 if not self._running:
                     break
-                GPIO.output(pin, GPIO.HIGH)
-                time.sleep(delay)
                 GPIO.output(pin, GPIO.LOW)
+                time.sleep(delay)
+                GPIO.output(pin, GPIO.HIGH)
 
     def cleanup(self):
         GPIO.cleanup()
 
-leds = LED()
-leds.aura_farm()
+
+

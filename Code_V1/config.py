@@ -69,7 +69,7 @@ SEARCH_TURN_STEER = 0.60       # steering forcé pendant recherche
 # ============================================================
 # SPEED
 # ============================================================
-BASE_SPEED = 0.40              # 0..1
+BASE_SPEED = 0.50              # 0..1
 TURN_SPEED = 0.30              # gros virage
 BLIND_SPEED = 0.25             # pendant perte ligne
 SEARCH_SPEED = 0.15            # recherche
