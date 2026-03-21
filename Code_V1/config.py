@@ -4,8 +4,11 @@
 W = 640
 H = 480
 
+CAM_ID = 0
+USE_PICAMERA2 = True
+
 # ============================================================
-# VISION
+# VISION - LINE FOLLOWING
 # ============================================================
 ROI_START_FRAC = 0.50
 GAUSS_KSIZE = 5
@@ -35,7 +38,6 @@ CENTER_EXCEPTION_DIST = 60
 # ============================================================
 # T DETECTION (ROBUST VERSION)
 # ============================================================
-
 # horizontal bar detection
 T_WIDTH_RATIO = 2.2
 T_MIN_ABS_WIDTH = 110
@@ -44,17 +46,17 @@ T_MAX_SIDE_RATIO = 1.8
 
 # vertical scan zone
 T_SCAN_Y_START_FRAC = 0.18
-T_SCAN_Y_END_FRAC   = 0.72
+T_SCAN_Y_END_FRAC = 0.72
 T_MIN_BAR_ROWS = 6
 
-# NEW robustness constraints
-T_CENTER_MAX_ERR = 100        # reject T if bottom stem too far from robot center
-T_MIN_WIDTH_GAIN = 60        # bar must be significantly wider than bottom
-T_STEM_MIN_ROWS = 18         # require vertical stem continuity
-T_STEM_X_TOL = 28            # tolerance around stem x when checking continuity
+# robustness constraints
+T_CENTER_MAX_ERR = 100
+T_MIN_WIDTH_GAIN = 60
+T_STEM_MIN_ROWS = 18
+T_STEM_X_TOL = 28
 
 # ============================================================
-# CONTROL
+# CONTROL - LINE FOLLOWING
 # ============================================================
 STEER_SMOOTH_ALPHA = 0.35
 STEER_DEADZONE = 5.0
@@ -88,5 +90,39 @@ STEER_GAIN = 0.1
 # DEBUG
 # ============================================================
 SHOW_DEBUG = True
-CAM_ID = 0
-USE_PICAMERA2 = True
+
+# ============================================================
+# AUTO FIRE / BLUE TARGET DETECTION
+# ============================================================
+import numpy as np
+
+BLUE_LOW = np.array([95, 60, 25], dtype=np.uint8)
+BLUE_HIGH = np.array([135, 255, 255], dtype=np.uint8)
+
+MIN_TARGET_AREA = 1200
+
+# aiming
+CENTER_TOL = 15
+LOCK_FRAMES_REQUIRED = 5
+
+# same target check after shot
+TARGET_MATCH_DIST_PX = 80
+POST_SHOT_CONFIRM_FRAMES = 5
+POST_SHOT_SETTLE_TIME = 0.20
+
+# mission
+NOMBRE_DE_CIBLES = 1
+
+# ============================================================
+# SHOOTER
+# ============================================================
+MOTEUR_PIN = 19
+SERVO_PIN = 18
+
+PWM_FREQ = 50
+ANGLE_LOADED = 21
+ANGLE_FIRE_START = 10
+ANGLE_INCREMENT = 23
+
+MAG_CAPACITY = 7
+MIN_TIME_BETWEEN_SHOTS = 0.5
