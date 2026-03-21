@@ -1,9 +1,9 @@
-# controller.py
 from __future__ import annotations
 import cv2
 import numpy as np
 import time
 import RPi.GPIO as GPIO
+from leds import LED
 
 from config import W, H
 from camera import Camera
@@ -12,10 +12,10 @@ from motors import MotorDriver
 # ============================================================
 # VISION CONFIG
 # ============================================================
-BLUE_LOW  = np.array([95, 70, 30], dtype=np.uint8)
-BLUE_HIGH = np.array([140, 255, 255], dtype=np.uint8)
+BLUE_LOW  = np.array([95, 60, 25], dtype=np.uint8)
+BLUE_HIGH = np.array([135, 255, 255], dtype=np.uint8)
 
-MIN_TARGET_AREA = 1200
+MIN_TARGET_AREA = 1600
 TURN_SPEED = 0.28
 CENTER_TOL = 35
 LOCK_FRAMES_REQUIRED = 5
@@ -31,7 +31,7 @@ PWM_FREQ = 50
 ANGLE_LOADED = 21
 ANGLE_FIRE_START = 10
 ANGLE_INCREMENT = 23
-
+leds=LED()
 
 class Shooter:
     def __init__(self):
@@ -220,6 +220,7 @@ def aim_and_fire(cam: Camera, drive: MotorDriver, shooter: Shooter):
 
 
 def main():
+    leds.turn_off_all()
     cam = Camera()
     drive = MotorDriver()
     shooter = Shooter()
