@@ -11,6 +11,7 @@ class CorridorNavigator:
         video="movement.avi",
         alpha=0.25,
         stop_y_threshold=300,
+        start_y_threshold=200,
         candidate_miss_threshold=5,
         hsv_lower=(41, 92, 0),
         hsv_upper=(74, 255, 255),
@@ -29,6 +30,7 @@ class CorridorNavigator:
         # --- Parameters ---
         self.alpha = alpha
         self.stop_y_threshold = stop_y_threshold
+        self.start_y_threshold = start_y_threshold
         self.candidate_miss_threshold = candidate_miss_threshold
 
         self.hsv_lower = np.array(hsv_lower, dtype=np.uint8)
@@ -51,6 +53,7 @@ class CorridorNavigator:
         # Candidate must be lost first AND never reappear before TURN.
         self.turn_candidate = None   # "LEFT", "RIGHT", or None
         self.candidate_locked = False
+        self.last_turn_candidate = "RIGHT"
 
         # --- Public state/output attributes ---
         self.state = "FORWARD"
@@ -314,16 +317,39 @@ class CorridorNavigator:
         if right_rep is not None:
             self.prev_right_rep = right_rep
 
-    def update_state(self):
-        self.state = "FORWARD"
 
-        if self.horizontal_smooth is not None:
-            y_center = self.hough_y_at_x(self.horizontal_smooth, self.W / 2)
-            if y_center is not None and y_center > self.stop_y_threshold:
-                self.state = "TURN"
 
-        if self.state == "TURN":
-            self.candidate_locked = True
+
+    def update_state(self, update=True):
+        if update:
+            if self.state == "FORWARD":
+                if self.horizontal_smooth is not None:
+                    y_center = self.hough_y_at_x(self.horizontal_smooth, self.W / 2)
+                    if y_center is not None and y_center > self.stop_y_threshold:
+                        self.state = "TURN"
+                        if self.turn_candidate is None and self.last_turn_candidate is not None:
+                            self.turn_candidate = self.last_turn_candidate
+                        self.candidate_locked = True
+                        self.last_turn_candidate = self.turn_candidate
+
+            if self.state == "TURN":
+                N = 3
+                at_least_one_side = (self.left_misses == 0 and self.left_stable_frames >= N) or \
+                    (self.right_misses == 0 and self.right_stable_frames >= N)
+
+                front_gone = self.horizontal_misses >= 3
+
+                front_far_enough = (
+                    self.horizontal_smooth is not None
+                    and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) is not None
+                    and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) <= self.resume_y_threshold  # << new, lower threshold
+                )
+
+                if at_least_one_side and (front_gone or front_far_enough):
+                    self.state = "FORWARD"
+                    self.candidate_locked = False
+                    self.turn_candidate = None
+            
 
     def update_turn_candidate(self, left_rep, right_rep):
         if self.state != "FORWARD" or self.candidate_locked:
@@ -602,28 +628,6 @@ class CorridorNavigator:
             "frame_width": self.W,
             "frame_height": self.H,
         }
-
-    def run(self, window_name="Video Playback", show_mask=False, show_edges=False):
-        """
-        Prototype/demo loop, equivalent to your original while-loop.
-        """
-        while True:
-            ret, output = self.step(draw=True)
-            if not ret:
-                break
-
-            cv2.imshow(window_name, output)
-
-            if show_mask and self.mask is not None:
-                cv2.imshow("Mask", self.mask)
-
-            if show_edges and self.edges is not None:
-                cv2.imshow("Edges", self.edges)
-
-            if cv2.waitKey(30) & 0xFF == ord("q"):
-                break
-
-        self.release()
 
     def release(self):
         self.cap.release()
