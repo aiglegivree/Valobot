@@ -54,7 +54,7 @@ T_MIN_TRACK_POINTS = 18
 # préfiltre candidat : la ligne doit s'élargir localement
 T_CANDIDATE_MIN_WIDTH = 55
 T_CANDIDATE_MIN_WIDTH_GAIN = 16
-T_CANDIDATE_MIN_WIDTH_RATIO = 1.45
+T_CANDIDATE_MIN_WIDTH_RATIO = 1.35
 
 # sondes locales dans le repère du tronc
 T_SIDE_PROBE_LEN = 38
@@ -64,15 +64,15 @@ T_BACK_PROBE_LEN = 22
 T_BACK_PROBE_HALF_WIDTH = 4
 
 # nombre minimal de hits dans les sondes
-T_SIDE_MIN_HITS = 18
 T_BACK_MIN_HITS = 12
+T_SIDE_MIN_HITS = 14
 
 # évite les faux T très déséquilibrés
 T_MIN_BALANCE_RATIO = 0.35
 
 # contrainte d'orientation :
 # si |dot(branch, trunk)| est trop grand -> branche trop parallèle au tronc
-T_DIRECTION_DOT_MAX = 0.45
+T_DIRECTION_DOT_MAX = 0.55
 
 # gauche et droite doivent être vraiment opposées
 # avec dot(left, right) proche de -1
