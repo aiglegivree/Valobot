@@ -347,7 +347,7 @@ class CorridorNavigator:
                         self.prev_right_rep = None
 
             if self.state == "TURN":
-                N = 3
+                N = 1
                 at_least_one_side = (self.left_misses == 0 and self.left_stable_frames >= N) or \
                     (self.right_misses == 0 and self.right_stable_frames >= N)
 
