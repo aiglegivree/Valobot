@@ -1,62 +1,78 @@
+# main.py
+from __future__ import annotations
+import cv2
+
 from camera import Camera
 from vision import detect_line, draw_debug_slices, draw_mask_slices
 from controller import Controller
 from motors import MotorDriver
 from leds import LED
-import cv2
-from config import BAND_THICKNESS
+from config import SHOW_DEBUG, BAND_THICKNESS
 
 
-cam = Camera()
-controller = Controller()
-motors = MotorDriver()
-leds = LED()
+def main():
+    cam = Camera()
+    controller = Controller()
+    motors = MotorDriver()
+    leds = LED()
 
-aura_mode = False
+    t_reached = False
 
-try:
-    while True:
-        ret, frame = cam.read()
-        if not ret:
-            continue
+    try:
+        while True:
+            ret, frame = cam.read()
+            if not ret:
+                continue
 
-        # 1) Detect line / T
-        res = detect_line(frame, angle_deg=20)
+            # 1) vision
+            res = detect_line(frame, angle_deg=20)
 
-        # 2) Controller
-        left, right, speed, steer, mode = controller.update(res)
+            # 2) control
+            left, right, speed, steer, mode = controller.update(res)
 
-        # 3) Motors + LEDs
-        if mode == "T_STOP":
-            if not aura_mode:
-                aura_mode = True
-                motors.set_speeds(0, 0)
-                leds.aura_farm_start()
+            # 3) behavior
+            if mode == "T_STOP":
+                if not t_reached:
+                    t_reached = True
+                    motors.stop()
 
-            leds.aura_farm_step(delay=0.05)
+                # keep aura farm running once T is reached
+                leds.aura_farm()
 
-        else:
-            if aura_mode:
-                aura_mode = False
-                leds.aura_farm_stop()
+            else:
+                motors.set_speeds(left, right)
+                leds.turn_on_all()
 
-            leds.turn_on_all()
-            motors.set_speeds(left, right)
+            # 4) debug
+            if SHOW_DEBUG:
+                dbg = draw_debug_slices(frame, res, BAND_THICKNESS)
+                mask_vis = draw_mask_slices(res)
 
-        # 4) Debug
-        roi = frame[res.roi_start:, :]
-        dbg = draw_debug_slices(frame, res, BAND_THICKNESS)
-        mask_dbg = draw_mask_slices(res.mask, res, BAND_THICKNESS)
+                cv2.imshow("debug", dbg)
+                cv2.imshow("mask", mask_vis)
 
-        cv2.imshow("camera debug", dbg)
-        cv2.imshow("mask debug", mask_dbg)
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27 or key == ord("q"):
+                    break
 
-        key = cv2.waitKey(1) & 0xFF
-        if key == 27 or key == ord("q"):
-            break
+    except KeyboardInterrupt:
+        pass
 
-finally:
-    leds.turn_off_all()
-    motors.set_speeds(0, 0)
-    cam.release()
-    cv2.destroyAllWindows()
+    finally:
+        motors.stop()
+
+        try:
+            leds.turn_off_all()
+        except Exception:
+            pass
+
+        try:
+            cam.release()
+        except Exception:
+            pass
+
+        cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
