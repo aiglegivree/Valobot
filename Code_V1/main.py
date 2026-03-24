@@ -20,13 +20,13 @@ try:
         if not ret:
             continue
 
-        # 1) Detect line
+        # 1) Detect line / T
         res = detect_line(frame, angle_deg=20)
 
-        # 2) Controller + motors
+        # 2) Controller
         left, right, speed, steer, mode = controller.update(res)
 
-        # 3) LED behavior
+        # 3) Motors + LEDs
         if mode == "T_STOP":
             if not aura_mode:
                 aura_mode = True
@@ -43,17 +43,16 @@ try:
             leds.turn_on_all()
             motors.set_speeds(left, right)
 
-        # 4) Debug overlays
-        dbg = draw_debug_slices(frame, res, BAND_THICKNESS)
-        mask_dbg = draw_mask_slices(res)
+        # 4) Debug
+        roi = frame[res.roi_start:, :]
+        dbg = draw_debug_slices(roi, res, BAND_THICKNESS)
+        mask_dbg = draw_mask_slices(res.mask, res, BAND_THICKNESS)
 
         cv2.imshow("camera debug", dbg)
         cv2.imshow("mask debug", mask_dbg)
 
         key = cv2.waitKey(1) & 0xFF
         if key == 27 or key == ord("q"):
-            leds.turn_off_all()
-            motors.set_speeds(0, 0)
             break
 
 finally:
