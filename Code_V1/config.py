@@ -39,34 +39,24 @@ CENTER_EXCEPTION_DIST = 60
 # T DETECTION (LOCAL STEM FRAME)
 # ============================================================
 # ============================================================
-# T detection from main line orientation
+# T detection based on tracked trunk direction
 # ============================================================
 T_ENABLE = True
 
-# main line estimation
-T_MIN_PIXELS_MAIN = 80
-T_MIN_EIG_RATIO = 3.0
+T_SCAN_OFFSET_PX = -35       # negatif = remonte le long du tronc vers le haut
 
-# where to search candidates in the ROI mask
-T_SCAN_START_FRAC = 0.12
-T_SCAN_END_FRAC   = 0.78
-T_SCAN_STEPS = 18
-
-# branch search along the perpendicular direction
 T_BRANCH_HALF_LEN = 90
 T_BRANCH_MIN_LEN = 22
 T_BRANCH_THICKNESS = 2
 
-# trunk continuity check along main direction
 T_TRUNK_CHECK_LEN = 28
 T_TRUNK_MIN_HITS = 16
 
-# bar validation
 T_BAR_MIN_HITS = 28
 T_CENTER_TOL_PX = 28
 
-# avoid detecting too close to the bottom of the image
 T_MIN_DIST_FROM_BOTTOM = 25
+T_ANGLE_MIN_DEG = 65
 # ============================================================
 # CONTROL - LINE FOLLOWING
 # ============================================================
