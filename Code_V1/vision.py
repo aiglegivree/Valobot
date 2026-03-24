@@ -254,11 +254,51 @@ def _choose_t_candidate(
     p = p + T_SCAN_OFFSET_PX * u
     return p.astype(np.float32)
 
+def _normal_span_from_center(mask: np.ndarray, p0: np.ndarray, direction: np.ndarray,
+                             max_len: int, thickness: int = 1) -> tuple[int, int, int]:
+    """
+    Measure width around p0 along 'direction'.
+    Returns:
+        neg_len, pos_len, total_width
+    """
+    d = _norm(direction)
+    h, w = mask.shape
+
+    def one_side(sign: int) -> int:
+        run = 0
+        gaps = 0
+        gap_budget = 2
+
+        for t in range(1, max_len + 1):
+            px = int(round(p0[0] + sign * t * d[0]))
+            py = int(round(p0[1] + sign * t * d[1]))
+
+            found = False
+            for k in range(-thickness, thickness + 1):
+                qx = int(round(px - k * d[1]))
+                qy = int(round(py + k * d[0]))
+                if 0 <= qx < w and 0 <= qy < h and mask[qy, qx] > 0:
+                    found = True
+                    break
+
+            if found:
+                run = t
+                gaps = 0
+            else:
+                gaps += 1
+                if gaps > gap_budget:
+                    break
+
+        return run
+
+    neg_len = one_side(-1)
+    pos_len = one_side(+1)
+    total_width = neg_len + pos_len + 1
+    return neg_len, pos_len, total_width
 
 # ============================================================
 # local T detection (no largest component assumption)
 # ============================================================
-
 def _detect_t_from_orientation(
     mask: np.ndarray,
     top_xy: tuple[int, int] | None,
@@ -288,7 +328,7 @@ def _detect_t_from_orientation(
     if py > h - T_MIN_DIST_FROM_BOTTOM:
         return False, None, u
 
-    # 1) tronc local
+    # 1) trunk continuity around candidate
     hits_trunk, first_t, last_t = _sample_line(
         mask, p, u, T_TRUNK_CHECK_LEN, thickness=T_BRANCH_THICKNESS
     )
@@ -296,12 +336,11 @@ def _detect_t_from_orientation(
     if hits_trunk < T_TRUNK_MIN_HITS:
         return False, None, u
 
-    # il faut voir la ligne avant et après le point candidat
     if first_t > -2 or last_t < 2:
         return False, None, u
 
-    # 2) barre perpendiculaire des deux côtés
-    neg_len, pos_len = _run_length_from_center(
+    # 2) width at candidate
+    neg_len, pos_len, width_here = _normal_span_from_center(
         mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
     )
 
@@ -311,15 +350,34 @@ def _detect_t_from_orientation(
     if abs(neg_len - pos_len) > T_CENTER_TOL_PX:
         return False, None, u
 
-    hits_bar, first_b, last_b = _sample_line(
+    hits_bar, _, _ = _sample_line(
         mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
     )
 
     if hits_bar < T_BAR_MIN_HITS:
         return False, None, u
 
-    return True, (px, py), u
+    # 3) compare with normal trunk width slightly before/after candidate
+    p_back = p - 20 * u
+    p_front = p + 20 * u
 
+    _, _, width_back = _normal_span_from_center(
+        mask, p_back, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
+    )
+    _, _, width_front = _normal_span_from_center(
+        mask, p_front, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
+    )
+
+    trunk_width_ref = min(width_back, width_front)
+
+    # T must be much wider than the normal trunk
+    if width_here < trunk_width_ref + 20:
+        return False, None, u
+
+    if width_here < 1.6 * trunk_width_ref:
+        return False, None, u
+
+    return True, (px, py), u
 
 # ============================================================
 # main pipeline
