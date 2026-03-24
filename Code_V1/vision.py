@@ -33,7 +33,8 @@ from config import (
     T_BACK_MIN_HITS,
     T_MIN_BALANCE_RATIO,
     T_DIRECTION_DOT_MAX,
-    T_MIN_SEPARATION,
+    T_SIDE_ANGLE_DEG,
+    T_SIDE_ANGLE_STEP_DEG,
     T_CONFIRM_ROWS,
 )
 
@@ -70,6 +71,55 @@ class VisionResult:
     mask: np.ndarray
     connected_mask: np.ndarray
 
+def rotate_vec(v: np.ndarray, angle_deg: float) -> np.ndarray:
+    a = np.radians(angle_deg)
+    c = np.cos(a)
+    s = np.sin(a)
+    return np.array([
+        c * v[0] - s * v[1],
+        s * v[0] + c * v[1]
+    ], dtype=np.float32)
+
+
+def best_probe_in_angle_fan(
+    mask: np.ndarray,
+    p: np.ndarray,
+    base_dir: np.ndarray,
+    trunk_dir: np.ndarray,
+    length: int,
+    half_width: int,
+    angle_deg: float,
+    angle_step_deg: float,
+) -> tuple[int, np.ndarray | None]:
+    """
+    Test several probe directions around base_dir and keep the best one.
+    This makes lateral branch detection robust to tilted T bars.
+    """
+    best_hits = -1
+    best_dir = None
+
+    angles = np.arange(-angle_deg, angle_deg + 0.1, angle_step_deg, dtype=np.float32)
+
+    for a in angles:
+        d = rotate_vec(base_dir, float(a))
+        hits, mean_dir = sample_probe_hits(mask, p, d, length, half_width)
+
+        if hits <= 0:
+            continue
+
+        # garde seulement une branche assez latérale par rapport au tronc
+        if mean_dir is not None:
+            if abs(float(np.dot(mean_dir, trunk_dir))) > T_DIRECTION_DOT_MAX:
+                continue
+
+        if hits > best_hits:
+            best_hits = hits
+            best_dir = mean_dir if mean_dir is not None else d
+
+    if best_hits < 0:
+        return 0, None
+
+    return best_hits, best_dir
 
 def correct_top_down(mask: np.ndarray, angle_deg: float = 20) -> np.ndarray:
     scale = 1 / np.cos(np.radians(angle_deg))
@@ -340,7 +390,7 @@ def detect_t_on_connected_mask(
     - estimate local tangent,
     - verify back continuity,
     - verify one branch on each side,
-    - reject one-sided corners.
+    - tolerate moderate tilt of the T bar.
     """
     if cx_bot is None or width_bot <= 0:
         return False, None
@@ -369,7 +419,6 @@ def detect_t_on_connected_mask(
     best_row = None
     consecutive_ok = 0
 
-    # on parcourt du haut visible vers le bas parmi les points trackés
     # points[0] = bas, points[-1] = haut
     for idx in range(len(points) - 2, max(6, len(points) // 3), -1):
         pt = points[idx]
@@ -397,26 +446,41 @@ def detect_t_on_connected_mask(
             consecutive_ok = 0
             continue
 
-        # tangent bottom->top ; pour la continuité arrière on prend -t
         n = np.array([-t[1], t[0]], dtype=np.float32)
         p = np.array([x, y], dtype=np.float32)
 
-        back_hits, back_dir = sample_probe_hits(
+        # continuité du tronc vers l'arrière
+        back_hits, _ = sample_probe_hits(
             connected_mask, p, -t, T_BACK_PROBE_LEN, T_BACK_PROBE_HALF_WIDTH
         )
-        left_hits, left_dir = sample_probe_hits(
-            connected_mask, p, n, T_SIDE_PROBE_LEN, T_SIDE_PROBE_HALF_WIDTH
-        )
-        right_hits, right_dir = sample_probe_hits(
-            connected_mask, p, -n, T_SIDE_PROBE_LEN, T_SIDE_PROBE_HALF_WIDTH
-        )
-
         if back_hits < T_BACK_MIN_HITS:
             consecutive_ok = 0
             continue
 
+        # branches latérales: on teste plusieurs angles autour de la normale
+        left_hits, left_dir = best_probe_in_angle_fan(
+            connected_mask,
+            p,
+            n,
+            t,
+            T_SIDE_PROBE_LEN,
+            T_SIDE_PROBE_HALF_WIDTH,
+            T_SIDE_ANGLE_DEG,
+            T_SIDE_ANGLE_STEP_DEG,
+        )
+
+        right_hits, right_dir = best_probe_in_angle_fan(
+            connected_mask,
+            p,
+            -n,
+            t,
+            T_SIDE_PROBE_LEN,
+            T_SIDE_PROBE_HALF_WIDTH,
+            T_SIDE_ANGLE_DEG,
+            T_SIDE_ANGLE_STEP_DEG,
+        )
+
         if left_hits < T_SIDE_MIN_HITS or right_hits < T_SIDE_MIN_HITS:
-            # angle droit ou branche unique
             consecutive_ok = 0
             continue
 
@@ -425,21 +489,8 @@ def detect_t_on_connected_mask(
             consecutive_ok = 0
             continue
 
-        # Vérifie que les branches sont bien latérales, pas quasi parallèles au tronc
+        # sécurité: il faut bien une direction mesurée de chaque côté
         if left_dir is None or right_dir is None:
-            consecutive_ok = 0
-            continue
-
-        if abs(float(np.dot(left_dir, t))) > T_DIRECTION_DOT_MAX:
-            consecutive_ok = 0
-            continue
-
-        if abs(float(np.dot(right_dir, t))) > T_DIRECTION_DOT_MAX:
-            consecutive_ok = 0
-            continue
-
-        # Vérifie aussi que gauche et droite sont réellement opposées
-        if float(np.dot(left_dir, right_dir)) > -T_MIN_SEPARATION:
             consecutive_ok = 0
             continue
 

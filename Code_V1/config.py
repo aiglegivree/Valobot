@@ -43,42 +43,39 @@ CENTER_EXCEPTION_DIST = 60
 # le bas de la ligne suivie doit rester raisonnablement proche du centre
 T_CENTER_MAX_ERR = 160
 
-# zone verticale de scan de la ligne connectée
+# ============================================================
+# T DETECTION (LOCAL STEM FRAME)
+# ============================================================
+T_CENTER_MAX_ERR = 160
+
 T_SCAN_Y_START_FRAC = 0.08
 T_SCAN_Y_END_FRAC = 0.95
 
-# tracking du tronc vers le haut
 T_TRACK_MAX_STEP = 26
 T_MIN_TRACK_POINTS = 18
 
-# préfiltre candidat : la ligne doit s'élargir localement
 T_CANDIDATE_MIN_WIDTH = 55
 T_CANDIDATE_MIN_WIDTH_GAIN = 16
 T_CANDIDATE_MIN_WIDTH_RATIO = 1.35
 
-# sondes locales dans le repère du tronc
-T_SIDE_PROBE_LEN = 38
-T_SIDE_PROBE_HALF_WIDTH = 4
+T_SIDE_PROBE_LEN = 42
+T_SIDE_PROBE_HALF_WIDTH = 5
 
 T_BACK_PROBE_LEN = 22
 T_BACK_PROBE_HALF_WIDTH = 4
 
-# nombre minimal de hits dans les sondes
-T_BACK_MIN_HITS = 12
 T_SIDE_MIN_HITS = 14
+T_BACK_MIN_HITS = 12
 
-# évite les faux T très déséquilibrés
-T_MIN_BALANCE_RATIO = 0.35
+T_MIN_BALANCE_RATIO = 0.28
 
-# contrainte d'orientation :
-# si |dot(branch, trunk)| est trop grand -> branche trop parallèle au tronc
-T_DIRECTION_DOT_MAX = 0.55
+# branche latérale peut être moins parfaitement perpendiculaire
+T_DIRECTION_DOT_MAX = 0.72
 
-# gauche et droite doivent être vraiment opposées
-# avec dot(left, right) proche de -1
-T_MIN_SEPARATION = 0.30
+# éventail angulaire autour de la normale
+T_SIDE_ANGLE_DEG = 28
+T_SIDE_ANGLE_STEP_DEG = 7
 
-# nombre de lignes candidates consécutives pour valider
 T_CONFIRM_ROWS = 2
 
 # ============================================================
