@@ -562,7 +562,7 @@ class CorridorNavigator:
 
         return ret, frame
 
-    def process_frame(self, frame, draw=True):
+    def process_frame(self, frame, update = True, draw=True):
         """
         Processes one frame and updates all public attributes.
 
@@ -585,7 +585,7 @@ class CorridorNavigator:
 
         self.update_smoothed_lines(horizontal_rep, left_rep, right_rep)
         self.update_ghost_lines(left_rep, right_rep)
-        self.update_state()
+        self.update_state(update = update)
         self.update_turn_candidate(left_rep, right_rep)
         self.update_target()
 
@@ -595,7 +595,7 @@ class CorridorNavigator:
 
         return output
 
-    def step(self, draw=True):
+    def step(self, draw=True, update=True):
         """
         Reads and processes one frame from the configured source.
 
@@ -606,7 +606,7 @@ class CorridorNavigator:
         if not ret or frame is None:
             return False, None
 
-        output = self.process_frame(frame, draw=draw)
+        output = self.process_frame(frame, draw=draw, update=update)
         return True, output
 
     def get_control_data(self):
