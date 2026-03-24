@@ -61,10 +61,22 @@ T_TRUNK_THICKNESS = C("T_TRUNK_THICKNESS", 2)
 T_TRUNK_MIN_BACK = C("T_TRUNK_MIN_BACK", 10)
 T_TRUNK_MAX_FWD = C("T_TRUNK_MAX_FWD", 12)
 
-T_MIN_BRANCH_SHORT = C("T_MIN_BRANCH_SHORT", 10)
-T_MIN_BRANCH_LONG = C("T_MIN_BRANCH_LONG", 26)
-T_MIN_TOTAL_BAR = C("T_MIN_TOTAL_BAR", 60)
 T_MAX_BRANCH_RATIO = C("T_MAX_BRANCH_RATIO", 6.0)
+
+T_SECTION_OFFSET = C("T_SECTION_OFFSET", 12)
+
+T_CENTER_MIN_SHORT = C("T_CENTER_MIN_SHORT", 10)
+T_CENTER_MIN_LONG = C("T_CENTER_MIN_LONG", 24)
+T_CENTER_MIN_TOTAL = C("T_CENTER_MIN_TOTAL", 60)
+
+T_BELOW_MAX_TOTAL = C("T_BELOW_MAX_TOTAL", 45)
+T_WIDTH_JUMP_MIN = C("T_WIDTH_JUMP_MIN", 20)
+T_ABOVE_MAX_TOTAL = C("T_ABOVE_MAX_TOTAL", 110)
+
+T_SCORE_GAIN_CENTER = C("T_SCORE_GAIN_CENTER", 1.0)
+T_SCORE_GAIN_JUMP = C("T_SCORE_GAIN_JUMP", 1.4)
+T_SCORE_PENALTY_ABOVE = C("T_SCORE_PENALTY_ABOVE", 0.35)
+T_SCORE_PENALTY_FWD = C("T_SCORE_PENALTY_FWD", 1.0)
 
 SHOW_T_DEBUG = C("SHOW_T_DEBUG", True)
 
@@ -186,10 +198,10 @@ def _estimate_trunk_direction(
     x_hint: float | None,
 ) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
     """
-    Estimate incoming line direction only from the lower band.
+    Estimate incoming line direction from the lower ROI only.
     Returns:
         trunk_dir_up: unit vector pointing upward in ROI coordinates
-        anchor: point near the lower band center
+        anchor: point near lower line center
     """
     h, w = mask.shape[:2]
     y0 = int((1.0 - T_TRUNK_BAND_FRAC) * h)
@@ -222,7 +234,6 @@ def _estimate_trunk_direction(
     if d is None:
         return None, None
 
-    # force upward direction in image coordinates
     if d[1] > 0:
         d = (-d[0], -d[1])
 
@@ -241,8 +252,7 @@ def _line_support(
     max_total_gap: int = 3,
 ) -> int:
     """
-    Measure how far the structure continues from (cx, cy) along direction (dx, dy).
-    Robust to small gaps.
+    Measure continuity from (cx, cy) along direction (dx, dy).
     """
     h, w = mask.shape[:2]
     perp_x, perp_y = -dy, dx
@@ -277,6 +287,65 @@ def _line_support(
     return hits
 
 
+def _cross_section_runs(
+    mask: np.ndarray,
+    cx: float,
+    cy: float,
+    trunk_up: tuple[float, float],
+    half_len: int,
+    thickness: int,
+) -> dict:
+    """
+    Measure left/right support on the cross-section perpendicular to trunk.
+    """
+    h, w = mask.shape[:2]
+    ux, uy = trunk_up
+
+    lx, ly = -uy, ux
+    rx, ry = uy, -ux
+
+    def run_len(dx: float, dy: float) -> int:
+        hits = 0
+        gaps = 0
+        started = False
+
+        for s in range(1, half_len + 1):
+            px = cx + s * dx
+            py = cy + s * dy
+
+            ok = False
+            for t in range(-thickness, thickness + 1):
+                qx = int(round(px + t * ux))
+                qy = int(round(py + t * uy))
+                if 0 <= qx < w and 0 <= qy < h and mask[qy, qx] > 0:
+                    ok = True
+                    break
+
+            if ok:
+                hits = s
+                started = True
+                gaps = 0
+            else:
+                gaps += 1
+                if not started and gaps > 1:
+                    break
+                if started and gaps > 2:
+                    break
+
+        return hits
+
+    left_len = run_len(lx, ly)
+    right_len = run_len(rx, ry)
+
+    return {
+        "left": left_len,
+        "right": right_len,
+        "short": min(left_len, right_len),
+        "long": max(left_len, right_len),
+        "total": left_len + right_len,
+    }
+
+
 def _probe_t_candidate(
     mask: np.ndarray,
     cx: float,
@@ -284,20 +353,13 @@ def _probe_t_candidate(
     trunk_up: tuple[float, float],
 ):
     """
-    Features around one candidate center.
-
-    Robust version:
-    - incoming trunk below the candidate can be short
-    - left/right branches can be asymmetric if the T is not centered
+    Robust T detection using width jump:
+    - below candidate: still narrow
+    - at candidate: large lateral width
+    - above candidate: should not stay too wide
     """
     ux, uy = trunk_up
-
-    # backward = toward image bottom
     bx, by = -ux, -uy
-
-    # perpendicular directions
-    lx, ly = -uy, ux
-    rx, ry = uy, -ux
 
     trunk_back = _line_support(
         mask, cx, cy, bx, by,
@@ -309,51 +371,70 @@ def _probe_t_candidate(
         max_len=T_TRUNK_FWD_LEN,
         thickness=T_TRUNK_THICKNESS,
     )
-    left_len = _line_support(
-        mask, cx, cy, lx, ly,
-        max_len=T_BRANCH_HALF_LEN,
+
+    off = T_SECTION_OFFSET
+
+    below = _cross_section_runs(
+        mask,
+        cx - off * ux, cy - off * uy,
+        trunk_up,
+        half_len=T_BRANCH_HALF_LEN,
         thickness=T_BRANCH_THICKNESS,
     )
-    right_len = _line_support(
-        mask, cx, cy, rx, ry,
-        max_len=T_BRANCH_HALF_LEN,
+    center = _cross_section_runs(
+        mask,
+        cx, cy,
+        trunk_up,
+        half_len=T_BRANCH_HALF_LEN,
+        thickness=T_BRANCH_THICKNESS,
+    )
+    above = _cross_section_runs(
+        mask,
+        cx + off * ux, cy + off * uy,
+        trunk_up,
+        half_len=T_BRANCH_HALF_LEN,
         thickness=T_BRANCH_THICKNESS,
     )
 
-    short_side = min(left_len, right_len)
-    long_side = max(left_len, right_len)
-    bar_total = left_len + right_len
-    branch_ratio = long_side / max(1.0, short_side)
-
-    has_two_sides = (
-        short_side >= T_MIN_BRANCH_SHORT and
-        long_side >= T_MIN_BRANCH_LONG and
-        bar_total >= T_MIN_TOTAL_BAR and
-        branch_ratio <= T_MAX_BRANCH_RATIO
-    )
+    width_jump = center["total"] - below["total"]
+    ratio = center["long"] / max(1.0, center["short"])
 
     valid = (
         trunk_back >= T_TRUNK_MIN_BACK and
         trunk_fwd <= T_TRUNK_MAX_FWD and
-        has_two_sides
+        center["short"] >= T_CENTER_MIN_SHORT and
+        center["long"] >= T_CENTER_MIN_LONG and
+        center["total"] >= T_CENTER_MIN_TOTAL and
+        below["total"] <= T_BELOW_MAX_TOTAL and
+        width_jump >= T_WIDTH_JUMP_MIN and
+        above["total"] <= T_ABOVE_MAX_TOTAL and
+        ratio <= T_MAX_BRANCH_RATIO
     )
 
     score = (
-        1.4 * short_side +
-        0.8 * long_side +
-        0.35 * trunk_back -
-        1.0 * trunk_fwd
+        T_SCORE_GAIN_CENTER * center["total"] +
+        T_SCORE_GAIN_JUMP * width_jump +
+        0.3 * trunk_back -
+        T_SCORE_PENALTY_ABOVE * above["total"] -
+        T_SCORE_PENALTY_FWD * trunk_fwd
     )
 
     feats = {
         "trunk_back": trunk_back,
         "trunk_fwd": trunk_fwd,
-        "left_len": left_len,
-        "right_len": right_len,
-        "short_side": short_side,
-        "long_side": long_side,
-        "bar_total": bar_total,
-        "branch_ratio": branch_ratio,
+        "below_left": below["left"],
+        "below_right": below["right"],
+        "below_total": below["total"],
+        "center_left": center["left"],
+        "center_right": center["right"],
+        "center_short": center["short"],
+        "center_long": center["long"],
+        "center_total": center["total"],
+        "above_left": above["left"],
+        "above_right": above["right"],
+        "above_total": above["total"],
+        "width_jump": width_jump,
+        "ratio": ratio,
         "valid": valid,
         "score": score,
     }
@@ -404,7 +485,7 @@ def _detect_t(mask: np.ndarray, bottom_x: float | None):
 # ============================================================
 def detect_line(frame: np.ndarray, angle_deg: float = 0.0) -> LineResult:
     """
-    angle_deg kept only to preserve the old API.
+    angle_deg kept only to preserve old API.
     """
     roi_start = int(frame.shape[0] * ROI_START_FRAC)
     frame_roi = frame[roi_start:, :]
@@ -487,7 +568,7 @@ def draw_mask_slices(mask: np.ndarray, res: LineResult, band_thickness: int = BA
 
     if SHOW_T_DEBUG:
         for x, y, feats in res.scan_points:
-            col = (0, 120, 255) if feats["valid"] else (80, 80, 180)
+            col = (0, 255, 255) if feats["valid"] else (60, 60, 160)
             cv2.circle(out, (x, y), 2, col, -1)
 
     if res.t_center is not None:
@@ -507,14 +588,10 @@ def draw_mask_slices(mask: np.ndarray, res: LineResult, band_thickness: int = BA
 
 
 def draw_debug_slices(frame: np.ndarray, res: LineResult, band_thickness: int = BAND_THICKNESS) -> np.ndarray:
-    """
-    Old-style debug on full frame.
-    """
     out = frame.copy()
     h_full, w_full = out.shape[:2]
 
     roi_y0 = res.roi_start
-
     cv2.rectangle(out, (0, roi_y0), (w_full - 1, h_full - 1), (120, 120, 120), 1)
 
     for y in res.slice_ys:
@@ -549,7 +626,7 @@ def draw_debug_slices(frame: np.ndarray, res: LineResult, band_thickness: int = 
     if SHOW_T_DEBUG:
         for x, y, feats in res.scan_points:
             yy = roi_y0 + y
-            col = (0, 165, 255) if feats["valid"] else (100, 100, 200)
+            col = (0, 255, 255) if feats["valid"] else (60, 60, 160)
             cv2.circle(out, (x, yy), 2, col, -1)
 
     if res.t_center is not None:

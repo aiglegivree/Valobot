@@ -18,6 +18,7 @@ USE_BINARY_INV = True
 KERNEL_SIZE = 5
 MORPH_CLOSE_IT = 2
 MORPH_OPEN_IT = 1
+MIN_COMPONENT_AREA = 120
 
 BAND_THICKNESS = 6
 
@@ -36,37 +37,53 @@ BOTTOM_SLICE_MAX_DIST = 200
 CENTER_EXCEPTION_DIST = 60
 
 # ============================================================
-# T detection based on tracked trunk direction
+# T DETECTION
 # ============================================================
-# --- T detection
-# ================= T DETECTION =================
-
 T_ENABLE = True
 
+# estimate incoming trunk from lower ROI only
 T_TRUNK_BAND_FRAC = 0.22
 T_MIN_TRUNK_PIXELS = 70
 
+# scan candidate points upward along the estimated trunk
 T_SCAN_START_FRAC = 0.08
 T_SCAN_END_FRAC = 0.82
 T_SCAN_STEPS = 24
 
+# lateral probing
 T_BRANCH_HALF_LEN = 110
 T_BRANCH_THICKNESS = 3
 
+# trunk continuity around candidate
 T_TRUNK_BACK_LEN = 34
 T_TRUNK_FWD_LEN = 24
 T_TRUNK_THICKNESS = 2
 
+# trunk may be short in the image
 T_TRUNK_MIN_BACK = 10
 T_TRUNK_MAX_FWD = 12
 
-# robust asymmetric T bar detection
-T_MIN_BRANCH_SHORT = 10
-T_MIN_BRANCH_LONG = 26
-T_MIN_TOTAL_BAR = 60
+# asymmetry tolerance
 T_MAX_BRANCH_RATIO = 6.0
 
+# width jump detection
+T_SECTION_OFFSET = 12
+
+T_CENTER_MIN_SHORT = 10
+T_CENTER_MIN_LONG = 24
+T_CENTER_MIN_TOTAL = 60
+
+T_BELOW_MAX_TOTAL = 45
+T_WIDTH_JUMP_MIN = 20
+T_ABOVE_MAX_TOTAL = 110
+
+T_SCORE_GAIN_CENTER = 1.0
+T_SCORE_GAIN_JUMP = 1.4
+T_SCORE_PENALTY_ABOVE = 0.35
+T_SCORE_PENALTY_FWD = 1.0
+
 SHOW_T_DEBUG = True
+
 # ============================================================
 # CONTROL - LINE FOLLOWING
 # ============================================================
