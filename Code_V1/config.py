@@ -38,15 +38,14 @@ CENTER_EXCEPTION_DIST = 60
 # ============================================================
 # T DETECTION (ROBUST VERSION)
 # ============================================================
-# horizontal bar detection
-T_WIDTH_RATIO = 1.45
-T_MIN_ABS_WIDTH = 70
+T_WIDTH_RATIO = 1.35
+T_MIN_ABS_WIDTH = 60
 T_CENTER_MAX_ERR = 160
-T_MIN_SIDE_EXT = 12
+T_MIN_SIDE_EXT = 14
 T_MAX_SIDE_RATIO = 6.0
-T_MIN_WIDTH_GAIN = 18
-T_STEM_MIN_ROWS = 12
-T_STEM_X_TOL = 22
+T_MIN_WIDTH_GAIN = 14
+T_STEM_MIN_ROWS = 10
+T_STEM_X_TOL = 24
 
 T_SCAN_Y_START_FRAC = 0.12
 T_SCAN_Y_END_FRAC = 0.95
