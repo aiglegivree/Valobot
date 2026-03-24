@@ -242,13 +242,12 @@ def detect_t_on_connected_mask(
     y_bot: int,
 ) -> tuple[bool, int | None]:
     """
-    T detection tuned to be practical:
-    - start from bottom stem
-    - scan upward around bottom x
-    - require strong width increase
-    - require left and right extension
-    - require stem continuity below
-    - only light anti-turn filtering
+    Robust practical T detection:
+    - follow the line upward from the bottom
+    - detect a local width peak (not just a large width)
+    - require real side extensions on both sides
+    - require stem continuity below candidate row
+    - reject plain shifted straight lines
     """
     if cx_bot is None or width_bot <= 0:
         return False, None
@@ -256,7 +255,7 @@ def detect_t_on_connected_mask(
     h, w = connected_mask.shape
     cx_ref = w // 2
 
-    # Keep this, but not too strict
+    # keep this loose
     if abs(cx_bot - cx_ref) > T_CENTER_MAX_ERR:
         return False, None
 
@@ -270,8 +269,12 @@ def detect_t_on_connected_mask(
     candidate_row = None
     candidate_x = None
 
-    # small horizontal drift allowed while scanning upward
     last_x = cx_bot
+
+    # store local widths along followed stem
+    tracked_rows = []
+    tracked_widths = []
+    tracked_centers = []
 
     for y in range(y_end, y_start - 1, -1):
         row = connected_mask[y, :] > 0
@@ -282,7 +285,6 @@ def detect_t_on_connected_mask(
             candidate_x = None
             continue
 
-        # search near previous x, not only exactly at cx_bot
         x_min, x_max = get_row_run_around_x(row, last_x)
         if x_min is None or x_max is None:
             consecutive_hits = 0
@@ -294,17 +296,33 @@ def detect_t_on_connected_mask(
         run_cx = (x_min + x_max) // 2
         width = x_max - x_min
 
-        # allow stem to move a bit
-        stem_x = last_x
-        stem_x = max(x_min, min(x_max, stem_x))
+        tracked_rows.append(y)
+        tracked_widths.append(width)
+        tracked_centers.append(run_cx)
+
+        # stem position = previous tracked line position clamped inside run
+        stem_x = max(x_min, min(x_max, last_x))
 
         left_ext = stem_x - x_min
         right_ext = x_max - stem_x
 
+        # -------- Local width baseline below current row --------
+        local_below = []
+        for yy, ww in zip(tracked_rows[:-1], tracked_widths[:-1]):
+            # rows below current candidate and not too far
+            if 0 < (yy - y) <= max(8, T_STEM_MIN_ROWS):
+                local_below.append(ww)
+
+        if len(local_below) >= 3:
+            local_base = float(np.median(local_below))
+        else:
+            local_base = float(width_bot)
+
+        # candidate must be a real local width jump
         width_ok = (
             width >= T_MIN_ABS_WIDTH and
-            width >= T_WIDTH_RATIO * max(1, width_bot) and
-            (width - width_bot) >= T_MIN_WIDTH_GAIN
+            width >= T_WIDTH_RATIO * max(1.0, local_base) and
+            (width - local_base) >= T_MIN_WIDTH_GAIN
         )
 
         both_sides_present = (
@@ -312,14 +330,22 @@ def detect_t_on_connected_mask(
             right_ext >= T_MIN_SIDE_EXT
         )
 
-        # lighter balance filter than before
+        # very light asymmetry check only
         smaller = min(left_ext, right_ext)
         larger = max(left_ext, right_ext)
         balance_ratio = smaller / max(1, larger)
+        balanced_enough = balance_ratio >= 0.12
 
-        balanced_enough = balance_ratio >= 0.18
+        # extra anti-straight-line filter:
+        # the run center should stay close to tracked stem,
+        # but the candidate width must expand on BOTH sides enough.
+        min_side_needed = max(T_MIN_SIDE_EXT, int(0.18 * width))
+        side_shape_ok = (
+            left_ext >= min_side_needed and
+            right_ext >= min_side_needed
+        )
 
-        bar_ok = width_ok and both_sides_present and balanced_enough
+        bar_ok = width_ok and both_sides_present and balanced_enough and side_shape_ok
 
         if bar_ok:
             consecutive_hits += 1
@@ -333,7 +359,6 @@ def detect_t_on_connected_mask(
             candidate_row = None
             candidate_x = None
 
-        # update tracking even before T hit
         last_x = run_cx
 
         if consecutive_hits >= T_MIN_BAR_ROWS:
@@ -342,21 +367,24 @@ def detect_t_on_connected_mask(
     if candidate_row is None or candidate_x is None:
         return False, None
 
-    # validate stem continuity below bar
+    # Validate stem continuity below candidate row
     y0 = candidate_row
     y1 = min(h - 1, candidate_row + T_STEM_MIN_ROWS)
 
     stem_hits = 0
     total_rows = max(1, y1 - y0 + 1)
     last_x = candidate_x
+    widths_below = []
 
     for y in range(y0, y1 + 1):
         row = connected_mask[y, :] > 0
         x_min, x_max = get_row_run_around_x(row, last_x)
-        if x_min is None:
+        if x_min is None or x_max is None:
             continue
 
         run_cx = (x_min + x_max) // 2
+        run_w = x_max - x_min
+        widths_below.append(run_w)
         last_x = run_cx
 
         x_left = max(0, run_cx - T_STEM_X_TOL)
@@ -369,8 +397,23 @@ def detect_t_on_connected_mask(
     if stem_hits < required_hits:
         return False, None
 
-    return True, first_hit_row
+    # Final anti-false-positive:
+    # candidate width must be significantly wider than the stem below
+    if len(widths_below) >= 3:
+        below_base = float(np.median(widths_below))
+        row = connected_mask[candidate_row, :] > 0
+        x_min, x_max = get_row_run_around_x(row, candidate_x)
+        if x_min is None or x_max is None:
+            return False, None
+        candidate_width = float(x_max - x_min)
 
+        if not (
+            candidate_width >= T_WIDTH_RATIO * max(1.0, below_base)
+            and (candidate_width - below_base) >= T_MIN_WIDTH_GAIN
+        ):
+            return False, None
+
+    return True, first_hit_row
 
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     mask, roi_start = compute_mask_from_frame(frame_bgr)
