@@ -30,6 +30,11 @@ from config import (
     T_SCAN_Y_START_FRAC,
     T_SCAN_Y_END_FRAC,
     T_MIN_BAR_ROWS,
+
+    # anti false-T
+    T_MIN_BALANCE_RATIO,
+    T_UP_CHECK_ROWS,
+    T_MAX_UP_CONTINUITY_ROWS,
 )
 
 
@@ -79,8 +84,8 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
 
     hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
 
-    lower_black = np.array([0, 0, 0])
-    upper_black = np.array([250, 250, 60])
+    lower_black = np.array([0, 0, 0], dtype=np.uint8)
+    upper_black = np.array([180, 255, 70], dtype=np.uint8)
 
     mask = cv2.inRange(hsv, lower_black, upper_black)
 
@@ -144,7 +149,6 @@ def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray
     if candidate_labels.size == 0:
         return np.zeros_like(mask)
 
-    # Keep the largest candidate touching the bottom window
     best_label = None
     best_area = -1
     for lab in candidate_labels:
@@ -157,18 +161,95 @@ def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray
     out[labels == best_label] = 255
     return out
 
+
+def get_row_run_around_x(row_mask: np.ndarray, x_ref: int) -> tuple[int | None, int | None]:
+    """
+    Return the contiguous white run [x_min, x_max] that contains x_ref
+    or the nearest local run around x_ref.
+    """
+    w = row_mask.shape[0]
+    if w == 0:
+        return None, None
+
+    x_ref = max(0, min(w - 1, x_ref))
+
+    if not row_mask[x_ref]:
+        radius = 12
+        x0 = max(0, x_ref - radius)
+        x1 = min(w, x_ref + radius + 1)
+        xs = np.where(row_mask[x0:x1])[0]
+        if xs.size == 0:
+            return None, None
+        xs_full = x0 + xs
+        x_ref = int(xs_full[np.argmin(np.abs(xs_full - x_ref))])
+
+    x_min = x_ref
+    while x_min > 0 and row_mask[x_min - 1]:
+        x_min -= 1
+
+    x_max = x_ref
+    while x_max < w - 1 and row_mask[x_max + 1]:
+        x_max += 1
+
+    return int(x_min), int(x_max)
+
+
+def estimate_local_stem_direction(
+    connected_mask: np.ndarray,
+    cx_bot: int,
+    y_bot: int,
+    y_start: int,
+) -> tuple[float, list[tuple[int, int]]]:
+    """
+    Follow the stem upward and estimate local slope dx/dy.
+    """
+    points: list[tuple[int, int]] = []
+    last_x = cx_bot
+    h, w = connected_mask.shape
+
+    y0 = min(h - 1, y_bot)
+    y1 = max(0, y_start)
+
+    for y in range(y0, y1 - 1, -1):
+        row = connected_mask[y, :] > 0
+        x_min, x_max = get_row_run_around_x(row, last_x)
+        if x_min is None:
+            continue
+
+        cx = (x_min + x_max) // 2
+        points.append((cx, y))
+        last_x = cx
+
+    if len(points) < 2:
+        return 0.0, points
+
+    xs = np.array([p[0] for p in points], dtype=np.float32)
+    ys = np.array([p[1] for p in points], dtype=np.float32)
+
+    y_mean = ys.mean()
+    denom = np.sum((ys - y_mean) ** 2)
+    if denom < 1e-6:
+        return 0.0, points
+
+    slope = float(np.sum((ys - y_mean) * (xs - xs.mean())) / denom)
+    return slope, points
+
+
 def detect_t_on_connected_mask(
     connected_mask: np.ndarray,
     cx_bot: int | None,
     width_bot: int,
+    y_bot: int,
 ) -> tuple[bool, int | None]:
     """
-    More robust T detection:
-    - bottom stem must be near image center
-    - detect a true horizontal bar around the stem x
-    - require strong width increase relative to bottom
-    - require balanced side extensions
-    - require vertical continuity below the detected bar (true stem)
+    Robust T detection:
+    - bottom stem near center
+    - track tilted stem direction upward
+    - detect strong width increase
+    - require real left and right branches
+    - reject too asymmetric cases
+    - require stem continuity below
+    - reject strong continuity above (anti sharp-turn / anti-cross)
     """
     if cx_bot is None or width_bot <= 0:
         return False, None
@@ -176,17 +257,21 @@ def detect_t_on_connected_mask(
     h, w = connected_mask.shape
     cx_ref = w // 2
 
-    # --------------------------------------------------
-    # 1) Reject if the bottom stem is too far from center
-    # --------------------------------------------------
+    # stem near center only
     if abs(cx_bot - cx_ref) > T_CENTER_MAX_ERR:
         return False, None
 
     y_start = int(T_SCAN_Y_START_FRAC * h)
     y_end = int(T_SCAN_Y_END_FRAC * h)
-
     if y_start > y_end:
         y_start, y_end = y_end, y_start
+
+    slope, _ = estimate_local_stem_direction(
+        connected_mask=connected_mask,
+        cx_bot=cx_bot,
+        y_bot=y_bot,
+        y_start=y_start,
+    )
 
     consecutive_hits = 0
     first_hit_row = None
@@ -194,42 +279,44 @@ def detect_t_on_connected_mask(
     candidate_x = None
 
     for y in range(y_end, y_start - 1, -1):
-        row = connected_mask[y, :] > 0
+        dy = y - y_bot
+        x_pred = int(round(cx_bot + slope * dy))
+        x_pred = max(0, min(w - 1, x_pred))
 
+        row = connected_mask[y, :] > 0
         if not np.any(row):
             consecutive_hits = 0
             first_hit_row = None
+            candidate_row = None
+            candidate_x = None
             continue
 
-        # contiguous runs
-        padded = np.concatenate([[0], row.astype(np.uint8), [0]])
-        diff = np.diff(padded)
-        starts = np.where(diff == 1)[0]
-        ends = np.where(diff == -1)[0] - 1
-
-        run_found = False
-        x_min = None
-        x_max = None
-
-        for s, e in zip(starts, ends):
-            if s <= cx_bot <= e:
-                x_min = int(s)
-                x_max = int(e)
-                run_found = True
-                break
-
-        if not run_found:
+        x_min, x_max = get_row_run_around_x(row, x_pred)
+        if x_min is None or x_max is None:
             consecutive_hits = 0
             first_hit_row = None
+            candidate_row = None
+            candidate_x = None
             continue
 
         width = x_max - x_min
-        left_ext = cx_bot - x_min
-        right_ext = x_max - cx_bot
+
+        # stem position predicted by the tracked stem, not by run center
+        stem_x = x_pred
+
+        left_ext = stem_x - x_min
+        right_ext = x_max - stem_x
+
+        if left_ext < 0 or right_ext < 0:
+            consecutive_hits = 0
+            first_hit_row = None
+            candidate_row = None
+            candidate_x = None
+            continue
 
         width_ok = (
             width >= T_MIN_ABS_WIDTH and
-            width > T_WIDTH_RATIO * max(1, width_bot) and
+            width >= T_WIDTH_RATIO * max(1, width_bot) and
             (width - width_bot) >= T_MIN_WIDTH_GAIN
         )
 
@@ -238,9 +325,14 @@ def detect_t_on_connected_mask(
             right_ext >= T_MIN_SIDE_EXT
         )
 
-        smaller = max(1, min(left_ext, right_ext))
+        smaller = min(left_ext, right_ext)
         larger = max(left_ext, right_ext)
-        balanced = (larger / smaller) <= T_MAX_SIDE_RATIO
+
+        balance_ratio = smaller / max(1, larger)
+        balanced = (
+            balance_ratio >= T_MIN_BALANCE_RATIO and
+            (larger / max(1, smaller)) <= T_MAX_SIDE_RATIO
+        )
 
         bar_ok = width_ok and both_sides_present and balanced
 
@@ -249,7 +341,7 @@ def detect_t_on_connected_mask(
             if first_hit_row is None:
                 first_hit_row = y
             candidate_row = y
-            candidate_x = cx_bot
+            candidate_x = stem_x
         else:
             consecutive_hits = 0
             first_hit_row = None
@@ -262,23 +354,43 @@ def detect_t_on_connected_mask(
     if candidate_row is None or candidate_x is None:
         return False, None
 
-    # --------------------------------------------------
-    # 2) Validate vertical stem continuity below bar
-    # --------------------------------------------------
+    # stem continuity below the detected bar
     y0 = candidate_row
     y1 = min(h - 1, candidate_row + T_STEM_MIN_ROWS)
 
     stem_hits = 0
-    required_hits = max(6, int(0.6 * (y1 - y0 + 1)))
+    total_rows = max(1, y1 - y0 + 1)
 
     for y in range(y0, y1 + 1):
-        x_left = max(0, candidate_x - T_STEM_X_TOL)
-        x_right = min(w, candidate_x + T_STEM_X_TOL + 1)
+        dy = y - candidate_row
+        x_pred = int(round(candidate_x + slope * dy))
+        x_left = max(0, x_pred - T_STEM_X_TOL)
+        x_right = min(w, x_pred + T_STEM_X_TOL + 1)
 
         if np.any(connected_mask[y, x_left:x_right] > 0):
             stem_hits += 1
 
+    required_hits = max(4, int(0.6 * total_rows))
     if stem_hits < required_hits:
+        return False, None
+
+    # anti false-T:
+    # a real T should not keep a strong stem continuity above the bar
+    up_y0 = max(0, candidate_row - T_UP_CHECK_ROWS)
+    up_y1 = candidate_row - 1
+
+    up_hits = 0
+    if up_y0 <= up_y1:
+        for y in range(up_y0, up_y1 + 1):
+            dy = y - candidate_row
+            x_pred = int(round(candidate_x + slope * dy))
+            x_left = max(0, x_pred - T_STEM_X_TOL)
+            x_right = min(w, x_pred + T_STEM_X_TOL + 1)
+
+            if np.any(connected_mask[y, x_left:x_right] > 0):
+                up_hits += 1
+
+    if up_hits > T_MAX_UP_CONTINUITY_ROWS:
         return False, None
 
     return True, first_hit_row
@@ -291,20 +403,19 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     h_td, w_td = mask_td.shape
     cx_ref = w_td // 2
 
-    # keep only component connected to bottom window
     connected_mask = keep_bottom_connected_component(mask_td, cx_ref)
 
     y_top = int(SLICE_TOP_FRAC * h_td)
     y_mid = int(SLICE_MID_FRAC * h_td)
     y_bot = int(SLICE_BOT_FRAC * h_td)
 
-    cx_top, _, x_min_top, x_max_top, width_top, _ = get_band_info(
+    cx_top, _, _, _, width_top, _ = get_band_info(
         connected_mask, SLICE_TOP_FRAC, BAND_THICKNESS
     )
-    cx_mid, _, x_min_mid, x_max_mid, width_mid, _ = get_band_info(
+    cx_mid, _, _, _, width_mid, _ = get_band_info(
         connected_mask, SLICE_MID_FRAC, BAND_THICKNESS
     )
-    cx_bot, _, x_min_bot, x_max_bot, width_bot, _ = get_band_info(
+    cx_bot, _, _, _, width_bot, _ = get_band_info(
         connected_mask,
         SLICE_BOT_FRAC,
         BAND_THICKNESS,
@@ -364,6 +475,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         connected_mask=connected_mask,
         cx_bot=cx_bot,
         width_bot=width_bot,
+        y_bot=y_bot,
     )
 
     return VisionResult(
@@ -418,8 +530,15 @@ def draw_debug_slices(frame_bgr, vision_result, band_thickness):
         cv2.line(out, (0, roi_start + y), (w_roi - 1, roi_start + y), color, 1)
         if cx is not None:
             cv2.circle(out, (cx, roi_start + y), 5, color, -1)
-        cv2.putText(out, f"{name}: {cx}", (10, roi_start + y - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        cv2.putText(
+            out,
+            f"{name}: {cx}",
+            (10, roi_start + y - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            color,
+            1
+        )
 
     draw_one(vision_result.y_top, vision_result.cx_top, (0, 255, 0), "TOP")
     draw_one(vision_result.y_mid, vision_result.cx_mid, (0, 200, 255), "MID")
@@ -435,11 +554,25 @@ def draw_debug_slices(frame_bgr, vision_result, band_thickness):
         )
 
     if vision_result.t_detected:
-        cv2.putText(out, "T DETECTED", (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
+        cv2.putText(
+            out,
+            "T DETECTED",
+            (10, 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 0, 255),
+            2
+        )
 
-    cv2.putText(out, f"Steer error: {vision_result.steer_error:.2f}", (10, 50),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    cv2.putText(
+        out,
+        f"Steer error: {vision_result.steer_error:.2f}",
+        (10, 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 255, 0),
+        2
+    )
 
     return out
 
@@ -473,7 +606,14 @@ def draw_mask_slices(vision_result):
         cv2.line(vis, (0, vision_result.t_row), (vis.shape[1] - 1, vision_result.t_row), (255, 0, 255), 2)
 
     if vision_result.t_detected:
-        cv2.putText(vis, "T DETECTED", (10, 25),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 255), 2)
+        cv2.putText(
+            vis,
+            "T DETECTED",
+            (10, 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (255, 0, 255),
+            2
+        )
 
     return vis
