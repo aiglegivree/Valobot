@@ -44,7 +44,7 @@ CENTER_EXCEPTION_DIST = 60
 T_CENTER_MAX_ERR = 160
 
 # zone verticale de scan de la ligne connectée
-T_SCAN_Y_START_FRAC = 0.12
+T_SCAN_Y_START_FRAC = 0.08
 T_SCAN_Y_END_FRAC = 0.95
 
 # tracking du tronc vers le haut
