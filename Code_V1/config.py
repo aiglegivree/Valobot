@@ -36,24 +36,51 @@ BOTTOM_SLICE_MAX_DIST = 200
 CENTER_EXCEPTION_DIST = 60
 
 # ============================================================
-# T DETECTION (ROBUST VERSION)
+# T DETECTION (LOCAL STEM FRAME)
 # ============================================================
-T_WIDTH_RATIO = 1.35
-T_MIN_ABS_WIDTH = 60
-T_CENTER_MAX_ERR = 160
-T_MIN_SIDE_EXT = 14
-T_MAX_SIDE_RATIO = 6.0
-T_MIN_WIDTH_GAIN = 14
-T_STEM_MIN_ROWS = 10
-T_STEM_X_TOL = 24
+# Le T est détecté dans le repère local du tronc, pas dans le repère image.
 
+# le bas de la ligne suivie doit rester raisonnablement proche du centre
+T_CENTER_MAX_ERR = 160
+
+# zone verticale de scan de la ligne connectée
 T_SCAN_Y_START_FRAC = 0.12
 T_SCAN_Y_END_FRAC = 0.95
-T_MIN_BAR_ROWS = 2
 
+# tracking du tronc vers le haut
+T_TRACK_MAX_STEP = 26
+T_MIN_TRACK_POINTS = 18
+
+# préfiltre candidat : la ligne doit s'élargir localement
+T_CANDIDATE_MIN_WIDTH = 55
+T_CANDIDATE_MIN_WIDTH_GAIN = 16
+T_CANDIDATE_MIN_WIDTH_RATIO = 1.45
+
+# sondes locales dans le repère du tronc
+T_SIDE_PROBE_LEN = 38
+T_SIDE_PROBE_HALF_WIDTH = 4
+
+T_BACK_PROBE_LEN = 22
+T_BACK_PROBE_HALF_WIDTH = 4
+
+# nombre minimal de hits dans les sondes
+T_SIDE_MIN_HITS = 18
+T_BACK_MIN_HITS = 12
+
+# évite les faux T très déséquilibrés
 T_MIN_BALANCE_RATIO = 0.35
-T_UP_CHECK_ROWS = 10
-T_MAX_UP_CONTINUITY_ROWS = 3
+
+# contrainte d'orientation :
+# si |dot(branch, trunk)| est trop grand -> branche trop parallèle au tronc
+T_DIRECTION_DOT_MAX = 0.45
+
+# gauche et droite doivent être vraiment opposées
+# avec dot(left, right) proche de -1
+T_MIN_SEPARATION = 0.30
+
+# nombre de lignes candidates consécutives pour valider
+T_CONFIRM_ROWS = 2
+
 # ============================================================
 # CONTROL - LINE FOLLOWING
 # ============================================================

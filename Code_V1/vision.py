@@ -17,24 +17,24 @@ from config import (
     CENTER_EXCEPTION_DIST,
 
     # T detection
-    T_WIDTH_RATIO,
-    T_MIN_ABS_WIDTH,
     T_CENTER_MAX_ERR,
-    T_MIN_SIDE_EXT,
-    T_MAX_SIDE_RATIO,
-    T_MIN_WIDTH_GAIN,
-    T_STEM_MIN_ROWS,
-    T_STEM_X_TOL,
-
-    # vertical scan
     T_SCAN_Y_START_FRAC,
     T_SCAN_Y_END_FRAC,
-    T_MIN_BAR_ROWS,
-
-    # anti false-T
+    T_TRACK_MAX_STEP,
+    T_MIN_TRACK_POINTS,
+    T_CANDIDATE_MIN_WIDTH,
+    T_CANDIDATE_MIN_WIDTH_GAIN,
+    T_CANDIDATE_MIN_WIDTH_RATIO,
+    T_SIDE_PROBE_LEN,
+    T_SIDE_PROBE_HALF_WIDTH,
+    T_BACK_PROBE_LEN,
+    T_BACK_PROBE_HALF_WIDTH,
+    T_SIDE_MIN_HITS,
+    T_BACK_MIN_HITS,
     T_MIN_BALANCE_RATIO,
-    T_UP_CHECK_ROWS,
-    T_MAX_UP_CONTINUITY_ROWS,
+    T_DIRECTION_DOT_MAX,
+    T_MIN_SEPARATION,
+    T_CONFIRM_ROWS,
 )
 
 
@@ -162,7 +162,7 @@ def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray
     return out
 
 
-def get_row_run_around_x(row_mask: np.ndarray, x_ref: int) -> tuple[int | None, int | None]:
+def get_row_run_around_x(row_mask: np.ndarray, x_ref: int, search_radius: int = 20) -> tuple[int | None, int | None]:
     """
     Return the contiguous white run [x_min, x_max] that contains x_ref
     or the nearest local run around x_ref.
@@ -174,9 +174,8 @@ def get_row_run_around_x(row_mask: np.ndarray, x_ref: int) -> tuple[int | None, 
     x_ref = max(0, min(w - 1, x_ref))
 
     if not row_mask[x_ref]:
-        radius = 12
-        x0 = max(0, x_ref - radius)
-        x1 = min(w, x_ref + radius + 1)
+        x0 = max(0, x_ref - search_radius)
+        x1 = min(w, x_ref + search_radius + 1)
         xs = np.where(row_mask[x0:x1])[0]
         if xs.size == 0:
             return None, None
@@ -194,45 +193,140 @@ def get_row_run_around_x(row_mask: np.ndarray, x_ref: int) -> tuple[int | None, 
     return int(x_min), int(x_max)
 
 
-def estimate_local_stem_direction(
+def track_stem_points(
     connected_mask: np.ndarray,
     cx_bot: int,
     y_bot: int,
     y_start: int,
-) -> tuple[float, list[tuple[int, int]]]:
+) -> list[dict]:
     """
-    Follow the stem upward and estimate local slope dx/dy.
+    Track the same connected run upward from the bottom.
+    Each point stores center, row, width, and run bounds.
     """
-    points: list[tuple[int, int]] = []
-    last_x = cx_bot
     h, w = connected_mask.shape
+    last_x = int(cx_bot)
+    points: list[dict] = []
 
     y0 = min(h - 1, y_bot)
     y1 = max(0, y_start)
 
+    miss_count = 0
+
     for y in range(y0, y1 - 1, -1):
         row = connected_mask[y, :] > 0
-        x_min, x_max = get_row_run_around_x(row, last_x)
-        if x_min is None:
+        if not np.any(row):
+            miss_count += 1
+            if miss_count > 5:
+                break
+            continue
+
+        x_min, x_max = get_row_run_around_x(row, last_x, search_radius=T_TRACK_MAX_STEP)
+        if x_min is None or x_max is None:
+            miss_count += 1
+            if miss_count > 5:
+                break
             continue
 
         cx = (x_min + x_max) // 2
-        points.append((cx, y))
+
+        if points and abs(cx - last_x) > T_TRACK_MAX_STEP:
+            miss_count += 1
+            if miss_count > 5:
+                break
+            continue
+
+        miss_count = 0
         last_x = cx
 
-    if len(points) < 2:
-        return 0.0, points
+        points.append({
+            "x": int(cx),
+            "y": int(y),
+            "x_min": int(x_min),
+            "x_max": int(x_max),
+            "width": int(x_max - x_min),
+        })
 
-    xs = np.array([p[0] for p in points], dtype=np.float32)
-    ys = np.array([p[1] for p in points], dtype=np.float32)
+    return points
 
-    y_mean = ys.mean()
-    denom = np.sum((ys - y_mean) ** 2)
-    if denom < 1e-6:
-        return 0.0, points
 
-    slope = float(np.sum((ys - y_mean) * (xs - xs.mean())) / denom)
-    return slope, points
+def estimate_local_tangent(points: list[dict], idx: int, span: int = 6) -> np.ndarray | None:
+    """
+    Estimate local tangent of the tracked stem around a candidate point.
+    Tangent is oriented from bottom toward top.
+    """
+    n = len(points)
+    i0 = max(0, idx - span)
+    i1 = min(n - 1, idx + span)
+
+    if i1 - i0 < 2:
+        return None
+
+    xs = np.array([points[i]["x"] for i in range(i0, i1 + 1)], dtype=np.float32)
+    ys = np.array([points[i]["y"] for i in range(i0, i1 + 1)], dtype=np.float32)
+
+    # bottom -> top orientation: y decreases
+    p0 = np.array([xs[0], ys[0]], dtype=np.float32)
+    p1 = np.array([xs[-1], ys[-1]], dtype=np.float32)
+    v = p1 - p0
+
+    norm = float(np.linalg.norm(v))
+    if norm < 1e-6:
+        return None
+
+    return v / norm
+
+
+def sample_probe_hits(
+    mask: np.ndarray,
+    p: np.ndarray,
+    direction: np.ndarray,
+    length: int,
+    half_width: int,
+) -> tuple[int, np.ndarray | None]:
+    """
+    Sample a thin rectangular probe centered on the direction.
+    Return number of steps with some white pixels and mean detected direction.
+    """
+    h, w = mask.shape
+    d = direction.astype(np.float32)
+    nrm = float(np.linalg.norm(d))
+    if nrm < 1e-6:
+        return 0, None
+    d /= nrm
+
+    n = np.array([-d[1], d[0]], dtype=np.float32)
+
+    hits = 0
+    hit_pts = []
+
+    for s in range(1, length + 1):
+        found_here = False
+        base = p + d * s
+
+        for o in range(-half_width, half_width + 1):
+            q = base + n * o
+            x = int(round(q[0]))
+            y = int(round(q[1]))
+
+            if 0 <= x < w and 0 <= y < h and mask[y, x] > 0:
+                hits += 1
+                hit_pts.append(np.array([x, y], dtype=np.float32))
+                found_here = True
+
+        if not found_here:
+            # tolérance aux petits trous : on continue
+            pass
+
+    if len(hit_pts) < 2:
+        return hits, None
+
+    mean_dir = hit_pts[-1] - hit_pts[0]
+    norm = float(np.linalg.norm(mean_dir))
+    if norm < 1e-6:
+        return hits, None
+
+    return hits, mean_dir / norm
+
 
 def detect_t_on_connected_mask(
     connected_mask: np.ndarray,
@@ -241,9 +335,12 @@ def detect_t_on_connected_mask(
     y_bot: int,
 ) -> tuple[bool, int | None]:
     """
-    Detect a T by following the main stem upward and checking that
-    a candidate row has two real branches connected to the stem:
-    one on each side of the stem.
+    Detect a T in the local frame of the followed line:
+    - track the stem upward,
+    - estimate local tangent,
+    - verify back continuity,
+    - verify one branch on each side,
+    - reject one-sided corners.
     """
     if cx_bot is None or width_bot <= 0:
         return False, None
@@ -259,127 +356,101 @@ def detect_t_on_connected_mask(
     if y_start > y_end:
         y_start, y_end = y_end, y_start
 
-    consecutive_hits = 0
-    first_hit_row = None
-    candidate_row = None
-    candidate_x = None
+    points = track_stem_points(
+        connected_mask=connected_mask,
+        cx_bot=cx_bot,
+        y_bot=y_bot,
+        y_start=y_start,
+    )
 
-    last_x = cx_bot
-    tracked_rows = []
-    tracked_widths = []
+    if len(points) < T_MIN_TRACK_POINTS:
+        return False, None
 
-    for y in range(y_end, y_start - 1, -1):
-        row = connected_mask[y, :] > 0
-        if not np.any(row):
-            consecutive_hits = 0
-            first_hit_row = None
-            candidate_row = None
-            candidate_x = None
+    best_row = None
+    consecutive_ok = 0
+
+    # on parcourt du haut visible vers le bas parmi les points trackés
+    # points[0] = bas, points[-1] = haut
+    for idx in range(len(points) - 2, max(6, len(points) // 3), -1):
+        pt = points[idx]
+        y = pt["y"]
+        x = pt["x"]
+        width = pt["width"]
+
+        below_widths = [p["width"] for p in points[max(0, idx - 6):idx]]
+        if len(below_widths) < 3:
             continue
 
-        x_min, x_max = get_row_run_around_x(row, last_x)
-        if x_min is None or x_max is None:
-            consecutive_hits = 0
-            first_hit_row = None
-            candidate_row = None
-            candidate_x = None
-            continue
+        stem_width_ref = float(np.median(below_widths))
 
-        run_cx = (x_min + x_max) // 2
-        width = x_max - x_min
-
-        tracked_rows.append(y)
-        tracked_widths.append(width)
-
-        # position estimée de la tige sur cette ligne
-        stem_x = max(x_min, min(x_max, last_x))
-
-        left_ext = stem_x - x_min
-        right_ext = x_max - stem_x
-
-        # baseline locale sous la candidate
-        local_below = []
-        for yy, ww in zip(tracked_rows[:-1], tracked_widths[:-1]):
-            if 0 < (yy - y) <= max(8, T_STEM_MIN_ROWS):
-                local_below.append(ww)
-
-        if len(local_below) >= 3:
-            local_base = float(np.median(local_below))
-        else:
-            local_base = float(width_bot)
-
-        # la candidate doit être plus large que la tige juste en dessous
         width_ok = (
-            width >= T_MIN_ABS_WIDTH and
-            width >= T_WIDTH_RATIO * max(1.0, local_base) and
-            (width - local_base) >= T_MIN_WIDTH_GAIN
+            width >= T_CANDIDATE_MIN_WIDTH and
+            width >= T_CANDIDATE_MIN_WIDTH_RATIO * stem_width_ref and
+            (width - stem_width_ref) >= T_CANDIDATE_MIN_WIDTH_GAIN
         )
-
-        # deux vraies branches de part et d’autre de la tige
-        left_branch_ok = left_ext >= T_MIN_SIDE_EXT
-        right_branch_ok = right_ext >= T_MIN_SIDE_EXT
-
-        # chaque côté doit représenter une vraie part du run
-        min_side_needed = max(T_MIN_SIDE_EXT, int(0.18 * width))
-        left_shape_ok = left_ext >= min_side_needed
-        right_shape_ok = right_ext >= min_side_needed
-
-        bar_ok = (
-            width_ok and
-            left_branch_ok and
-            right_branch_ok and
-            left_shape_ok and
-            right_shape_ok
-        )
-
-        if bar_ok:
-            consecutive_hits += 1
-            if first_hit_row is None:
-                first_hit_row = y
-            candidate_row = y
-            candidate_x = stem_x
-        else:
-            consecutive_hits = 0
-            first_hit_row = None
-            candidate_row = None
-            candidate_x = None
-
-        last_x = run_cx
-
-        if consecutive_hits >= T_MIN_BAR_ROWS:
-            break
-
-    if candidate_row is None or candidate_x is None:
-        return False, None
-
-    # Vérifie que la tige continue bien sous la barre
-    y0 = candidate_row
-    y1 = min(h - 1, candidate_row + T_STEM_MIN_ROWS)
-
-    stem_hits = 0
-    total_rows = max(1, y1 - y0 + 1)
-    last_x = candidate_x
-
-    for y in range(y0, y1 + 1):
-        row = connected_mask[y, :] > 0
-        x_min, x_max = get_row_run_around_x(row, last_x)
-        if x_min is None or x_max is None:
+        if not width_ok:
+            consecutive_ok = 0
             continue
 
-        run_cx = (x_min + x_max) // 2
-        last_x = run_cx
+        t = estimate_local_tangent(points, idx, span=5)
+        if t is None:
+            consecutive_ok = 0
+            continue
 
-        x_left = max(0, run_cx - T_STEM_X_TOL)
-        x_right = min(w, run_cx + T_STEM_X_TOL + 1)
+        # tangent bottom->top ; pour la continuité arrière on prend -t
+        n = np.array([-t[1], t[0]], dtype=np.float32)
+        p = np.array([x, y], dtype=np.float32)
 
-        if np.any(connected_mask[y, x_left:x_right] > 0):
-            stem_hits += 1
+        back_hits, back_dir = sample_probe_hits(
+            connected_mask, p, -t, T_BACK_PROBE_LEN, T_BACK_PROBE_HALF_WIDTH
+        )
+        left_hits, left_dir = sample_probe_hits(
+            connected_mask, p, n, T_SIDE_PROBE_LEN, T_SIDE_PROBE_HALF_WIDTH
+        )
+        right_hits, right_dir = sample_probe_hits(
+            connected_mask, p, -n, T_SIDE_PROBE_LEN, T_SIDE_PROBE_HALF_WIDTH
+        )
 
-    required_hits = max(4, int(0.5 * total_rows))
-    if stem_hits < required_hits:
-        return False, None
+        if back_hits < T_BACK_MIN_HITS:
+            consecutive_ok = 0
+            continue
 
-    return True, first_hit_row
+        if left_hits < T_SIDE_MIN_HITS or right_hits < T_SIDE_MIN_HITS:
+            # angle droit ou branche unique
+            consecutive_ok = 0
+            continue
+
+        balance = min(left_hits, right_hits) / max(left_hits, right_hits)
+        if balance < T_MIN_BALANCE_RATIO:
+            consecutive_ok = 0
+            continue
+
+        # Vérifie que les branches sont bien latérales, pas quasi parallèles au tronc
+        if left_dir is None or right_dir is None:
+            consecutive_ok = 0
+            continue
+
+        if abs(float(np.dot(left_dir, t))) > T_DIRECTION_DOT_MAX:
+            consecutive_ok = 0
+            continue
+
+        if abs(float(np.dot(right_dir, t))) > T_DIRECTION_DOT_MAX:
+            consecutive_ok = 0
+            continue
+
+        # Vérifie aussi que gauche et droite sont réellement opposées
+        if float(np.dot(left_dir, right_dir)) > -T_MIN_SEPARATION:
+            consecutive_ok = 0
+            continue
+
+        consecutive_ok += 1
+        best_row = y
+
+        if consecutive_ok >= T_CONFIRM_ROWS:
+            return True, best_row
+
+    return False, None
+
 
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     mask, roi_start = compute_mask_from_frame(frame_bgr)
