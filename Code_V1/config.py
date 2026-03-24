@@ -38,46 +38,35 @@ CENTER_EXCEPTION_DIST = 60
 # ============================================================
 # T DETECTION (LOCAL STEM FRAME)
 # ============================================================
-# Le T est détecté dans le repère local du tronc, pas dans le repère image.
-
-# le bas de la ligne suivie doit rester raisonnablement proche du centre
-T_CENTER_MAX_ERR = 160
-
 # ============================================================
-# T DETECTION (LOCAL STEM FRAME)
+# T detection from main line orientation
 # ============================================================
-T_CENTER_MAX_ERR = 160
+T_ENABLE = True
 
-T_SCAN_Y_START_FRAC = 0.08
-T_SCAN_Y_END_FRAC = 0.95
+# main line estimation
+T_MIN_PIXELS_MAIN = 80
+T_MIN_EIG_RATIO = 3.0
 
-T_TRACK_MAX_STEP = 26
-T_MIN_TRACK_POINTS = 18
+# where to search candidates in the ROI mask
+T_SCAN_START_FRAC = 0.12
+T_SCAN_END_FRAC   = 0.78
+T_SCAN_STEPS = 18
 
-T_CANDIDATE_MIN_WIDTH = 55
-T_CANDIDATE_MIN_WIDTH_GAIN = 16
-T_CANDIDATE_MIN_WIDTH_RATIO = 1.35
+# branch search along the perpendicular direction
+T_BRANCH_HALF_LEN = 90
+T_BRANCH_MIN_LEN = 22
+T_BRANCH_THICKNESS = 2
 
-T_SIDE_PROBE_LEN = 42
-T_SIDE_PROBE_HALF_WIDTH = 5
+# trunk continuity check along main direction
+T_TRUNK_CHECK_LEN = 28
+T_TRUNK_MIN_HITS = 16
 
-T_BACK_PROBE_LEN = 22
-T_BACK_PROBE_HALF_WIDTH = 4
+# bar validation
+T_BAR_MIN_HITS = 28
+T_CENTER_TOL_PX = 28
 
-T_SIDE_MIN_HITS = 14
-T_BACK_MIN_HITS = 12
-
-T_MIN_BALANCE_RATIO = 0.28
-
-# branche latérale peut être moins parfaitement perpendiculaire
-T_DIRECTION_DOT_MAX = 0.72
-
-# éventail angulaire autour de la normale
-T_SIDE_ANGLE_DEG = 28
-T_SIDE_ANGLE_STEP_DEG = 7
-
-T_CONFIRM_ROWS = 2
-
+# avoid detecting too close to the bottom of the image
+T_MIN_DIST_FROM_BOTTOM = 25
 # ============================================================
 # CONTROL - LINE FOLLOWING
 # ============================================================
