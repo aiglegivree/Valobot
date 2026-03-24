@@ -51,6 +51,10 @@ T_STEM_X_TOL = 24
 T_SCAN_Y_START_FRAC = 0.12
 T_SCAN_Y_END_FRAC = 0.95
 T_MIN_BAR_ROWS = 2
+
+T_MIN_BALANCE_RATIO = 0.35
+T_UP_CHECK_ROWS = 10
+T_MAX_UP_CONTINUITY_ROWS = 3
 # ============================================================
 # CONTROL - LINE FOLLOWING
 # ============================================================
