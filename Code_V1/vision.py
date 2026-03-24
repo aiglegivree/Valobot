@@ -39,35 +39,33 @@ W_BOT = C("W_BOT", 0.50)
 BOTTOM_SLICE_MAX_DIST = C("BOTTOM_SLICE_MAX_DIST", 160)
 CENTER_EXCEPTION_DIST = C("CENTER_EXCEPTION_DIST", 55)
 
-# --- T detection based on extracted structural features
+# ============================================================
+# T DETECTION CONFIG
+# ============================================================
 T_ENABLE = C("T_ENABLE", True)
 
-# trunk estimation from lower part of ROI
 T_TRUNK_BAND_FRAC = C("T_TRUNK_BAND_FRAC", 0.22)
-T_MIN_TRUNK_PIXELS = C("T_MIN_TRUNK_PIXELS", 80)
+T_MIN_TRUNK_PIXELS = C("T_MIN_TRUNK_PIXELS", 70)
 
-# scan candidates upward along the estimated trunk
 T_SCAN_START_FRAC = C("T_SCAN_START_FRAC", 0.08)
-T_SCAN_END_FRAC = C("T_SCAN_END_FRAC", 0.78)
-T_SCAN_STEPS = C("T_SCAN_STEPS", 18)
+T_SCAN_END_FRAC = C("T_SCAN_END_FRAC", 0.82)
+T_SCAN_STEPS = C("T_SCAN_STEPS", 24)
 
-# branch / trunk probing
-T_BRANCH_HALF_LEN = C("T_BRANCH_HALF_LEN", 95)
-T_BRANCH_THICKNESS = C("T_BRANCH_THICKNESS", 2)
-T_BRANCH_MIN_LEN = C("T_BRANCH_MIN_LEN", 24)
+T_BRANCH_HALF_LEN = C("T_BRANCH_HALF_LEN", 110)
+T_BRANCH_THICKNESS = C("T_BRANCH_THICKNESS", 3)
 
-T_TRUNK_BACK_LEN = C("T_TRUNK_BACK_LEN", 42)
-T_TRUNK_FWD_LEN = C("T_TRUNK_FWD_LEN", 28)
+T_TRUNK_BACK_LEN = C("T_TRUNK_BACK_LEN", 34)
+T_TRUNK_FWD_LEN = C("T_TRUNK_FWD_LEN", 24)
 T_TRUNK_THICKNESS = C("T_TRUNK_THICKNESS", 2)
-T_TRUNK_MIN_BACK = C("T_TRUNK_MIN_BACK", 20)
-T_TRUNK_MAX_FWD = C("T_TRUNK_MAX_FWD", 10)
 
-# geometry checks
-T_MIN_TOTAL_BAR = C("T_MIN_TOTAL_BAR", 70)
-T_SIDE_BALANCE_RATIO = C("T_SIDE_BALANCE_RATIO", 3.0)
-T_CENTER_TOL_PX = C("T_CENTER_TOL_PX", 26)
+T_TRUNK_MIN_BACK = C("T_TRUNK_MIN_BACK", 10)
+T_TRUNK_MAX_FWD = C("T_TRUNK_MAX_FWD", 12)
 
-# debug
+T_MIN_BRANCH_SHORT = C("T_MIN_BRANCH_SHORT", 10)
+T_MIN_BRANCH_LONG = C("T_MIN_BRANCH_LONG", 26)
+T_MIN_TOTAL_BAR = C("T_MIN_TOTAL_BAR", 60)
+T_MAX_BRANCH_RATIO = C("T_MAX_BRANCH_RATIO", 6.0)
+
 SHOW_T_DEBUG = C("SHOW_T_DEBUG", True)
 
 
@@ -79,13 +77,13 @@ class LineResult:
     found: bool
     error_px: float
     target_x: float
-    centers: list  # [(x, y) or None, ...] in ROI coordinates
+    centers: list
     slice_ys: list
     roi_start: int
     mask: np.ndarray
     t_detected: bool
     t_center: tuple[int, int] | None
-    trunk_dir: tuple[float, float] | None  # unit vector pointing upward in ROI coords
+    trunk_dir: tuple[float, float] | None
     scan_points: list
     t_score: float
 
@@ -133,7 +131,7 @@ def _preprocess(frame_roi: np.ndarray) -> np.ndarray:
 
 
 # ============================================================
-# SLICE FEATURES FOR LINE FOLLOWING
+# LINE FOLLOWING
 # ============================================================
 def _slice_y(h: int, frac: float) -> int:
     return int(np.clip(round(frac * (h - 1)), 0, h - 1))
@@ -174,7 +172,7 @@ def _band_centroid_x(
 
 
 # ============================================================
-# DIRECTIONAL FEATURE EXTRACTION FOR T
+# T DETECTION
 # ============================================================
 def _normalize(vx: float, vy: float) -> tuple[float, float] | None:
     n = math.hypot(vx, vy)
@@ -183,12 +181,15 @@ def _normalize(vx: float, vy: float) -> tuple[float, float] | None:
     return vx / n, vy / n
 
 
-def _estimate_trunk_direction(mask: np.ndarray, x_hint: float | None) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
+def _estimate_trunk_direction(
+    mask: np.ndarray,
+    x_hint: float | None,
+) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
     """
-    Estimate the incoming line direction from the lower band only.
+    Estimate incoming line direction only from the lower band.
     Returns:
         trunk_dir_up: unit vector pointing upward in ROI coordinates
-        anchor: point near lower band center
+        anchor: point near the lower band center
     """
     h, w = mask.shape[:2]
     y0 = int((1.0 - T_TRUNK_BAND_FRAC) * h)
@@ -221,7 +222,7 @@ def _estimate_trunk_direction(mask: np.ndarray, x_hint: float | None) -> tuple[t
     if d is None:
         return None, None
 
-    # force vector to point upward in image coordinates
+    # force upward direction in image coordinates
     if d[1] > 0:
         d = (-d[0], -d[1])
 
@@ -240,8 +241,8 @@ def _line_support(
     max_total_gap: int = 3,
 ) -> int:
     """
-    Count how far the structure continues from (cx, cy) along direction d.
-    We accept a little gap to be robust to noisy masks.
+    Measure how far the structure continues from (cx, cy) along direction (dx, dy).
+    Robust to small gaps.
     """
     h, w = mask.shape[:2]
     perp_x, perp_y = -dy, dx
@@ -275,20 +276,26 @@ def _line_support(
 
     return hits
 
-def _probe_t_candidate(mask: np.ndarray, cx: float, cy: float, trunk_up: tuple[float, float]):
+
+def _probe_t_candidate(
+    mask: np.ndarray,
+    cx: float,
+    cy: float,
+    trunk_up: tuple[float, float],
+):
     """
     Features around one candidate center.
 
     Robust version:
     - incoming trunk below the candidate can be short
-    - left/right branches can be unbalanced if the T is not centered
+    - left/right branches can be asymmetric if the T is not centered
     """
     ux, uy = trunk_up
 
-    # backward = vers le bas de l'image
+    # backward = toward image bottom
     bx, by = -ux, -uy
 
-    # directions perpendiculaires
+    # perpendicular directions
     lx, ly = -uy, ux
     rx, ry = uy, -ux
 
@@ -318,7 +325,6 @@ def _probe_t_candidate(mask: np.ndarray, cx: float, cy: float, trunk_up: tuple[f
     bar_total = left_len + right_len
     branch_ratio = long_side / max(1.0, short_side)
 
-    # vraie présence bilatérale, mais pas forcément symétrique
     has_two_sides = (
         short_side >= T_MIN_BRANCH_SHORT and
         long_side >= T_MIN_BRANCH_LONG and
@@ -332,7 +338,6 @@ def _probe_t_candidate(mask: np.ndarray, cx: float, cy: float, trunk_up: tuple[f
         has_two_sides
     )
 
-    # score moins punitif sur le tronc court
     score = (
         1.4 * short_side +
         0.8 * long_side +
@@ -353,6 +358,8 @@ def _probe_t_candidate(mask: np.ndarray, cx: float, cy: float, trunk_up: tuple[f
         "score": score,
     }
     return feats
+
+
 def _detect_t(mask: np.ndarray, bottom_x: float | None):
     if not T_ENABLE or bottom_x is None:
         return False, None, None, [], 0.0
@@ -390,12 +397,14 @@ def _detect_t(mask: np.ndarray, bottom_x: float | None):
         return False, None, trunk_dir, scan_points, 0.0
 
     return True, best, trunk_dir, scan_points, float(best_score)
+
+
 # ============================================================
 # MAIN API
 # ============================================================
 def detect_line(frame: np.ndarray, angle_deg: float = 0.0) -> LineResult:
     """
-    angle_deg kept only to preserve your old API.
+    angle_deg kept only to preserve the old API.
     """
     roi_start = int(frame.shape[0] * ROI_START_FRAC)
     frame_roi = frame[roi_start:, :]
@@ -408,8 +417,15 @@ def detect_line(frame: np.ndarray, angle_deg: float = 0.0) -> LineResult:
     slice_ys = [y_top, y_mid, y_bot]
 
     x_bot, c_bot = _band_centroid_x(mask, y_bot, BAND_THICKNESS)
-    x_mid, c_mid = _band_centroid_x(mask, y_mid, BAND_THICKNESS, prev_x=x_bot, max_dist=BOTTOM_SLICE_MAX_DIST)
-    x_top, c_top = _band_centroid_x(mask, y_top, BAND_THICKNESS, prev_x=x_mid if x_mid is not None else x_bot, max_dist=BOTTOM_SLICE_MAX_DIST)
+    x_mid, c_mid = _band_centroid_x(
+        mask, y_mid, BAND_THICKNESS,
+        prev_x=x_bot, max_dist=BOTTOM_SLICE_MAX_DIST
+    )
+    x_top, c_top = _band_centroid_x(
+        mask, y_top, BAND_THICKNESS,
+        prev_x=x_mid if x_mid is not None else x_bot,
+        max_dist=BOTTOM_SLICE_MAX_DIST
+    )
 
     centers = [c_top, c_mid, c_bot]
     xs = [x_top, x_mid, x_bot]
@@ -455,24 +471,20 @@ def _ensure_bgr(img: np.ndarray) -> np.ndarray:
 def draw_mask_slices(mask: np.ndarray, res: LineResult, band_thickness: int = BAND_THICKNESS) -> np.ndarray:
     out = _ensure_bgr(mask)
 
-    # slices
     for y in res.slice_ys:
         y0 = max(0, y - band_thickness // 2)
         y1 = min(out.shape[0] - 1, y + band_thickness // 2)
         cv2.rectangle(out, (0, y0), (out.shape[1] - 1, y1), (90, 90, 90), 1)
 
-    # centers
     for c in res.centers:
         if c is not None:
             cv2.circle(out, c, 6, (0, 255, 0), -1)
 
-    # target x / center x
     tx = int(round(res.target_x))
     cx = out.shape[1] // 2
     cv2.line(out, (tx, 0), (tx, out.shape[0] - 1), (255, 255, 0), 1)
     cv2.line(out, (cx, 0), (cx, out.shape[0] - 1), (255, 0, 0), 1)
 
-    # T scan points
     if SHOW_T_DEBUG:
         for x, y, feats in res.scan_points:
             col = (0, 120, 255) if feats["valid"] else (80, 80, 180)
@@ -493,30 +505,24 @@ def draw_mask_slices(mask: np.ndarray, res: LineResult, band_thickness: int = BA
 
     return out
 
+
 def draw_debug_slices(frame: np.ndarray, res: LineResult, band_thickness: int = BAND_THICKNESS) -> np.ndarray:
     """
-    Old-style debug:
-    - works directly on the full frame
-    - shows ROI box
-    - draws slices only inside ROI
+    Old-style debug on full frame.
     """
     out = frame.copy()
     h_full, w_full = out.shape[:2]
 
     roi_y0 = res.roi_start
-    roi_h = h_full - roi_y0
 
-    # ROI rectangle
     cv2.rectangle(out, (0, roi_y0), (w_full - 1, h_full - 1), (120, 120, 120), 1)
 
-    # slice bands in full-frame coordinates
     for y in res.slice_ys:
         yy = roi_y0 + y
         y0 = max(0, yy - band_thickness // 2)
         y1 = min(h_full - 1, yy + band_thickness // 2)
         cv2.rectangle(out, (0, y0), (w_full - 1, y1), (0, 255, 255), 1)
 
-    # detected centers
     names = ["top", "mid", "bot"]
     for name, c in zip(names, res.centers):
         if c is not None:
@@ -528,20 +534,24 @@ def draw_debug_slices(frame: np.ndarray, res: LineResult, band_thickness: int = 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA
             )
 
-    # target x and image center
     tx = int(round(res.target_x))
     icx = w_full // 2
     cv2.line(out, (tx, roi_y0), (tx, h_full - 1), (255, 255, 0), 2)
     cv2.line(out, (icx, roi_y0), (icx, h_full - 1), (255, 0, 0), 1)
 
-    # scan points for T in ROI coords -> full coords
+    if res.trunk_dir is not None and res.centers[2] is not None:
+        bx, by = res.centers[2]
+        bx_full, by_full = bx, roi_y0 + by
+        ux, uy = res.trunk_dir
+        p2 = (int(round(bx + 80 * ux)), int(round(roi_y0 + by + 80 * uy)))
+        cv2.line(out, (bx_full, by_full), p2, (255, 0, 255), 2)
+
     if SHOW_T_DEBUG:
         for x, y, feats in res.scan_points:
             yy = roi_y0 + y
             col = (0, 165, 255) if feats["valid"] else (100, 100, 200)
             cv2.circle(out, (x, yy), 2, col, -1)
 
-    # T center
     if res.t_center is not None:
         txc, tyc = res.t_center
         tyc_full = roi_y0 + tyc
