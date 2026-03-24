@@ -39,6 +39,8 @@ CENTER_EXCEPTION_DIST = 60
 # T detection based on tracked trunk direction
 # ============================================================
 # --- T detection
+# ================= T DETECTION =================
+
 T_ENABLE = True
 
 T_TRUNK_BAND_FRAC = 0.22
@@ -55,16 +57,13 @@ T_TRUNK_BACK_LEN = 34
 T_TRUNK_FWD_LEN = 24
 T_TRUNK_THICKNESS = 2
 
-# moins strict sur le tronc visible
 T_TRUNK_MIN_BACK = 10
 T_TRUNK_MAX_FWD = 12
 
-# au lieu d'imposer les 2 côtés identiques
+# robust asymmetric T bar detection
 T_MIN_BRANCH_SHORT = 10
 T_MIN_BRANCH_LONG = 26
 T_MIN_TOTAL_BAR = 60
-
-# tolérance forte au décentrage
 T_MAX_BRANCH_RATIO = 6.0
 
 SHOW_T_DEBUG = True
