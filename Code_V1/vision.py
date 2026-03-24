@@ -1,557 +1,552 @@
+# vision.py
 from __future__ import annotations
 from dataclasses import dataclass
+import math
 import cv2
 import numpy as np
-
-from config import (
-    H, W,
-    ROI_START_FRAC,
-    KERNEL_SIZE, MORPH_CLOSE_IT, MORPH_OPEN_IT,
-    BAND_THICKNESS,
-    SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
-    W_TOP, W_MID, W_BOT,
-
-    # bottom gating
-    BOTTOM_SLICE_MAX_DIST,
-    CENTER_EXCEPTION_DIST,
-
-    # T detection
-    T_ENABLE,
-    T_SCAN_OFFSET_PX,
-    T_BRANCH_HALF_LEN,
-    T_BRANCH_MIN_LEN,
-    T_BRANCH_THICKNESS,
-    T_TRUNK_CHECK_LEN,
-    T_TRUNK_MIN_HITS,
-    T_BAR_MIN_HITS,
-    T_CENTER_TOL_PX,
-    T_MIN_DIST_FROM_BOTTOM,
-)
+import config as cfg
 
 
+# ============================================================
+# CONFIG HELPERS
+# ============================================================
+def C(name: str, default):
+    return getattr(cfg, name, default)
+
+
+W = C("W", 640)
+H = C("H", 480)
+
+ROI_START_FRAC = C("ROI_START_FRAC", 0.50)
+GAUSS_KSIZE = C("GAUSS_KSIZE", 5)
+USE_BINARY_INV = C("USE_BINARY_INV", True)
+
+KERNEL_SIZE = C("KERNEL_SIZE", 5)
+MORPH_CLOSE_IT = C("MORPH_CLOSE_IT", 2)
+MORPH_OPEN_IT = C("MORPH_OPEN_IT", 1)
+MIN_COMPONENT_AREA = C("MIN_COMPONENT_AREA", 120)
+
+BAND_THICKNESS = C("BAND_THICKNESS", 10)
+
+SLICE_TOP_FRAC = C("SLICE_TOP_FRAC", 0.18)
+SLICE_MID_FRAC = C("SLICE_MID_FRAC", 0.50)
+SLICE_BOT_FRAC = C("SLICE_BOT_FRAC", 0.82)
+
+W_TOP = C("W_TOP", 0.20)
+W_MID = C("W_MID", 0.30)
+W_BOT = C("W_BOT", 0.50)
+
+BOTTOM_SLICE_MAX_DIST = C("BOTTOM_SLICE_MAX_DIST", 160)
+CENTER_EXCEPTION_DIST = C("CENTER_EXCEPTION_DIST", 55)
+
+# --- T detection based on extracted structural features
+T_ENABLE = C("T_ENABLE", True)
+
+# trunk estimation from lower part of ROI
+T_TRUNK_BAND_FRAC = C("T_TRUNK_BAND_FRAC", 0.22)
+T_MIN_TRUNK_PIXELS = C("T_MIN_TRUNK_PIXELS", 80)
+
+# scan candidates upward along the estimated trunk
+T_SCAN_START_FRAC = C("T_SCAN_START_FRAC", 0.08)
+T_SCAN_END_FRAC = C("T_SCAN_END_FRAC", 0.78)
+T_SCAN_STEPS = C("T_SCAN_STEPS", 18)
+
+# branch / trunk probing
+T_BRANCH_HALF_LEN = C("T_BRANCH_HALF_LEN", 95)
+T_BRANCH_THICKNESS = C("T_BRANCH_THICKNESS", 2)
+T_BRANCH_MIN_LEN = C("T_BRANCH_MIN_LEN", 24)
+
+T_TRUNK_BACK_LEN = C("T_TRUNK_BACK_LEN", 42)
+T_TRUNK_FWD_LEN = C("T_TRUNK_FWD_LEN", 28)
+T_TRUNK_THICKNESS = C("T_TRUNK_THICKNESS", 2)
+T_TRUNK_MIN_BACK = C("T_TRUNK_MIN_BACK", 20)
+T_TRUNK_MAX_FWD = C("T_TRUNK_MAX_FWD", 10)
+
+# geometry checks
+T_MIN_TOTAL_BAR = C("T_MIN_TOTAL_BAR", 70)
+T_SIDE_BALANCE_RATIO = C("T_SIDE_BALANCE_RATIO", 3.0)
+T_CENTER_TOL_PX = C("T_CENTER_TOL_PX", 26)
+
+# debug
+SHOW_T_DEBUG = C("SHOW_T_DEBUG", True)
+
+
+# ============================================================
+# DATA
+# ============================================================
 @dataclass
-class VisionResult:
+class LineResult:
     found: bool
-    cx: float | None
-    cy: float | None
     error_px: float
-    is_t: bool
-
-    mask: np.ndarray
+    target_x: float
+    centers: list  # [(x, y) or None, ...] in ROI coordinates
+    slice_ys: list
     roi_start: int
-
-    top_xy: tuple[int, int] | None
-    mid_xy: tuple[int, int] | None
-    bot_xy: tuple[int, int] | None
-
-    main_dir: np.ndarray | None
+    mask: np.ndarray
+    t_detected: bool
     t_center: tuple[int, int] | None
+    trunk_dir: tuple[float, float] | None  # unit vector pointing upward in ROI coords
+    scan_points: list
+    t_score: float
 
 
 # ============================================================
-# helpers
+# BASIC IMAGE OPS
 # ============================================================
+def _odd(k: int) -> int:
+    return k if k % 2 == 1 else k + 1
 
-def _clamp(v: int, lo: int, hi: int) -> int:
-    return max(lo, min(hi, v))
 
+def _keep_large_components(mask: np.ndarray, min_area: int) -> np.ndarray:
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if n <= 1:
+        return mask
 
-def _norm(v: np.ndarray) -> np.ndarray:
-    n = np.linalg.norm(v)
-    if n < 1e-9:
-        return v.copy()
-    return v / n
+    out = np.zeros_like(mask)
+    for i in range(1, n):
+        area = stats[i, cv2.CC_STAT_AREA]
+        if area >= min_area:
+            out[labels == i] = 255
+    return out
 
 
-def _extract_slice_point(mask: np.ndarray, y: int, max_dist: float | None = None) -> tuple[int, int] | None:
-    h, w = mask.shape
-    y = _clamp(y, 0, h - 1)
+def _preprocess(frame_roi: np.ndarray) -> np.ndarray:
+    gray = cv2.cvtColor(frame_roi, cv2.COLOR_BGR2GRAY)
 
-    xs = np.where(mask[y] > 0)[0]
-    if len(xs) == 0:
-        return None
+    k = _odd(GAUSS_KSIZE)
+    if k > 1:
+        gray = cv2.GaussianBlur(gray, (k, k), 0)
 
-    # prend le centre de tout ce qui est vu sur la slice
-    cx = int(np.mean(xs))
+    thresh_mode = cv2.THRESH_BINARY_INV if USE_BINARY_INV else cv2.THRESH_BINARY
+    _, mask = cv2.threshold(gray, 0, 255, thresh_mode + cv2.THRESH_OTSU)
 
-    if max_dist is not None and abs(cx - w // 2) > max_dist:
-        return None
-
-    return (cx, y)
-
-
-def _weighted_center(top_xy, mid_xy, bot_xy) -> tuple[float | None, float | None]:
-    pts = []
-    weights = []
-
-    if top_xy is not None:
-        pts.append(top_xy)
-        weights.append(W_TOP)
-
-    if mid_xy is not None:
-        pts.append(mid_xy)
-        weights.append(W_MID)
-
-    if bot_xy is not None:
-        pts.append(bot_xy)
-        weights.append(W_BOT)
-
-    if not pts:
-        return None, None
-
-    pts = np.asarray(pts, dtype=np.float32)
-    weights = np.asarray(weights, dtype=np.float32)
-    s = float(np.sum(weights))
-
-    cx = float(np.sum(pts[:, 0] * weights) / s)
-    cy = float(np.sum(pts[:, 1] * weights) / s)
-    return cx, cy
-
-
-# ============================================================
-# trunk direction from slices only
-# ============================================================
-
-def _fit_main_direction_from_slices(
-    top_xy: tuple[int, int] | None,
-    mid_xy: tuple[int, int] | None,
-    bot_xy: tuple[int, int] | None,
-) -> tuple[np.ndarray | None, np.ndarray | None]:
-    pts = []
-    weights = []
-
-    if top_xy is not None:
-        pts.append(top_xy)
-        weights.append(W_TOP)
-
-    if mid_xy is not None:
-        pts.append(mid_xy)
-        weights.append(W_MID)
-
-    if bot_xy is not None:
-        pts.append(bot_xy)
-        weights.append(W_BOT)
-
-    if len(pts) < 2:
-        return None, None
-
-    pts = np.asarray(pts, dtype=np.float32)
-    weights = np.asarray(weights, dtype=np.float32)
-
-    center = np.sum(pts * weights[:, None], axis=0) / np.sum(weights)
-
-    pts0 = pts - center
-    cov = (pts0.T @ pts0) / max(len(pts0), 1)
-
-    eigvals, eigvecs = np.linalg.eigh(cov)
-    u = eigvecs[:, np.argmax(eigvals)].astype(np.float32)
-    u = _norm(u)
-
-    # orient upward in image
-    if u[1] > 0:
-        u = -u
-
-    return center.astype(np.float32), u
-
-
-# ============================================================
-# local line tests
-# ============================================================
-
-def _sample_line(mask: np.ndarray, p0: np.ndarray, direction: np.ndarray,
-                 half_len: int, thickness: int = 1) -> tuple[int, int, int]:
-    """
-    Count hits along a segment centered at p0.
-    Returns:
-        hit_count, first_hit_t, last_hit_t
-    """
-    h, w = mask.shape
-    d = _norm(direction)
-
-    hits = []
-
-    for t in range(-half_len, half_len + 1):
-        px = int(round(p0[0] + t * d[0]))
-        py = int(round(p0[1] + t * d[1]))
-
-        found = False
-        for k in range(-thickness, thickness + 1):
-            qx = int(round(px - k * d[1]))
-            qy = int(round(py + k * d[0]))
-            if 0 <= qx < w and 0 <= qy < h and mask[qy, qx] > 0:
-                found = True
-                break
-
-        if found:
-            hits.append(t)
-
-    if not hits:
-        return 0, 0, 0
-
-    return len(hits), min(hits), max(hits)
-
-
-def _run_length_from_center(mask: np.ndarray, p0: np.ndarray, direction: np.ndarray,
-                            max_len: int, thickness: int = 1) -> tuple[int, int]:
-    """
-    Measure branch length on both sides from center along direction.
-    Returns:
-        neg_len, pos_len
-    """
-    h, w = mask.shape
-    d = _norm(direction)
-
-    def one_side(sign: int) -> int:
-        run = 0
-        gaps = 0
-        gap_budget = 2
-
-        for t in range(1, max_len + 1):
-            px = int(round(p0[0] + sign * t * d[0]))
-            py = int(round(p0[1] + sign * t * d[1]))
-
-            found = False
-            for k in range(-thickness, thickness + 1):
-                qx = int(round(px - k * d[1]))
-                qy = int(round(py + k * d[0]))
-                if 0 <= qx < w and 0 <= qy < h and mask[qy, qx] > 0:
-                    found = True
-                    break
-
-            if found:
-                run = t
-                gaps = 0
-            else:
-                gaps += 1
-                if gaps > gap_budget:
-                    break
-
-        return run
-
-    neg_len = one_side(-1)
-    pos_len = one_side(+1)
-    return neg_len, pos_len
-
-
-def _choose_t_candidate(
-    top_xy: tuple[int, int] | None,
-    mid_xy: tuple[int, int] | None,
-    bot_xy: tuple[int, int] | None,
-    u: np.ndarray,
-) -> np.ndarray | None:
-    """
-    Candidate point on the trunk.
-    """
-    if mid_xy is not None:
-        p = np.array(mid_xy, dtype=np.float32)
-    elif top_xy is not None:
-        p = np.array(top_xy, dtype=np.float32)
-    elif bot_xy is not None:
-        p = np.array(bot_xy, dtype=np.float32)
-    else:
-        return None
-
-    p = p + T_SCAN_OFFSET_PX * u
-    return p.astype(np.float32)
-
-def _normal_span_from_center(mask: np.ndarray, p0: np.ndarray, direction: np.ndarray,
-                             max_len: int, thickness: int = 1) -> tuple[int, int, int]:
-    """
-    Measure width around p0 along 'direction'.
-    Returns:
-        neg_len, pos_len, total_width
-    """
-    d = _norm(direction)
-    h, w = mask.shape
-
-    def one_side(sign: int) -> int:
-        run = 0
-        gaps = 0
-        gap_budget = 2
-
-        for t in range(1, max_len + 1):
-            px = int(round(p0[0] + sign * t * d[0]))
-            py = int(round(p0[1] + sign * t * d[1]))
-
-            found = False
-            for k in range(-thickness, thickness + 1):
-                qx = int(round(px - k * d[1]))
-                qy = int(round(py + k * d[0]))
-                if 0 <= qx < w and 0 <= qy < h and mask[qy, qx] > 0:
-                    found = True
-                    break
-
-            if found:
-                run = t
-                gaps = 0
-            else:
-                gaps += 1
-                if gaps > gap_budget:
-                    break
-
-        return run
-
-    neg_len = one_side(-1)
-    pos_len = one_side(+1)
-    total_width = neg_len + pos_len + 1
-    return neg_len, pos_len, total_width
-
-# ============================================================
-# local T detection (no largest component assumption)
-# ============================================================
-def _detect_t_from_orientation(
-    mask: np.ndarray,
-    top_xy: tuple[int, int] | None,
-    mid_xy: tuple[int, int] | None,
-    bot_xy: tuple[int, int] | None,
-) -> tuple[bool, tuple[int, int] | None, np.ndarray | None]:
-    if not T_ENABLE:
-        return False, None, None
-
-    center, u = _fit_main_direction_from_slices(top_xy, mid_xy, bot_xy)
-    if center is None or u is None:
-        return False, None, None
-
-    n = np.array([-u[1], u[0]], dtype=np.float32)
-
-    p = _choose_t_candidate(top_xy, mid_xy, bot_xy, u)
-    if p is None:
-        return False, None, u
-
-    h, w = mask.shape
-    px = int(round(p[0]))
-    py = int(round(p[1]))
-
-    if not (0 <= px < w and 0 <= py < h):
-        return False, None, u
-
-    if py > h - T_MIN_DIST_FROM_BOTTOM:
-        return False, None, u
-
-    # 1) trunk continuity around candidate
-    hits_trunk, first_t, last_t = _sample_line(
-        mask, p, u, T_TRUNK_CHECK_LEN, thickness=T_BRANCH_THICKNESS
-    )
-
-    if hits_trunk < T_TRUNK_MIN_HITS:
-        return False, None, u
-
-    if first_t > -2 or last_t < 2:
-        return False, None, u
-
-    # 2) width at candidate
-    neg_len, pos_len, width_here = _normal_span_from_center(
-        mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
-    )
-
-    if neg_len < T_BRANCH_MIN_LEN or pos_len < T_BRANCH_MIN_LEN:
-        return False, None, u
-
-    if abs(neg_len - pos_len) > T_CENTER_TOL_PX:
-        return False, None, u
-
-    hits_bar, _, _ = _sample_line(
-        mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
-    )
-
-    if hits_bar < T_BAR_MIN_HITS:
-        return False, None, u
-
-    # 3) compare with normal trunk width slightly before/after candidate
-    p_back = p - 20 * u
-    p_front = p + 20 * u
-
-    _, _, width_back = _normal_span_from_center(
-        mask, p_back, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
-    )
-    _, _, width_front = _normal_span_from_center(
-        mask, p_front, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
-    )
-
-    trunk_width_ref = min(width_back, width_front)
-
-    # T must be much wider than the normal trunk
-    if width_here < trunk_width_ref + 20:
-        return False, None, u
-
-    if width_here < 1.6 * trunk_width_ref:
-        return False, None, u
-
-    return True, (px, py), u
-
-# ============================================================
-# main pipeline
-# ============================================================
-
-def detect_line(frame: np.ndarray, angle_deg: float = 20.0) -> VisionResult:
-    h, w = frame.shape[:2]
-    roi_start = int(ROI_START_FRAC * h)
-    roi = frame[roi_start:].copy()
-
-    gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
-
-    _, mask = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-    )
-
-    k = cv2.getStructuringElement(cv2.MORPH_RECT, (KERNEL_SIZE, KERNEL_SIZE))
+    k2 = max(1, KERNEL_SIZE)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (k2, k2))
 
     if MORPH_CLOSE_IT > 0:
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=MORPH_CLOSE_IT)
-
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
     if MORPH_OPEN_IT > 0:
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k, iterations=MORPH_OPEN_IT)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=MORPH_OPEN_IT)
 
-    mh, mw = mask.shape
+    mask = _keep_large_components(mask, MIN_COMPONENT_AREA)
+    return mask
 
-    y_top = int(SLICE_TOP_FRAC * mh)
-    y_mid = int(SLICE_MID_FRAC * mh)
-    y_bot = int(SLICE_BOT_FRAC * mh)
 
-    top_xy = _extract_slice_point(mask, y_top)
-    mid_xy = _extract_slice_point(mask, y_mid)
-    bot_xy = _extract_slice_point(mask, y_bot, max_dist=BOTTOM_SLICE_MAX_DIST)
+# ============================================================
+# SLICE FEATURES FOR LINE FOLLOWING
+# ============================================================
+def _slice_y(h: int, frac: float) -> int:
+    return int(np.clip(round(frac * (h - 1)), 0, h - 1))
 
-    if bot_xy is None:
-        tmp = _extract_slice_point(mask, y_bot, max_dist=None)
-        if tmp is not None and abs(tmp[0] - mw // 2) <= CENTER_EXCEPTION_DIST:
-            bot_xy = tmp
 
-    cx, cy = _weighted_center(top_xy, mid_xy, bot_xy)
+def _band_centroid_x(
+    mask: np.ndarray,
+    y: int,
+    band_thickness: int,
+    prev_x: float | None = None,
+    max_dist: float | None = None,
+) -> tuple[float | None, tuple[int, int] | None]:
+    h, w = mask.shape[:2]
+    half = max(1, band_thickness // 2)
+    y0 = max(0, y - half)
+    y1 = min(h, y + half + 1)
 
-    if cx is None:
-        found = False
-        error_px = 0.0
-    else:
+    ys, xs = np.where(mask[y0:y1] > 0)
+    if len(xs) == 0:
+        return None, None
+
+    xs = xs.astype(np.float32)
+
+    if prev_x is not None and max_dist is not None:
+        keep = np.abs(xs - prev_x) <= max_dist
+        if np.any(keep):
+            xs = xs[keep]
+            ys = ys[keep]
+        else:
+            if abs(prev_x - (w * 0.5)) <= CENTER_EXCEPTION_DIST:
+                return None, None
+
+    if len(xs) == 0:
+        return None, None
+
+    x_mean = float(np.mean(xs))
+    return x_mean, (int(round(x_mean)), y)
+
+
+# ============================================================
+# DIRECTIONAL FEATURE EXTRACTION FOR T
+# ============================================================
+def _normalize(vx: float, vy: float) -> tuple[float, float] | None:
+    n = math.hypot(vx, vy)
+    if n < 1e-6:
+        return None
+    return vx / n, vy / n
+
+
+def _estimate_trunk_direction(mask: np.ndarray, x_hint: float | None) -> tuple[tuple[float, float] | None, tuple[float, float] | None]:
+    """
+    Estimate the incoming line direction from the lower band only.
+    Returns:
+        trunk_dir_up: unit vector pointing upward in ROI coordinates
+        anchor: point near lower band center
+    """
+    h, w = mask.shape[:2]
+    y0 = int((1.0 - T_TRUNK_BAND_FRAC) * h)
+    band = mask[y0:h, :]
+
+    ys, xs = np.where(band > 0)
+    if len(xs) < T_MIN_TRUNK_PIXELS:
+        return None, None
+
+    ys = ys + y0
+    xs = xs.astype(np.float32)
+    ys = ys.astype(np.float32)
+
+    if x_hint is not None:
+        keep = np.abs(xs - x_hint) <= BOTTOM_SLICE_MAX_DIST
+        if np.count_nonzero(keep) >= T_MIN_TRUNK_PIXELS:
+            xs = xs[keep]
+            ys = ys[keep]
+
+    pts = np.column_stack((xs, ys)).astype(np.float32)
+    mean = pts.mean(axis=0)
+    centered = pts - mean[None, :]
+    cov = centered.T @ centered / max(len(pts) - 1, 1)
+
+    eigvals, eigvecs = np.linalg.eigh(cov)
+    idx = np.argmax(eigvals)
+    vx, vy = eigvecs[:, idx]
+
+    d = _normalize(float(vx), float(vy))
+    if d is None:
+        return None, None
+
+    # force vector to point upward in image coordinates
+    if d[1] > 0:
+        d = (-d[0], -d[1])
+
+    return d, (float(mean[0]), float(mean[1]))
+
+
+def _line_support(
+    mask: np.ndarray,
+    cx: float,
+    cy: float,
+    dx: float,
+    dy: float,
+    max_len: int,
+    thickness: int,
+    allow_initial_gap: int = 1,
+    max_total_gap: int = 3,
+) -> int:
+    """
+    Count how far the structure continues from (cx, cy) along direction d.
+    We accept a little gap to be robust to noisy masks.
+    """
+    h, w = mask.shape[:2]
+    perp_x, perp_y = -dy, dx
+
+    hits = 0
+    gaps = 0
+    started = False
+
+    for s in range(1, max_len + 1):
+        px = cx + s * dx
+        py = cy + s * dy
+
+        ok = False
+        for t in range(-thickness, thickness + 1):
+            qx = int(round(px + t * perp_x))
+            qy = int(round(py + t * perp_y))
+            if 0 <= qx < w and 0 <= qy < h and mask[qy, qx] > 0:
+                ok = True
+                break
+
+        if ok:
+            hits = s
+            started = True
+            gaps = 0
+        else:
+            gaps += 1
+            if not started and gaps > allow_initial_gap:
+                break
+            if started and gaps > max_total_gap:
+                break
+
+    return hits
+
+
+def _probe_t_candidate(mask: np.ndarray, cx: float, cy: float, trunk_up: tuple[float, float]):
+    """
+    Features around one candidate center.
+    Assumption: robot approaches T from the stem, so:
+    - strong trunk backward (toward bottom)
+    - strong left and right branches
+    - weak forward continuation after junction
+    """
+    ux, uy = trunk_up
+    # backward = toward bottom
+    bx, by = -ux, -uy
+    # perpendicular
+    lx, ly = -uy, ux
+    rx, ry = uy, -ux
+
+    trunk_back = _line_support(
+        mask, cx, cy, bx, by,
+        max_len=T_TRUNK_BACK_LEN,
+        thickness=T_TRUNK_THICKNESS,
+    )
+    trunk_fwd = _line_support(
+        mask, cx, cy, ux, uy,
+        max_len=T_TRUNK_FWD_LEN,
+        thickness=T_TRUNK_THICKNESS,
+    )
+    left_len = _line_support(
+        mask, cx, cy, lx, ly,
+        max_len=T_BRANCH_HALF_LEN,
+        thickness=T_BRANCH_THICKNESS,
+    )
+    right_len = _line_support(
+        mask, cx, cy, rx, ry,
+        max_len=T_BRANCH_HALF_LEN,
+        thickness=T_BRANCH_THICKNESS,
+    )
+
+    bar_total = left_len + right_len
+    side_balance = max(left_len, right_len) / max(1.0, min(left_len, right_len))
+
+    # center of the bar should be close to the candidate
+    bar_center_offset = abs(left_len - right_len) * 0.5
+
+    valid = (
+        trunk_back >= T_TRUNK_MIN_BACK and
+        trunk_fwd <= T_TRUNK_MAX_FWD and
+        left_len >= T_BRANCH_MIN_LEN and
+        right_len >= T_BRANCH_MIN_LEN and
+        bar_total >= T_MIN_TOTAL_BAR and
+        side_balance <= T_SIDE_BALANCE_RATIO and
+        bar_center_offset <= T_CENTER_TOL_PX
+    )
+
+    score = min(left_len, right_len) + 0.7 * trunk_back - 1.2 * trunk_fwd
+
+    feats = {
+        "trunk_back": trunk_back,
+        "trunk_fwd": trunk_fwd,
+        "left_len": left_len,
+        "right_len": right_len,
+        "bar_total": bar_total,
+        "side_balance": side_balance,
+        "bar_center_offset": bar_center_offset,
+        "valid": valid,
+        "score": score,
+    }
+    return feats
+
+
+def _detect_t(mask: np.ndarray, bottom_x: float | None):
+    if not T_ENABLE or bottom_x is None:
+        return False, None, None, [], 0.0
+
+    h, w = mask.shape[:2]
+    trunk_dir, anchor = _estimate_trunk_direction(mask, bottom_x)
+    if trunk_dir is None or anchor is None:
+        return False, None, None, [], 0.0
+
+    ux, uy = trunk_dir
+    ax, ay = anchor
+
+    # scan from lower ROI upward along estimated trunk
+    scan_points = []
+    best = None
+    best_score = -1e9
+
+    start_s = int(T_SCAN_START_FRAC * h)
+    end_s = int(T_SCAN_END_FRAC * h)
+
+    for s in np.linspace(start_s, end_s, T_SCAN_STEPS):
+        cx = ax + s * ux
+        cy = ay + s * uy
+
+        if not (0 <= cx < w and 0 <= cy < h):
+            continue
+
+        feats = _probe_t_candidate(mask, cx, cy, trunk_dir)
+        scan_points.append((int(round(cx)), int(round(cy)), feats))
+
+        if feats["valid"] and feats["score"] > best_score:
+            best_score = feats["score"]
+            best = (int(round(cx)), int(round(cy)))
+
+    return best is not None, best, trunk_dir, scan_points, float(best_score)
+
+
+# ============================================================
+# MAIN API
+# ============================================================
+def detect_line(frame: np.ndarray, angle_deg: float = 0.0) -> LineResult:
+    """
+    angle_deg kept only to preserve your old API.
+    """
+    roi_start = int(frame.shape[0] * ROI_START_FRAC)
+    frame_roi = frame[roi_start:, :]
+    mask = _preprocess(frame_roi)
+
+    h, w = mask.shape[:2]
+    y_top = _slice_y(h, SLICE_TOP_FRAC)
+    y_mid = _slice_y(h, SLICE_MID_FRAC)
+    y_bot = _slice_y(h, SLICE_BOT_FRAC)
+    slice_ys = [y_top, y_mid, y_bot]
+
+    x_bot, c_bot = _band_centroid_x(mask, y_bot, BAND_THICKNESS)
+    x_mid, c_mid = _band_centroid_x(mask, y_mid, BAND_THICKNESS, prev_x=x_bot, max_dist=BOTTOM_SLICE_MAX_DIST)
+    x_top, c_top = _band_centroid_x(mask, y_top, BAND_THICKNESS, prev_x=x_mid if x_mid is not None else x_bot, max_dist=BOTTOM_SLICE_MAX_DIST)
+
+    centers = [c_top, c_mid, c_bot]
+    xs = [x_top, x_mid, x_bot]
+    ws = [W_TOP, W_MID, W_BOT]
+
+    valid = [(x, ww) for x, ww in zip(xs, ws) if x is not None]
+    if valid:
+        target_x = sum(x * ww for x, ww in valid) / sum(ww for _, ww in valid)
         found = True
-        error_px = float(cx - (mw / 2.0))
+    else:
+        target_x = w * 0.5
+        found = False
 
-    is_t, t_center, main_dir = _detect_t_from_orientation(
-        mask, top_xy, mid_xy, bot_xy
-    )
+    error_px = float(target_x - (w * 0.5))
 
-    return VisionResult(
+    t_detected, t_center, trunk_dir, scan_points, t_score = _detect_t(mask, x_bot)
+
+    return LineResult(
         found=found,
-        cx=cx,
-        cy=cy,
         error_px=error_px,
-        is_t=is_t,
-        mask=mask,
+        target_x=float(target_x),
+        centers=centers,
+        slice_ys=slice_ys,
         roi_start=roi_start,
-        top_xy=top_xy,
-        mid_xy=mid_xy,
-        bot_xy=bot_xy,
-        main_dir=main_dir,
+        mask=mask,
+        t_detected=t_detected,
         t_center=t_center,
+        trunk_dir=trunk_dir,
+        scan_points=scan_points,
+        t_score=t_score,
     )
 
 
 # ============================================================
-# old debug draw style restored
+# DEBUG DRAWING
 # ============================================================
+def _ensure_bgr(img: np.ndarray) -> np.ndarray:
+    if img.ndim == 2:
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    return img.copy()
 
-def draw_debug_slices(img: np.ndarray, res: VisionResult, band_thickness: int = BAND_THICKNESS) -> np.ndarray:
-    out = img.copy()
 
-    roi_start = res.roi_start
-    mh, mw = res.mask.shape
+def draw_mask_slices(mask: np.ndarray, res: LineResult, band_thickness: int = BAND_THICKNESS) -> np.ndarray:
+    out = _ensure_bgr(mask)
 
-    # old ROI rectangle
-    cv2.rectangle(out, (0, roi_start), (mw - 1, roi_start + mh - 1), (0, 255, 255), 2)
+    # old-style slice visualization
+    for y in res.slice_ys:
+        y0 = max(0, y - band_thickness // 2)
+        y1 = min(out.shape[0] - 1, y + band_thickness // 2)
+        cv2.rectangle(out, (0, y0), (out.shape[1] - 1, y1), (90, 90, 90), 1)
 
-    # old slice lines
-    y_top = roi_start + int(SLICE_TOP_FRAC * mh)
-    y_mid = roi_start + int(SLICE_MID_FRAC * mh)
-    y_bot = roi_start + int(SLICE_BOT_FRAC * mh)
+    # centers
+    for c in res.centers:
+        if c is not None:
+            cv2.circle(out, c, 6, (0, 255, 0), -1)
 
-    cv2.line(out, (0, y_top), (mw - 1, y_top), (255, 0, 0), 1)
-    cv2.line(out, (0, y_mid), (mw - 1, y_mid), (255, 0, 0), 1)
-    cv2.line(out, (0, y_bot), (mw - 1, y_bot), (255, 0, 0), 1)
+    # target x
+    tx = int(round(res.target_x))
+    cv2.line(out, (tx, 0), (tx, out.shape[0] - 1), (255, 255, 0), 1)
 
-    # center line
-    cv2.line(out, (mw // 2, roi_start), (mw // 2, roi_start + mh - 1), (0, 255, 0), 1)
+    # image center
+    cx = out.shape[1] // 2
+    cv2.line(out, (cx, 0), (cx, out.shape[0] - 1), (255, 0, 0), 1)
 
-    def draw_pt(pt, color):
-        if pt is None:
-            return
-        x, y = pt
-        cv2.circle(out, (x, roi_start + y), 5, color, -1)
-
-    # old points
-    draw_pt(res.top_xy, (0, 0, 255))
-    draw_pt(res.mid_xy, (0, 128, 255))
-    draw_pt(res.bot_xy, (255, 0, 255))
-
-    # old weighted center
-    if res.cx is not None and res.cy is not None:
-        cv2.circle(out, (int(res.cx), roi_start + int(res.cy)), 7, (0, 255, 0), -1)
-
-    # only keep simple extra debug for trunk direction
-    if res.main_dir is not None and res.cx is not None and res.cy is not None:
-        p = np.array([res.cx, res.cy], dtype=np.float32)
-        u = res.main_dir
-        p1 = p - 45 * u
-        p2 = p + 45 * u
-        cv2.line(
-            out,
-            (int(p1[0]), roi_start + int(p1[1])),
-            (int(p2[0]), roi_start + int(p2[1])),
-            (255, 255, 0),
-            2
-        )
+    # T debug scan
+    if SHOW_T_DEBUG:
+        for x, y, feats in res.scan_points:
+            col = (0, 120, 255) if feats["valid"] else (80, 80, 180)
+            cv2.circle(out, (x, y), 2, col, -1)
 
     if res.t_center is not None:
-        tx, ty = res.t_center
-        cv2.circle(out, (tx, roi_start + ty), 9, (0, 0, 255), 2)
-        cv2.putText(out, "T", (tx + 10, roi_start + ty - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-
-    txt = f"found={res.found}  err={res.error_px:.1f}  T={res.is_t}"
-    cv2.putText(out, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (20, 20, 20), 4)
-    cv2.putText(out, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.circle(out, res.t_center, 10, (0, 0, 255), 2)
+        cv2.putText(
+            out,
+            f"T score={res.t_score:.1f}",
+            (10, 22),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
 
     return out
 
 
-def draw_mask_slices(res: VisionResult) -> np.ndarray:
-    mask = res.mask
-    out = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+def draw_debug_slices(frame_roi: np.ndarray, res: LineResult, band_thickness: int = BAND_THICKNESS) -> np.ndarray:
+    out = frame_roi.copy()
 
-    h, w = mask.shape
+    # slice bands
+    for y in res.slice_ys:
+        y0 = max(0, y - band_thickness // 2)
+        y1 = min(out.shape[0] - 1, y + band_thickness // 2)
+        cv2.rectangle(out, (0, y0), (out.shape[1] - 1, y1), (0, 255, 255), 1)
 
-    # old visuals
-    y_top = int(SLICE_TOP_FRAC * h)
-    y_mid = int(SLICE_MID_FRAC * h)
-    y_bot = int(SLICE_BOT_FRAC * h)
+    # detected centers
+    names = ["top", "mid", "bot"]
+    for name, c in zip(names, res.centers):
+        if c is not None:
+            cv2.circle(out, c, 6, (0, 255, 0), -1)
+            cv2.putText(
+                out, name, (c[0] + 8, c[1] - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1, cv2.LINE_AA
+            )
 
-    cv2.line(out, (0, y_top), (w - 1, y_top), (255, 0, 0), 1)
-    cv2.line(out, (0, y_mid), (w - 1, y_mid), (255, 0, 0), 1)
-    cv2.line(out, (0, y_bot), (w - 1, y_bot), (255, 0, 0), 1)
-    cv2.line(out, (w // 2, 0), (w // 2, h - 1), (0, 255, 0), 1)
+    # target x and image center
+    tx = int(round(res.target_x))
+    cx = out.shape[1] // 2
+    cv2.line(out, (tx, 0), (tx, out.shape[0] - 1), (255, 255, 0), 2)
+    cv2.line(out, (cx, 0), (cx, out.shape[0] - 1), (255, 0, 0), 1)
 
-    def draw_pt(pt, color):
-        if pt is None:
-            return
-        cv2.circle(out, pt, 5, color, -1)
+    # estimated trunk direction
+    if res.trunk_dir is not None and res.centers[2] is not None:
+        bx, by = res.centers[2]
+        ux, uy = res.trunk_dir
+        p2 = (int(round(bx + 80 * ux)), int(round(by + 80 * uy)))
+        cv2.line(out, (bx, by), p2, (255, 0, 255), 2)
 
-    draw_pt(res.top_xy, (0, 0, 255))
-    draw_pt(res.mid_xy, (0, 128, 255))
-    draw_pt(res.bot_xy, (255, 0, 255))
-
-    if res.cx is not None and res.cy is not None:
-        cv2.circle(out, (int(res.cx), int(res.cy)), 7, (0, 255, 0), -1)
-
-    # minimal extra visual only
-    if res.main_dir is not None and res.cx is not None and res.cy is not None:
-        p = np.array([res.cx, res.cy], dtype=np.float32)
-        u = res.main_dir
-        p1 = p - 45 * u
-        p2 = p + 45 * u
-        cv2.line(out, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (255, 255, 0), 2)
+    # T scan points
+    if SHOW_T_DEBUG:
+        for x, y, feats in res.scan_points:
+            col = (0, 165, 255) if feats["valid"] else (100, 100, 200)
+            cv2.circle(out, (x, y), 2, col, -1)
 
     if res.t_center is not None:
-        cv2.circle(out, res.t_center, 9, (0, 0, 255), 2)
-        cv2.putText(out, "T", (res.t_center[0] + 10, res.t_center[1] - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.circle(out, res.t_center, 10, (0, 0, 255), 2)
+        cv2.putText(
+            out,
+            "T DETECTED",
+            (10, 28),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.8,
+            (0, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    cv2.putText(
+        out,
+        f"err={res.error_px:.1f}px  found={res.found}  T={res.t_detected}",
+        (10, out.shape[0] - 12),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
 
     return out
