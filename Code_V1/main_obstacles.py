@@ -25,11 +25,11 @@ def main():
     max_correction = 0.20    # limits steering effect
 
     # Fallback behavior when target is temporarily not visible
-    lost_target_speed = 0.25
+    lost_target_speed = 0.2
 
     try:
         while True:
-            ret, vis = navigator.step(draw=False)
+            ret, vis = navigator.step(draw=True)
             if not ret:
                 print("No frame received. Stopping.")
                 break
@@ -48,8 +48,25 @@ def main():
                 motors.stop()
                 print("TURN detected. Stopping forward mode.")
                 cv2.imshow("Navigation", vis)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    break
+                turn_candidate = data["turn_candidate"]
+                if turn_candidate=="RIGHT":
+                    #Call function that turns right 90°
+                    #Call function that checks for new corridor path
+                    #If good switch back to "FORWARD" state
+                    #If not good call function that turns 180° to the left
+                    #Call function that checks for new corridor path
+                    #If good switch back to "FORWARD" state
+                    #If not error for now
+                    pass
+                if turn_candidate=="LEFT":
+                    #Call function that turns left 90°
+                    #Call function that checks for new corridor path
+                    #If good switch back to "FORWARD" state
+                    #If not good call function that turns 180° to the right
+                    #Call function that checks for new corridor path
+                    #If good switch back to "FORWARD" state
+                    #If not error for now
+                    pass
                 break
 
             # ----------------------------------------------------
