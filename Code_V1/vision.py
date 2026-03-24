@@ -15,7 +15,7 @@ from config import (
     BOTTOM_SLICE_MAX_DIST,
     CENTER_EXCEPTION_DIST,
 
-    # new T detection
+    # T detection
     T_ENABLE,
     T_MIN_PIXELS_MAIN,
     T_MIN_EIG_RATIO,
@@ -53,7 +53,7 @@ class VisionResult:
 
 
 # ============================================================
-# basic helpers
+# helpers
 # ============================================================
 
 def _clamp(v: int, lo: int, hi: int) -> int:
@@ -74,6 +74,7 @@ def _largest_component(mask: np.ndarray) -> np.ndarray:
 
     areas = stats[1:, cv2.CC_STAT_AREA]
     idx = 1 + int(np.argmax(areas))
+
     out = np.zeros_like(mask)
     out[labels == idx] = 255
     return out
@@ -89,9 +90,8 @@ def _extract_slice_point(mask: np.ndarray, y: int, max_dist: float | None = None
 
     cx = int(np.mean(xs))
 
-    if max_dist is not None:
-        if abs(cx - w // 2) > max_dist:
-            return None
+    if max_dist is not None and abs(cx - w // 2) > max_dist:
+        return None
 
     return (cx, y)
 
@@ -117,25 +117,19 @@ def _weighted_center(top_xy, mid_xy, bot_xy) -> tuple[float | None, float | None
 
     pts = np.asarray(pts, dtype=np.float32)
     weights = np.asarray(weights, dtype=np.float32)
-    s = float(np.sum(weights))
 
+    s = float(np.sum(weights))
     cx = float(np.sum(pts[:, 0] * weights) / s)
     cy = float(np.sum(pts[:, 1] * weights) / s)
+
     return cx, cy
 
 
 # ============================================================
-# line orientation estimation
+# orientation of main line
 # ============================================================
 
 def _fit_main_orientation(mask: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None, float]:
-    """
-    Estimate the main line orientation from the largest connected component.
-    Returns:
-        center: np.ndarray([x, y]) or None
-        u: main direction unit vector or None
-        eig_ratio: lambda_max / lambda_min
-    """
     ys, xs = np.where(mask > 0)
     if len(xs) < T_MIN_PIXELS_MAIN:
         return None, None, 0.0
@@ -158,7 +152,7 @@ def _fit_main_orientation(mask: np.ndarray) -> tuple[np.ndarray | None, np.ndarr
     u = eigvecs[:, 0].astype(np.float32)
     u = _norm(u)
 
-    # force trunk direction to point upward in image coordinates
+    # orient upward in image
     if u[1] > 0:
         u = -u
 
@@ -168,15 +162,15 @@ def _fit_main_orientation(mask: np.ndarray) -> tuple[np.ndarray | None, np.ndarr
 def _sample_line(mask: np.ndarray, p0: np.ndarray, direction: np.ndarray,
                  half_len: int, thickness: int = 1) -> tuple[int, int, int]:
     """
-    Count white pixels along a segment centered at p0 with given direction.
+    Count hits along a segment centered at p0 in 'direction'.
     Returns:
-        hit_count, first_hit_index, last_hit_index
-    Indices are in [-half_len, +half_len]
+        hit_count, first_hit_t, last_hit_t
     """
     h, w = mask.shape
     d = _norm(direction)
 
     hits = []
+
     for t in range(-half_len, half_len + 1):
         px = int(round(p0[0] + t * d[0]))
         py = int(round(p0[1] + t * d[1]))
@@ -201,7 +195,7 @@ def _sample_line(mask: np.ndarray, p0: np.ndarray, direction: np.ndarray,
 def _run_length_from_center(mask: np.ndarray, p0: np.ndarray, direction: np.ndarray,
                             max_len: int, thickness: int = 1) -> tuple[int, int]:
     """
-    Measure branch length on both sides from center along 'direction'.
+    Measure branch length on both sides from center along direction.
     Returns:
         neg_len, pos_len
     """
@@ -210,8 +204,8 @@ def _run_length_from_center(mask: np.ndarray, p0: np.ndarray, direction: np.ndar
 
     def one_side(sign: int) -> int:
         run = 0
-        gap_budget = 2
         gaps = 0
+        gap_budget = 2
 
         for t in range(1, max_len + 1):
             px = int(round(p0[0] + sign * t * d[0]))
@@ -240,8 +234,39 @@ def _run_length_from_center(mask: np.ndarray, p0: np.ndarray, direction: np.ndar
     return neg_len, pos_len
 
 
+def _point_on_main_line_for_row(mask: np.ndarray, u: np.ndarray, center: np.ndarray, y: int) -> np.ndarray | None:
+    """
+    Find the point where the oriented main line crosses row y.
+    This is much better than taking mean(xs) on the row when the line is tilted.
+    """
+    if abs(u[1]) < 1e-6:
+        return None
+
+    t = (y - center[1]) / u[1]
+    x = center[0] + t * u[0]
+
+    h, w = mask.shape
+    xi = int(round(x))
+    yi = int(round(y))
+
+    if not (0 <= xi < w and 0 <= yi < h):
+        return None
+
+    # refine locally on that row
+    search_radius = 20
+    x0 = max(0, xi - search_radius)
+    x1 = min(w - 1, xi + search_radius)
+
+    xs = np.where(mask[yi, x0:x1 + 1] > 0)[0]
+    if len(xs) == 0:
+        return None
+
+    xr = x0 + int(np.mean(xs))
+    return np.array([xr, yi], dtype=np.float32)
+
+
 # ============================================================
-# T detection based on main line orientation
+# T detection using line orientation
 # ============================================================
 
 def _detect_t_from_orientation(mask: np.ndarray) -> tuple[bool, tuple[int, int] | None, np.ndarray | None]:
@@ -257,63 +282,54 @@ def _detect_t_from_orientation(mask: np.ndarray) -> tuple[bool, tuple[int, int] 
     if eig_ratio < T_MIN_EIG_RATIO:
         return False, None, u
 
-    n = np.array([-u[1], u[0]], dtype=np.float32)   # perpendicular to main line
+    n = np.array([-u[1], u[0]], dtype=np.float32)
 
     h, w = main_mask.shape
-
-    # candidate points along the trunk
-    t0 = int(round(T_SCAN_START_FRAC * h))
-    t1 = int(round(T_SCAN_END_FRAC * h))
-    ys = np.linspace(t0, t1, T_SCAN_STEPS).astype(int)
+    y0 = int(round(T_SCAN_START_FRAC * h))
+    y1 = int(round(T_SCAN_END_FRAC * h))
+    ys = np.linspace(y0, y1, T_SCAN_STEPS).astype(int)
 
     best_score = -1.0
     best_center = None
 
     for y in ys:
-        # find local trunk center on this row
-        xs = np.where(main_mask[y] > 0)[0]
-        if len(xs) == 0:
-            continue
-
-        x = int(np.mean(xs))
-        p = np.array([x, y], dtype=np.float32)
-
-        # reject candidate too close to bottom
         if y > h - T_MIN_DIST_FROM_BOTTOM:
             continue
 
-        # check trunk continuity upward and downward along u
+        p = _point_on_main_line_for_row(main_mask, u, center, y)
+        if p is None:
+            continue
+
+        # check the trunk exists around the candidate
         hits_trunk, first_t, last_t = _sample_line(
             main_mask, p, u, T_TRUNK_CHECK_LEN, thickness=T_BRANCH_THICKNESS
         )
 
-        # need pixels on both sides around p on the trunk
         if hits_trunk < T_TRUNK_MIN_HITS:
             continue
+
+        # must continue before and after the crossing
         if first_t > -2 or last_t < 2:
             continue
 
-        # search bar on both sides along perpendicular direction
+        # check perpendicular branches
         neg_len, pos_len = _run_length_from_center(
             main_mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
         )
 
-        # both branches must exist
         if neg_len < T_BRANCH_MIN_LEN or pos_len < T_BRANCH_MIN_LEN:
             continue
 
-        # must be centered around the trunk
         if abs(neg_len - pos_len) > T_CENTER_TOL_PX:
             continue
 
-        # bar must contain enough actual hits along the full sampled segment
         hits_bar, first_b, last_b = _sample_line(
             main_mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
         )
+
         if hits_bar < T_BAR_MIN_HITS:
             continue
 
-        # final score: prefer longer, centered branches
         score = hits_bar + 0.5 * hits_trunk - 0.2 * abs(neg_len - pos_len)
 
         if score > best_score:
@@ -324,18 +340,10 @@ def _detect_t_from_orientation(mask: np.ndarray) -> tuple[bool, tuple[int, int] 
 
 
 # ============================================================
-# main vision pipeline
+# main pipeline
 # ============================================================
 
 def detect_line(frame: np.ndarray, angle_deg: float = 20.0) -> VisionResult:
-    """
-    Main pipeline:
-    - lower ROI
-    - threshold black line on white floor
-    - morphology
-    - slice centers for steering
-    - T detection using line orientation + perpendicular branches
-    """
     h, w = frame.shape[:2]
     roi_start = int(ROI_START_FRAC * h)
     roi = frame[roi_start:].copy()
@@ -347,12 +355,13 @@ def detect_line(frame: np.ndarray, angle_deg: float = 20.0) -> VisionResult:
     )
 
     k = cv2.getStructuringElement(cv2.MORPH_RECT, (KERNEL_SIZE, KERNEL_SIZE))
+
     if MORPH_CLOSE_IT > 0:
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, k, iterations=MORPH_CLOSE_IT)
+
     if MORPH_OPEN_IT > 0:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, k, iterations=MORPH_OPEN_IT)
 
-    # keep largest component for robustness
     mask = _largest_component(mask)
 
     mh, mw = mask.shape
@@ -365,7 +374,6 @@ def detect_line(frame: np.ndarray, angle_deg: float = 20.0) -> VisionResult:
     mid_xy = _extract_slice_point(mask, y_mid)
     bot_xy = _extract_slice_point(mask, y_bot, max_dist=BOTTOM_SLICE_MAX_DIST)
 
-    # exception: if bottom point is close enough to center, keep it anyway
     if bot_xy is None:
         tmp = _extract_slice_point(mask, y_bot, max_dist=None)
         if tmp is not None and abs(tmp[0] - mw // 2) <= CENTER_EXCEPTION_DIST:
@@ -399,19 +407,17 @@ def detect_line(frame: np.ndarray, angle_deg: float = 20.0) -> VisionResult:
 
 
 # ============================================================
-# debug draw
+# debug drawing
 # ============================================================
 
-def draw_debug_slices(img: np.ndarray, res: VisionResult) -> np.ndarray:
+def draw_debug_slices(img: np.ndarray, res: VisionResult, band_thickness: int = BAND_THICKNESS) -> np.ndarray:
     out = img.copy()
 
     roi_start = res.roi_start
     mh, mw = res.mask.shape
 
-    # ROI rectangle
     cv2.rectangle(out, (0, roi_start), (mw - 1, roi_start + mh - 1), (0, 255, 255), 2)
 
-    # slice lines
     y_top = roi_start + int(SLICE_TOP_FRAC * mh)
     y_mid = roi_start + int(SLICE_MID_FRAC * mh)
     y_bot = roi_start + int(SLICE_BOT_FRAC * mh)
@@ -420,7 +426,11 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult) -> np.ndarray:
     cv2.line(out, (0, y_mid), (mw - 1, y_mid), (255, 0, 0), 1)
     cv2.line(out, (0, y_bot), (mw - 1, y_bot), (255, 0, 0), 1)
 
-    # center line
+    # show band thickness around each slice
+    for y in [y_top, y_mid, y_bot]:
+        cv2.line(out, (0, y - band_thickness // 2), (mw - 1, y - band_thickness // 2), (80, 80, 80), 1)
+        cv2.line(out, (0, y + band_thickness // 2), (mw - 1, y + band_thickness // 2), (80, 80, 80), 1)
+
     cv2.line(out, (mw // 2, roi_start), (mw // 2, roi_start + mh - 1), (0, 255, 0), 1)
 
     def draw_pt(pt, color):
@@ -436,10 +446,11 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult) -> np.ndarray:
     if res.cx is not None and res.cy is not None:
         cv2.circle(out, (int(res.cx), roi_start + int(res.cy)), 7, (0, 255, 0), -1)
 
-    # draw main direction
     if res.main_dir is not None and res.cx is not None and res.cy is not None:
         p = np.array([res.cx, res.cy], dtype=np.float32)
         u = res.main_dir
+        n = np.array([-u[1], u[0]], dtype=np.float32)
+
         p1 = p - 50 * u
         p2 = p + 50 * u
         cv2.line(
@@ -450,7 +461,6 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult) -> np.ndarray:
             2
         )
 
-        n = np.array([-u[1], u[0]], dtype=np.float32)
         q1 = p - 40 * n
         q2 = p + 40 * n
         cv2.line(
@@ -467,15 +477,17 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult) -> np.ndarray:
         cv2.putText(out, "T", (tx + 10, roi_start + ty - 10),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
-    txt = f"found={res.found}  err={res.error_px:.1f}  T={res.is_t}"
+    txt = f"found={res.found} err={res.error_px:.1f} T={res.is_t}"
     cv2.putText(out, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (20, 20, 20), 4)
     cv2.putText(out, txt, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
     return out
 
 
-def draw_mask_slices(mask: np.ndarray, res: VisionResult) -> np.ndarray:
+def draw_mask_slices(res: VisionResult) -> np.ndarray:
+    mask = res.mask
     out = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+
     h, w = mask.shape
 
     y_top = int(SLICE_TOP_FRAC * h)
