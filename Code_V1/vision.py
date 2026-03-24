@@ -17,11 +17,7 @@ from config import (
 
     # T detection
     T_ENABLE,
-    T_MIN_PIXELS_MAIN,
-    T_MIN_EIG_RATIO,
-    T_SCAN_START_FRAC,
-    T_SCAN_END_FRAC,
-    T_SCAN_STEPS,
+    T_SCAN_OFFSET_PX,
     T_BRANCH_HALF_LEN,
     T_BRANCH_MIN_LEN,
     T_BRANCH_THICKNESS,
@@ -30,6 +26,7 @@ from config import (
     T_BAR_MIN_HITS,
     T_CENTER_TOL_PX,
     T_MIN_DIST_FROM_BOTTOM,
+    T_ANGLE_MIN_DEG,
 )
 
 
@@ -49,7 +46,9 @@ class VisionResult:
     bot_xy: tuple[int, int] | None
 
     main_dir: np.ndarray | None
+    perp_dir: np.ndarray | None
     t_center: tuple[int, int] | None
+    t_candidate: tuple[int, int] | None
 
 
 # ============================================================
@@ -126,38 +125,68 @@ def _weighted_center(top_xy, mid_xy, bot_xy) -> tuple[float | None, float | None
 
 
 # ============================================================
-# orientation of main line
+# orientation from tracked line points
 # ============================================================
 
-def _fit_main_orientation(mask: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None, float]:
-    ys, xs = np.where(mask > 0)
-    if len(xs) < T_MIN_PIXELS_MAIN:
-        return None, None, 0.0
+def _fit_main_direction_from_slices(
+    top_xy: tuple[int, int] | None,
+    mid_xy: tuple[int, int] | None,
+    bot_xy: tuple[int, int] | None,
+) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """
+    Estimate trunk direction only from the tracked line points,
+    not from the full T component.
+    Returns:
+        center: np.ndarray([x, y]) or None
+        u: unit vector along the trunk or None
+    """
+    pts = []
+    weights = []
 
-    pts = np.column_stack((xs, ys)).astype(np.float32)
-    center = np.mean(pts, axis=0)
+    if top_xy is not None:
+        pts.append(top_xy)
+        weights.append(W_TOP)
+
+    if mid_xy is not None:
+        pts.append(mid_xy)
+        weights.append(W_MID)
+
+    if bot_xy is not None:
+        pts.append(bot_xy)
+        weights.append(W_BOT)
+
+    if len(pts) < 2:
+        return None, None
+
+    pts = np.asarray(pts, dtype=np.float32)
+    weights = np.asarray(weights, dtype=np.float32)
+
+    center = np.sum(pts * weights[:, None], axis=0) / np.sum(weights)
 
     pts0 = pts - center
     cov = (pts0.T @ pts0) / max(len(pts0), 1)
 
     eigvals, eigvecs = np.linalg.eigh(cov)
-    order = np.argsort(eigvals)[::-1]
-    eigvals = eigvals[order]
-    eigvecs = eigvecs[:, order]
-
-    lam0 = float(eigvals[0])
-    lam1 = float(eigvals[1]) if len(eigvals) > 1 else 1e-6
-    eig_ratio = lam0 / max(lam1, 1e-6)
-
-    u = eigvecs[:, 0].astype(np.float32)
+    u = eigvecs[:, np.argmax(eigvals)].astype(np.float32)
     u = _norm(u)
 
-    # orient upward in image
+    # force direction to point upward in image coordinates
     if u[1] > 0:
         u = -u
 
-    return center, u, eig_ratio
+    # reject nearly horizontal main direction
+    angle_deg = abs(np.degrees(np.arctan2(u[1], u[0])))
+    angle_to_vertical = abs(90.0 - angle_deg)
+    if angle_to_vertical > T_ANGLE_MIN_DEG:
+        # still keep it, but only if it is not too horizontal
+        pass
 
+    return center.astype(np.float32), u
+
+
+# ============================================================
+# line sampling
+# ============================================================
 
 def _sample_line(mask: np.ndarray, p0: np.ndarray, direction: np.ndarray,
                  half_len: int, thickness: int = 1) -> tuple[int, int, int]:
@@ -234,109 +263,120 @@ def _run_length_from_center(mask: np.ndarray, p0: np.ndarray, direction: np.ndar
     return neg_len, pos_len
 
 
-def _point_on_main_line_for_row(mask: np.ndarray, u: np.ndarray, center: np.ndarray, y: int) -> np.ndarray | None:
+def _refine_point_on_normal(mask: np.ndarray, p: np.ndarray, normal: np.ndarray, radius: int = 8) -> np.ndarray:
     """
-    Find the point where the oriented main line crosses row y.
-    This is much better than taking mean(xs) on the row when the line is tilted.
+    Small refinement around p, along the normal direction, to center the
+    candidate on the visible trunk.
     """
-    if abs(u[1]) < 1e-6:
-        return None
-
-    t = (y - center[1]) / u[1]
-    x = center[0] + t * u[0]
-
     h, w = mask.shape
-    xi = int(round(x))
-    yi = int(round(y))
+    n = _norm(normal)
 
-    if not (0 <= xi < w and 0 <= yi < h):
-        return None
+    pts = []
+    for t in range(-radius, radius + 1):
+        px = int(round(p[0] + t * n[0]))
+        py = int(round(p[1] + t * n[1]))
+        if 0 <= px < w and 0 <= py < h and mask[py, px] > 0:
+            pts.append([px, py])
 
-    # refine locally on that row
-    search_radius = 20
-    x0 = max(0, xi - search_radius)
-    x1 = min(w - 1, xi + search_radius)
+    if not pts:
+        return p
 
-    xs = np.where(mask[yi, x0:x1 + 1] > 0)[0]
-    if len(xs) == 0:
-        return None
-
-    xr = x0 + int(np.mean(xs))
-    return np.array([xr, yi], dtype=np.float32)
+    pts = np.asarray(pts, dtype=np.float32)
+    return np.mean(pts, axis=0)
 
 
 # ============================================================
-# T detection using line orientation
+# T detection using trunk direction from slices
 # ============================================================
 
-def _detect_t_from_orientation(mask: np.ndarray) -> tuple[bool, tuple[int, int] | None, np.ndarray | None]:
+def _choose_t_candidate(
+    top_xy: tuple[int, int] | None,
+    mid_xy: tuple[int, int] | None,
+    bot_xy: tuple[int, int] | None,
+    u: np.ndarray,
+) -> np.ndarray | None:
+    """
+    Candidate point where the T bar is expected.
+    Prefer the upper visible part of the trunk.
+    """
+    if mid_xy is not None:
+        p = np.array(mid_xy, dtype=np.float32)
+    elif top_xy is not None:
+        p = np.array(top_xy, dtype=np.float32)
+    elif bot_xy is not None:
+        p = np.array(bot_xy, dtype=np.float32)
+    else:
+        return None
+
+    # move upward along the trunk to search closer to the bar
+    p = p + T_SCAN_OFFSET_PX * u
+    return p.astype(np.float32)
+
+
+def _detect_t_from_orientation(
+    mask: np.ndarray,
+    top_xy: tuple[int, int] | None,
+    mid_xy: tuple[int, int] | None,
+    bot_xy: tuple[int, int] | None,
+) -> tuple[bool, tuple[int, int] | None, tuple[int, int] | None, np.ndarray | None, np.ndarray | None]:
     if not T_ENABLE:
-        return False, None, None
+        return False, None, None, None, None
 
-    main_mask = _largest_component(mask)
-    center, u, eig_ratio = _fit_main_orientation(main_mask)
-
+    center, u = _fit_main_direction_from_slices(top_xy, mid_xy, bot_xy)
     if center is None or u is None:
-        return False, None, None
-
-    if eig_ratio < T_MIN_EIG_RATIO:
-        return False, None, u
+        return False, None, None, None, None
 
     n = np.array([-u[1], u[0]], dtype=np.float32)
 
-    h, w = main_mask.shape
-    y0 = int(round(T_SCAN_START_FRAC * h))
-    y1 = int(round(T_SCAN_END_FRAC * h))
-    ys = np.linspace(y0, y1, T_SCAN_STEPS).astype(int)
+    p = _choose_t_candidate(top_xy, mid_xy, bot_xy, u)
+    if p is None:
+        return False, None, None, u, n
 
-    best_score = -1.0
-    best_center = None
+    h, w = mask.shape
+    p = _refine_point_on_normal(mask, p, n, radius=8)
 
-    for y in ys:
-        if y > h - T_MIN_DIST_FROM_BOTTOM:
-            continue
+    px = int(round(p[0]))
+    py = int(round(p[1]))
 
-        p = _point_on_main_line_for_row(main_mask, u, center, y)
-        if p is None:
-            continue
+    candidate = (px, py)
 
-        # check the trunk exists around the candidate
-        hits_trunk, first_t, last_t = _sample_line(
-            main_mask, p, u, T_TRUNK_CHECK_LEN, thickness=T_BRANCH_THICKNESS
-        )
+    if not (0 <= px < w and 0 <= py < h):
+        return False, None, candidate, u, n
 
-        if hits_trunk < T_TRUNK_MIN_HITS:
-            continue
+    if py > h - T_MIN_DIST_FROM_BOTTOM:
+        return False, None, candidate, u, n
 
-        # must continue before and after the crossing
-        if first_t > -2 or last_t < 2:
-            continue
+    # 1) trunk continuity around the candidate
+    hits_trunk, first_t, last_t = _sample_line(
+        mask, p, u, T_TRUNK_CHECK_LEN, thickness=T_BRANCH_THICKNESS
+    )
 
-        # check perpendicular branches
-        neg_len, pos_len = _run_length_from_center(
-            main_mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
-        )
+    if hits_trunk < T_TRUNK_MIN_HITS:
+        return False, None, candidate, u, n
 
-        if neg_len < T_BRANCH_MIN_LEN or pos_len < T_BRANCH_MIN_LEN:
-            continue
+    if first_t > -2 or last_t < 2:
+        return False, None, candidate, u, n
 
-        if abs(neg_len - pos_len) > T_CENTER_TOL_PX:
-            continue
+    # 2) perpendicular branches around the candidate
+    neg_len, pos_len = _run_length_from_center(
+        mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
+    )
 
-        hits_bar, first_b, last_b = _sample_line(
-            main_mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
-        )
+    if neg_len < T_BRANCH_MIN_LEN or pos_len < T_BRANCH_MIN_LEN:
+        return False, None, candidate, u, n
 
-        if hits_bar < T_BAR_MIN_HITS:
-            continue
+    if abs(neg_len - pos_len) > T_CENTER_TOL_PX:
+        return False, None, candidate, u, n
 
-        score = hits_bar + 0.5 * hits_trunk - 0.2 * abs(neg_len - pos_len)
+    hits_bar, first_b, last_b = _sample_line(
+        mask, p, n, T_BRANCH_HALF_LEN, thickness=T_BRANCH_THICKNESS
+    )
 
-        if score > best_score:
-            best_score = score
-            best_center = (int(round(p[0])), int(round(p[1])))
+    if hits_bar < T_BAR_MIN_HITS:
+        return False, None, candidate, u, n
 
-    return best_center is not None, best_center, u
+    t_center = (px, py)
+    return True, t_center, candidate, u, n
 
 
 # ============================================================
@@ -388,7 +428,9 @@ def detect_line(frame: np.ndarray, angle_deg: float = 20.0) -> VisionResult:
         found = True
         error_px = float(cx - (mw / 2.0))
 
-    is_t, t_center, main_dir = _detect_t_from_orientation(mask)
+    is_t, t_center, t_candidate, main_dir, perp_dir = _detect_t_from_orientation(
+        mask, top_xy, mid_xy, bot_xy
+    )
 
     return VisionResult(
         found=found,
@@ -402,7 +444,9 @@ def detect_line(frame: np.ndarray, angle_deg: float = 20.0) -> VisionResult:
         mid_xy=mid_xy,
         bot_xy=bot_xy,
         main_dir=main_dir,
+        perp_dir=perp_dir,
         t_center=t_center,
+        t_candidate=t_candidate,
     )
 
 
@@ -416,6 +460,7 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult, band_thickness: int = 
     roi_start = res.roi_start
     mh, mw = res.mask.shape
 
+    # old visuals
     cv2.rectangle(out, (0, roi_start), (mw - 1, roi_start + mh - 1), (0, 255, 255), 2)
 
     y_top = roi_start + int(SLICE_TOP_FRAC * mh)
@@ -426,18 +471,17 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult, band_thickness: int = 
     cv2.line(out, (0, y_mid), (mw - 1, y_mid), (255, 0, 0), 1)
     cv2.line(out, (0, y_bot), (mw - 1, y_bot), (255, 0, 0), 1)
 
-    # show band thickness around each slice
     for y in [y_top, y_mid, y_bot]:
         cv2.line(out, (0, y - band_thickness // 2), (mw - 1, y - band_thickness // 2), (80, 80, 80), 1)
         cv2.line(out, (0, y + band_thickness // 2), (mw - 1, y + band_thickness // 2), (80, 80, 80), 1)
 
     cv2.line(out, (mw // 2, roi_start), (mw // 2, roi_start + mh - 1), (0, 255, 0), 1)
 
-    def draw_pt(pt, color):
+    def draw_pt(pt, color, r=5):
         if pt is None:
             return
         x, y = pt
-        cv2.circle(out, (x, roi_start + y), 5, color, -1)
+        cv2.circle(out, (x, roi_start + y), r, color, -1)
 
     draw_pt(res.top_xy, (0, 0, 255))
     draw_pt(res.mid_xy, (0, 128, 255))
@@ -446,13 +490,12 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult, band_thickness: int = 
     if res.cx is not None and res.cy is not None:
         cv2.circle(out, (int(res.cx), roi_start + int(res.cy)), 7, (0, 255, 0), -1)
 
+    # new visuals
     if res.main_dir is not None and res.cx is not None and res.cy is not None:
         p = np.array([res.cx, res.cy], dtype=np.float32)
         u = res.main_dir
-        n = np.array([-u[1], u[0]], dtype=np.float32)
-
-        p1 = p - 50 * u
-        p2 = p + 50 * u
+        p1 = p - 55 * u
+        p2 = p + 55 * u
         cv2.line(
             out,
             (int(p1[0]), roi_start + int(p1[1])),
@@ -461,8 +504,11 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult, band_thickness: int = 
             2
         )
 
-        q1 = p - 40 * n
-        q2 = p + 40 * n
+    if res.perp_dir is not None and res.t_candidate is not None:
+        p = np.array(res.t_candidate, dtype=np.float32)
+        n = res.perp_dir
+        q1 = p - 55 * n
+        q2 = p + 55 * n
         cv2.line(
             out,
             (int(q1[0]), roi_start + int(q1[1])),
@@ -471,10 +517,16 @@ def draw_debug_slices(img: np.ndarray, res: VisionResult, band_thickness: int = 
             2
         )
 
+    if res.t_candidate is not None:
+        tx, ty = res.t_candidate
+        cv2.circle(out, (tx, roi_start + ty), 8, (0, 165, 255), 2)
+        cv2.putText(out, "cand", (tx + 10, roi_start + ty - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+
     if res.t_center is not None:
         tx, ty = res.t_center
-        cv2.circle(out, (tx, roi_start + ty), 9, (0, 0, 255), 2)
-        cv2.putText(out, "T", (tx + 10, roi_start + ty - 10),
+        cv2.circle(out, (tx, roi_start + ty), 10, (0, 0, 255), 2)
+        cv2.putText(out, "T", (tx + 10, roi_start + ty - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
     txt = f"found={res.found} err={res.error_px:.1f} T={res.is_t}"
@@ -490,6 +542,7 @@ def draw_mask_slices(res: VisionResult) -> np.ndarray:
 
     h, w = mask.shape
 
+    # old visuals
     y_top = int(SLICE_TOP_FRAC * h)
     y_mid = int(SLICE_MID_FRAC * h)
     y_bot = int(SLICE_BOT_FRAC * h)
@@ -499,10 +552,10 @@ def draw_mask_slices(res: VisionResult) -> np.ndarray:
     cv2.line(out, (0, y_bot), (w - 1, y_bot), (255, 0, 0), 1)
     cv2.line(out, (w // 2, 0), (w // 2, h - 1), (0, 255, 0), 1)
 
-    def draw_pt(pt, color):
+    def draw_pt(pt, color, r=5):
         if pt is None:
             return
-        cv2.circle(out, pt, 5, color, -1)
+        cv2.circle(out, pt, r, color, -1)
 
     draw_pt(res.top_xy, (0, 0, 255))
     draw_pt(res.mid_xy, (0, 128, 255))
@@ -511,22 +564,29 @@ def draw_mask_slices(res: VisionResult) -> np.ndarray:
     if res.cx is not None and res.cy is not None:
         cv2.circle(out, (int(res.cx), int(res.cy)), 7, (0, 255, 0), -1)
 
+    # new visuals
     if res.main_dir is not None and res.cx is not None and res.cy is not None:
         p = np.array([res.cx, res.cy], dtype=np.float32)
         u = res.main_dir
-        n = np.array([-u[1], u[0]], dtype=np.float32)
-
-        p1 = p - 50 * u
-        p2 = p + 50 * u
+        p1 = p - 55 * u
+        p2 = p + 55 * u
         cv2.line(out, (int(p1[0]), int(p1[1])), (int(p2[0]), int(p2[1])), (255, 255, 0), 2)
 
-        q1 = p - 40 * n
-        q2 = p + 40 * n
+    if res.perp_dir is not None and res.t_candidate is not None:
+        p = np.array(res.t_candidate, dtype=np.float32)
+        n = res.perp_dir
+        q1 = p - 55 * n
+        q2 = p + 55 * n
         cv2.line(out, (int(q1[0]), int(q1[1])), (int(q2[0]), int(q2[1])), (0, 255, 255), 2)
 
+    if res.t_candidate is not None:
+        cv2.circle(out, res.t_candidate, 8, (0, 165, 255), 2)
+        cv2.putText(out, "cand", (res.t_candidate[0] + 10, res.t_candidate[1] - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 165, 255), 1)
+
     if res.t_center is not None:
-        cv2.circle(out, res.t_center, 9, (0, 0, 255), 2)
-        cv2.putText(out, "T", (res.t_center[0] + 10, res.t_center[1] - 10),
+        cv2.circle(out, res.t_center, 10, (0, 0, 255), 2)
+        cv2.putText(out, "T", (res.t_center[0] + 10, res.t_center[1] - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
 
     return out
