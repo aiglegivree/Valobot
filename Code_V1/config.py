@@ -36,14 +36,11 @@ BOTTOM_SLICE_MAX_DIST = 200
 CENTER_EXCEPTION_DIST = 60
 
 # ============================================================
-# T DETECTION (LOCAL STEM FRAME)
-# ============================================================
-# ============================================================
 # T detection based on tracked trunk direction
 # ============================================================
 T_ENABLE = True
 
-T_SCAN_OFFSET_PX = -35       # negatif = remonte le long du tronc vers le haut
+T_SCAN_OFFSET_PX = -35
 
 T_BRANCH_HALF_LEN = 90
 T_BRANCH_MIN_LEN = 22
@@ -56,7 +53,6 @@ T_BAR_MIN_HITS = 28
 T_CENTER_TOL_PX = 28
 
 T_MIN_DIST_FROM_BOTTOM = 25
-T_ANGLE_MIN_DEG = 65
 # ============================================================
 # CONTROL - LINE FOLLOWING
 # ============================================================
