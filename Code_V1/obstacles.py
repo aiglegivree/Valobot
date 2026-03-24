@@ -11,7 +11,7 @@ class CorridorNavigator:
         video="movement.avi",
         alpha=0.25,
         stop_y_threshold=300,
-        start_y_threshold=200,
+        start_y_threshold=150,
         candidate_miss_threshold=5,
         hsv_lower=(41, 92, 0),
         hsv_upper=(74, 255, 255),
