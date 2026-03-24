@@ -336,6 +336,16 @@ class CorridorNavigator:
                         self.candidate_locked = True
                         self.last_turn_candidate = self.turn_candidate
 
+                        # Reset side lines so stale ghosts don't bleed into next corridor
+                        self.left_smooth = None
+                        self.right_smooth = None
+                        self.left_misses = 0
+                        self.right_misses = 0
+                        self.left_stable_frames = 0
+                        self.right_stable_frames = 0
+                        self.prev_left_rep = None
+                        self.prev_right_rep = None
+
             if self.state == "TURN":
                 N = 3
                 at_least_one_side = (self.left_misses == 0 and self.left_stable_frames >= N) or \
