@@ -47,7 +47,6 @@ def main():
             if state == "TURN":
                 motors.stop()
                 print("TURN detected. Stopping forward mode.")
-                cv2.imshow("Navigation", vis)
                 turn_candidate = data["turn_candidate"]
                 if turn_candidate=="RIGHT":
                     #Call function that turns right 90°
@@ -67,7 +66,6 @@ def main():
                     #If good switch back to "FORWARD" state
                     #If not error for now
                     pass
-                break
 
             # ----------------------------------------------------
             # FORWARD mode

@@ -45,6 +45,9 @@ class CorridorNavigator:
         self.left_misses = 0
         self.right_misses = 0
 
+        self.left_stable_frames = 0
+        self.right_stable_frames = 0
+
         # --- Previous measured representatives (for ghost-angle updates) ---
         self.prev_left_rep = None
         self.prev_right_rep = None
@@ -253,7 +256,6 @@ class CorridorNavigator:
     # ------------------------------------------------------------------
 
     def update_smoothed_lines(self, horizontal_rep, left_rep, right_rep):
-        # Update horizontal line
         if horizontal_rep is not None:
             self.horizontal_smooth = self.smooth_line(
                 self.horizontal_smooth, horizontal_rep, self.alpha
@@ -262,23 +264,25 @@ class CorridorNavigator:
         else:
             self.horizontal_misses += 1
 
-        # Update left line
         if left_rep is not None:
             self.left_smooth = self.smooth_line(
                 self.left_smooth, left_rep, self.alpha
             )
             self.left_misses = 0
+            self.left_stable_frames += 1
         else:
             self.left_misses += 1
+            self.left_stable_frames = 0
 
-        # Update right line
         if right_rep is not None:
             self.right_smooth = self.smooth_line(
                 self.right_smooth, right_rep, self.alpha
             )
             self.right_misses = 0
+            self.right_stable_frames += 1
         else:
             self.right_misses += 1
+            self.right_stable_frames = 0
 
     def update_ghost_lines(self, left_rep, right_rep):
         """
@@ -342,7 +346,7 @@ class CorridorNavigator:
                 front_far_enough = (
                     self.horizontal_smooth is not None
                     and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) is not None
-                    and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) <= self.resume_y_threshold  # << new, lower threshold
+                    and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) <= self.start_y_threshold  # << new, lower threshold
                 )
 
                 if at_least_one_side and (front_gone or front_far_enough):
@@ -390,16 +394,14 @@ class CorridorNavigator:
                 intersection = self.intersect_hough_lines(
                     self.left_smooth, self.right_smooth
                 )
-
                 if intersection is not None:
                     ix, iy = intersection
                     ix_clamped = int(round(ix))
                     ix_clamped = max(0, min(self.W - 1, ix_clamped))
-
                     self.intersection = (ix, iy)
                     self.target_x = ix_clamped
                     self.target_visible = True
-            return
+                    return
 
         # --------------------------------------------------------------
         # Fallback case: both side lines are currently missing
