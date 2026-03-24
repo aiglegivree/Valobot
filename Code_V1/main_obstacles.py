@@ -49,7 +49,7 @@ def main():
     # ------------------------------------------------------------
     # Forward-control tuning
     # ------------------------------------------------------------
-    base_speed = 0.2
+    base_speed = 0.3
     k_p = 0.2
     max_correction = 0.20
     lost_target_speed = 0.2
@@ -57,8 +57,8 @@ def main():
     # ------------------------------------------------------------
     # Turn tuning
     # ------------------------------------------------------------
-    turn_speed = 0.2
-    dead_zone_seconds = 1.0   # suppress state updates for first 1s of turn
+    turn_speed = 0.3
+    dead_zone_seconds = 0.5   # suppress state updates for first 1s of turn
     max_seconds_90 = 3.0      # budget for ~90° turn
     max_seconds_180 = 6.0     # budget for ~180° fallback turn
 
