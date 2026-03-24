@@ -45,7 +45,7 @@ try:
 
         # 4) Debug
         roi = frame[res.roi_start:, :]
-        dbg = draw_debug_slices(roi, res, BAND_THICKNESS)
+        dbg = draw_debug_slices(frame, res, BAND_THICKNESS)
         mask_dbg = draw_mask_slices(res.mask, res, BAND_THICKNESS)
 
         cv2.imshow("camera debug", dbg)

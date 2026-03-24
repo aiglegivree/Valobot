@@ -38,21 +38,36 @@ CENTER_EXCEPTION_DIST = 60
 # ============================================================
 # T detection based on tracked trunk direction
 # ============================================================
+# --- T detection
 T_ENABLE = True
 
-T_SCAN_OFFSET_PX = -35
+T_TRUNK_BAND_FRAC = 0.22
+T_MIN_TRUNK_PIXELS = 70
 
-T_BRANCH_HALF_LEN = 90
-T_BRANCH_MIN_LEN = 22
-T_BRANCH_THICKNESS = 2
+T_SCAN_START_FRAC = 0.08
+T_SCAN_END_FRAC = 0.82
+T_SCAN_STEPS = 24
 
-T_TRUNK_CHECK_LEN = 28
-T_TRUNK_MIN_HITS = 16
+T_BRANCH_HALF_LEN = 110
+T_BRANCH_THICKNESS = 3
 
-T_BAR_MIN_HITS = 28
-T_CENTER_TOL_PX = 28
+T_TRUNK_BACK_LEN = 34
+T_TRUNK_FWD_LEN = 24
+T_TRUNK_THICKNESS = 2
 
-T_MIN_DIST_FROM_BOTTOM = 25
+# moins strict sur le tronc visible
+T_TRUNK_MIN_BACK = 10
+T_TRUNK_MAX_FWD = 12
+
+# au lieu d'imposer les 2 côtés identiques
+T_MIN_BRANCH_SHORT = 10
+T_MIN_BRANCH_LONG = 26
+T_MIN_TOTAL_BAR = 60
+
+# tolérance forte au décentrage
+T_MAX_BRANCH_RATIO = 6.0
+
+SHOW_T_DEBUG = True
 # ============================================================
 # CONTROL - LINE FOLLOWING
 # ============================================================
