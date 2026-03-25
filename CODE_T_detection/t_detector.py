@@ -79,7 +79,7 @@ def _build_mask(frame: np.ndarray) -> tuple[np.ndarray, int]:
         if area >= MIN_COMPONENT_AREA:
             clean[labels == i] = 255
 
-    return clean, roi_start
+    return clean, roi_start,mask
 
 
 def _skeletonize(binary: np.ndarray) -> np.ndarray:
@@ -436,7 +436,7 @@ class TDetector:
         self.memory_count = 0
 
     def detect(self, frame: np.ndarray) -> TDetectionResult:
-        mask, roi_start = _build_mask(frame)
+        mask, roi_start, mask= _build_mask(frame)
         skel = _skeletonize(mask)
 
         seed = _find_bottom_seed(skel)
