@@ -13,7 +13,7 @@ def execute_turn(navigator, motors, direction, dead_zone_seconds, max_seconds, t
     """
     Turns in `direction` (+1=right, -1=left) for up to `max_seconds`.
     Suppresses state updates for the first `dead_zone_seconds`.
-    Returns True if navigator switches back to FORWARD, False if timed out.
+    Returns True if navigator switches back to FORWARD, False if max_seconds exceeded.
     """
     start_time = time.time()
 
@@ -40,48 +40,25 @@ def main():
     leds = LED()
     leds.turn_off_all()
 
-    navigator = CorridorNavigator(
-        proto=False,
-        # Pass alignment tuning here if you want to override defaults:
-        # corridor_left_theta=0.8,
-        # corridor_right_theta=2.3,
-        # alignment_threshold_deg=8.0,
-        # alignment_gain_px_per_rad=200.0,
-        # single_line_wall_offset=80,
-    )
+    navigator = CorridorNavigator(proto=False)
     motors = MotorDriver()
 
-    # ----------------------------------------------------------------
-    # TUNING — forward control
-    # base_speed: straight-line speed (0–1)
-    # k_p: proportional gain on lateral error. Raise if correction is
-    #       too slow, lower if robot oscillates side to side.
-    # max_correction: caps the speed differential. Prevents spinning.
-    # lost_target_speed: speed when no target is visible (go straight).
-    # error_deadband_px: ignore errors smaller than this to avoid jitter.
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------
+    # Forward-control tuning
+    # ------------------------------------------------------------
     base_speed = 0.25
     k_p = 0.1
     max_correction = 0.20
     lost_target_speed = 0.2
-    error_deadband_px = 5
+    error_deadband_px = 10      # ignore corrections smaller than this
 
-    # ----------------------------------------------------------------
-    # TUNING — turning
-    # turn_speed: rotation speed during a turn (0–1).
-    # dead_zone_seconds: how long to suppress state updates at the start
-    #   of a turn. Must be long enough to rotate past the old corridor.
-    #   Raise if robot exits turn too early seeing the old corridor.
-    # max_seconds_90: time budget for the first ~90° turn attempt.
-    # max_seconds_180: time budget for the 180° fallback attempt.
-    # dead_zone_180: dead zone for the fallback turn. Must be long enough
-    #   to clear the origin corridor (~dead_zone_seconds + some margin).
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------
+    # Turn tuning
+    # ------------------------------------------------------------
     turn_speed = 0.25
-    dead_zone_seconds = 0.8
-    max_seconds_90 = 2.4
-    max_seconds_180 = 4.8
-    dead_zone_180 = max_seconds_90 + dead_zone_seconds
+    dead_zone_seconds = 2.   # suppress state updates for first 1s of turn
+    max_seconds_90 = 3.0      # budget for ~90° turn
+    max_seconds_180 = 6.0     # budget for ~180° fallback turn
 
     try:
         while True:
@@ -94,7 +71,8 @@ def main():
             state = data["state"]
 
             # ----------------------------------------------------
-            # TURN state
+            # TURN state — hand off entirely to execute_turn,
+            # no duplicate step() call before this block
             # ----------------------------------------------------
             if state == "TURN":
                 motors.stop()
@@ -106,18 +84,20 @@ def main():
                     direction=direction,
                     dead_zone_seconds=dead_zone_seconds,
                     max_seconds=max_seconds_90,
-                    turn_speed=turn_speed,
+                    turn_speed=turn_speed
                 )
 
                 if not success:
                     print("90° turn failed, attempting 180° in opposite direction.")
                     motors.stop()
+                    # Force state back to TURN and lock the opposite direction
+                    # so the outer loop can't interfere
                     success = execute_turn(
                         navigator, motors,
                         direction=-direction,
-                        dead_zone_seconds=dead_zone_180,
+                        dead_zone_seconds=1.5,  # must clear origin corridor
                         max_seconds=max_seconds_180,
-                        turn_speed=turn_speed,
+                        turn_speed=turn_speed
                     )
 
                 if not success:
@@ -125,11 +105,13 @@ def main():
                     motors.stop()
                     break
 
+                # Explicitly reset navigator state to FORWARD after a successful turn
+                # so the outer loop doesn't re-enter the TURN branch immediately
                 print("Turn complete, resuming FORWARD.")
-                continue  # re-enter loop cleanly with a fresh step()
+                continue  # skip the imshow at the bottom, go straight to next iteration
 
             # ----------------------------------------------------
-            # FORWARD state
+            # FORWARD mode
             # ----------------------------------------------------
             elif state == "FORWARD":
                 target_x = data["target_x"]
@@ -140,13 +122,14 @@ def main():
                     image_center_x = frame_width / 2.0
                     error_pixels = target_x - image_center_x
 
+                    # Deadband: ignore small jitter
                     if abs(error_pixels) < error_deadband_px:
                         error_pixels = 0.0
 
                     error_norm = error_pixels / image_center_x
                     correction = clamp(k_p * error_norm, -max_correction, max_correction)
 
-                    left_speed = clamp(base_speed + correction, -1.0, 1.0)
+                    left_speed  = clamp(base_speed + correction, -1.0, 1.0)
                     right_speed = clamp(base_speed - correction, -1.0, 1.0)
 
                     motors.set_speeds(left_speed, right_speed)

@@ -15,25 +15,6 @@ class CorridorNavigator:
         candidate_miss_threshold=5,
         lab_lower=(0, 0, 0),
         lab_upper=(255, 109, 255),
-        # ----------------------------------------------------------------
-        # TUNING — side wall reference angles
-        # Drive the robot straight and centred in the corridor, read the
-        # "L theta" and "R theta" values printed on the overlay, and set
-        # these accordingly. Units are RADIANS.
-        # Left wall is typically 0.5–1.0 rad, right wall 2.1–2.6 rad.
-        # ----------------------------------------------------------------
-        corridor_left_theta=1.1,
-        corridor_right_theta=2.,
-        # TUNING — dead zone around reference angle before we consider
-        # the robot aligned. Raise if it oscillates, lower if too loose.
-        alignment_threshold_deg=8.0,
-        # TUNING — how many pixels to shift target per radian of theta
-        # error. Raise if correction is too slow, lower if it overshoots.
-        alignment_gain_px_per_rad=200.0,
-        # TUNING — in case 2 (single line + front wall), how many pixels
-        # away from the wall to aim. Raise if robot clips wall, lower if
-        # it swings too far to the opposite side.
-        single_line_wall_offset=80,
     ):
         # --- Input source configuration ---
         self.proto = proto
@@ -54,13 +35,6 @@ class CorridorNavigator:
 
         self.lab_lower = np.array(lab_lower, dtype=np.uint8)
         self.lab_upper = np.array(lab_upper, dtype=np.uint8)
-
-        # --- Alignment parameters ---
-        self.corridor_left_theta = corridor_left_theta
-        self.corridor_right_theta = corridor_right_theta
-        self.alignment_threshold_rad = math.radians(alignment_threshold_deg)
-        self.alignment_gain_px_per_rad = alignment_gain_px_per_rad
-        self.single_line_wall_offset = single_line_wall_offset
 
         # --- Temporal smoothing state ---
         self.horizontal_smooth = None
@@ -84,7 +58,7 @@ class CorridorNavigator:
         self.right_ghost_frames = 0
 
         # --- Turn-candidate memory ---
-        self.turn_candidate = None
+        self.turn_candidate = None   # "LEFT", "RIGHT", or None
         self.candidate_locked = False
         self.last_turn_candidate = "RIGHT"
 
@@ -138,19 +112,6 @@ class CorridorNavigator:
 
         y = (rho - a * x) / b
         return float(y)
-
-    @staticmethod
-    def hough_x_at_y(line, y):
-        """Given a Hough line and a y coordinate, return the x coordinate."""
-        rho, theta = line
-        a = np.cos(theta)
-        b = np.sin(theta)
-
-        if abs(a) < 1e-6:
-            return None  # truly vertical — no unique x
-
-        x = (rho - b * y) / a
-        return float(x)
 
     @staticmethod
     def hough_line_endpoints(rho, theta, length=1000):
@@ -233,7 +194,7 @@ class CorridorNavigator:
             edges,
             rho=1,
             theta=np.pi / 180,
-            threshold=60
+            threshold=60  # raised from 34 to reduce spurious lines
         )
 
     @staticmethod
@@ -353,9 +314,7 @@ class CorridorNavigator:
                         self.prev_right_rep = None
 
             if self.state == "TURN":
-                # TUNING — N: consecutive frames a side line must be seen
-                # before counting as stable. Raise if exiting TURN too early.
-                N = 2
+                N = 2  # raise this too while you're at it
 
                 one_side_stable = (
                     (self.left_misses == 0 and self.left_stable_frames >= N)
@@ -370,8 +329,8 @@ class CorridorNavigator:
                     and self.horizontal_misses == 0
                 )
 
-                # Exit TURN only with a coherent corridor view:
-                # both sides stable, OR one side stable confirmed by front wall.
+                # Exit only if we have a coherent corridor view:
+                # either both sides, or one side confirmed by a front wall
                 if two_sides_stable or (one_side_stable and front_visible):
                     self.state = "FORWARD"
                     self.candidate_locked = False
@@ -403,14 +362,14 @@ class CorridorNavigator:
         self.target_visible = False
         self.intersection = None
 
+        # --------------------------------------------------------------
+        # Normal case: both side lines are available (real or ghost)
+        # Only use intersection when BOTH sides are present and at least
+        # one is currently measured (not both ghosts).
+        # --------------------------------------------------------------
         both_present = self.left_smooth is not None and self.right_smooth is not None
         at_least_one_measured = self.left_misses == 0 or self.right_misses == 0
-        front_visible = self.horizontal_smooth is not None and self.horizontal_misses == 0
 
-        # --------------------------------------------------------------
-        # Case 1 — Both side lines present, at least one real.
-        # Target = intersection point. Main corridor-following mode.
-        # --------------------------------------------------------------
         if both_present and at_least_one_measured:
             intersection = self.intersect_hough_lines(self.left_smooth, self.right_smooth)
             if intersection is not None:
@@ -423,83 +382,24 @@ class CorridorNavigator:
                 return
 
         # --------------------------------------------------------------
-        # Case 2 — Single real side line + front wall visible.
-        # Target = fixed offset away from the wall.
-        # TUNING: single_line_wall_offset (constructor parameter)
+        # Fallback: use front wall tilt to stay centred
         # --------------------------------------------------------------
-        if front_visible:
-            if self.left_smooth is not None and self.left_misses == 0:
-                x_on_line = self.hough_x_at_y(self.left_smooth, self.H - 1)
-                if x_on_line is not None:
-                    target_x = int(round(x_on_line)) + self.single_line_wall_offset
-                    self.target_x = max(0, min(self.W - 1, target_x))
-                    self.target_visible = True
-                    return
-
-            if self.right_smooth is not None and self.right_misses == 0:
-                x_on_line = self.hough_x_at_y(self.right_smooth, self.H - 1)
-                if x_on_line is not None:
-                    target_x = int(round(x_on_line)) - self.single_line_wall_offset
-                    self.target_x = max(0, min(self.W - 1, target_x))
-                    self.target_visible = True
-                    return
-
-        # --------------------------------------------------------------
-        # Case 3 — Single real side line, no front wall.
-        # Use theta alignment to orient robot parallel to corridor before
-        # going straight. Prevents driving into the side wall blind.
-        # TUNING: corridor_left/right_theta, alignment_threshold_deg,
-        #         alignment_gain_px_per_rad (all constructor parameters)
-        # --------------------------------------------------------------
-        if self.left_smooth is not None and self.left_misses == 0:
-            theta_error = self.wrap_angle_diff(
-                self.left_smooth[1] - self.corridor_left_theta
-            )
-            if abs(theta_error) < self.alignment_threshold_rad:
-                # Aligned — go straight
-                self.target_x = int(self.W / 2)
-            else:
-                # Positive error (line too horizontal) → robot rotated right → steer left
-                target_x = int(round(
-                    self.W / 2 - self.alignment_gain_px_per_rad * theta_error
-                ))
-                self.target_x = max(0, min(self.W - 1, target_x))
-            self.target_visible = True
-            return
-
-        if self.right_smooth is not None and self.right_misses == 0:
-            theta_error = self.wrap_angle_diff(
-                self.right_smooth[1] - self.corridor_right_theta
-            )
-            if abs(theta_error) < self.alignment_threshold_rad:
-                self.target_x = int(self.W / 2)
-            else:
-                # Positive error → steer right
-                target_x = int(round(
-                    self.W / 2 + self.alignment_gain_px_per_rad * theta_error
-                ))
-                self.target_x = max(0, min(self.W - 1, target_x))
-            self.target_visible = True
-            return
-
-        # --------------------------------------------------------------
-        # Case 4 — Front wall only.
-        # Use tilt angle to stay centred.
-        # TUNING: gain_px_per_deg below.
-        # --------------------------------------------------------------
-        if front_visible:
+        if self.horizontal_smooth is not None and self.horizontal_misses == 0:
             rho, theta = self.horizontal_smooth
             deg = math.degrees(theta)
+
             angle_error_deg = deg - 90.0
-            gain_px_per_deg = 4.0  # TUNING
+            gain_px_per_deg = 4.0
 
             target_x = int(round((self.W / 2) + gain_px_per_deg * angle_error_deg))
-            self.target_x = max(0, min(self.W - 1, target_x))
+            target_x = max(0, min(self.W - 1, target_x))
+
+            self.target_x = target_x
             self.target_visible = True
             return
 
         # --------------------------------------------------------------
-        # Case 5 — No info at all → go straight.
+        # Last fallback: no info → go straight
         # --------------------------------------------------------------
         return
 
@@ -566,16 +466,6 @@ class CorridorNavigator:
         candidate_text = f"CANDIDATE: {self.turn_candidate if self.turn_candidate is not None else 'NONE'}"
         cv2.putText(image, candidate_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
 
-        # Live theta readout — use these values to calibrate corridor_left/right_theta
-        if self.left_smooth is not None:
-            left_deg = math.degrees(self.left_smooth[1])
-            cv2.putText(image, f"L theta: {left_deg:.1f}deg", (20, 120),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
-        if self.right_smooth is not None:
-            right_deg = math.degrees(self.right_smooth[1])
-            cv2.putText(image, f"R theta: {right_deg:.1f}deg", (20, 150),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-
         return image
 
     # ------------------------------------------------------------------
@@ -595,9 +485,9 @@ class CorridorNavigator:
         self.H, self.W, _ = self.original.shape
 
         self.mask = self.create_mask(self.original)
-
+        
         cv2.imshow("MASK", self.mask)
-
+        
         self.edges = self.detect_edges(self.mask)
         lines = self.detect_hough_lines(self.edges)
 
@@ -616,11 +506,6 @@ class CorridorNavigator:
         output = self.original.copy()
         if draw:
             output = self.draw_overlay(output)
-
-        if self.left_smooth is not None:
-            print(f"Left theta:  {self.left_smooth[1]:.4f} rad")
-        if self.right_smooth is not None:
-            print(f"Right theta: {self.right_smooth[1]:.4f} rad")
 
         return output
 
