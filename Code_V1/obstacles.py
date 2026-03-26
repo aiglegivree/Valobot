@@ -22,8 +22,8 @@ class CorridorNavigator:
         # these accordingly. Units are RADIANS.
         # Left wall is typically 0.5–1.0 rad, right wall 2.1–2.6 rad.
         # ----------------------------------------------------------------
-        corridor_left_theta=0.8,
-        corridor_right_theta=2.3,
+        corridor_left_theta=1.1,
+        corridor_right_theta=2.,
         # TUNING — dead zone around reference angle before we consider
         # the robot aligned. Raise if it oscillates, lower if too loose.
         alignment_threshold_deg=8.0,
