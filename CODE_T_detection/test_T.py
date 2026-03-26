@@ -140,8 +140,8 @@ def main():
             length_right = np.linalg.norm(end2 - mean)
             
             # Déterminer quelle composante est la plus parallèle à la verticale (axe y)
-            vert_parallel_pc1 = abs(pc1[1])
-            vert_parallel_pc2 = abs(pc2[1])
+            vert_parallel_pc1 = abs(pc1[0])  # composante y
+            vert_parallel_pc2 = abs(pc2[0])
             if vert_parallel_pc1 > vert_parallel_pc2:
                 most_vertical = "principale"
                 color_vert = (0, 0, 255)  # rouge
