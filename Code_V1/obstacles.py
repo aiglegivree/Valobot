@@ -442,7 +442,7 @@ class CorridorNavigator:
             # You may flip the sign below if steering comes out reversed on your robot.
             gain_px_per_deg = 4.0
 
-            target_x = int(round((self.W / 2) - gain_px_per_deg * angle_error_deg))
+            target_x = int(round((self.W / 2) + gain_px_per_deg * angle_error_deg))
             target_x = max(0, min(self.W - 1, target_x))
 
             self.target_x = target_x
