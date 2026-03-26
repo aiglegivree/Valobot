@@ -13,8 +13,8 @@ class CorridorNavigator:
         stop_y_threshold=300,
         start_y_threshold=150,
         candidate_miss_threshold=5,
-        hsv_lower=(41, 92, 0),
-        hsv_upper=(74, 255, 255),
+        lab_lower=(41, 0, 0),
+        lab_upper=(74, 255, 255),
     ):
         # --- Input source configuration ---
         self.proto = proto
@@ -33,8 +33,8 @@ class CorridorNavigator:
         self.start_y_threshold = start_y_threshold
         self.candidate_miss_threshold = candidate_miss_threshold
 
-        self.hsv_lower = np.array(hsv_lower, dtype=np.uint8)
-        self.hsv_upper = np.array(hsv_upper, dtype=np.uint8)
+        self.lab_lower = np.array(lab_lower, dtype=np.uint8)
+        self.lab_upper = np.array(lab_upper, dtype=np.uint8)
 
         # --- Temporal smoothing state ---
         self.horizontal_smooth = None
@@ -51,6 +51,11 @@ class CorridorNavigator:
         # --- Previous measured representatives (for ghost-angle updates) ---
         self.prev_left_rep = None
         self.prev_right_rep = None
+
+        # --- Ghost TTL: how many frames a ghost line is kept alive ---
+        self.ghost_max_frames = 5  # tune this
+        self.left_ghost_frames = 0
+        self.right_ghost_frames = 0
 
         # --- Turn-candidate memory ---
         # Candidate must be lost first AND never reappear before TURN.
@@ -204,9 +209,9 @@ class CorridorNavigator:
 
     def create_mask(self, frame):
         blur = cv2.GaussianBlur(frame, (3, 3), 1)
-        hsv = cv2.cvtColor(blur, cv2.COLOR_RGB2HSV)
+        lab = cv2.cvtColor(blur, cv2.COLOR_RGB2LAB)
 
-        mask = cv2.inRange(hsv, self.hsv_lower, self.hsv_upper)
+        mask = cv2.inRange(lab, self.lab_lower, self.lab_upper)
         mask = self.fill_holes(mask)
 
         kernel = np.ones((5, 5), np.uint8)
@@ -285,39 +290,47 @@ class CorridorNavigator:
             self.right_stable_frames = 0
 
     def update_ghost_lines(self, left_rep, right_rep):
-        """
-        Minimal angle-only ghost update:
-        - if left is missing, advance left_smooth.theta by the change seen on right
-        - if right is missing, advance right_smooth.theta by the change seen on left
-
-        rho is kept unchanged for now.
-        """
-        # Left missing, right visible
+    # Left missing, right visible → ghost-update left angle
         if (
             left_rep is None
             and self.left_smooth is not None
             and right_rep is not None
             and self.prev_right_rep is not None
         ):
-            delta_theta = self.wrap_angle_diff(right_rep[1] - self.prev_right_rep[1])
-            ghost_rho, ghost_theta = self.left_smooth
-            self.left_smooth = (ghost_rho, ghost_theta + delta_theta)
+            if self.left_ghost_frames < self.ghost_max_frames:
+                delta_theta = self.wrap_angle_diff(right_rep[1] - self.prev_right_rep[1])
+                ghost_rho, ghost_theta = self.left_smooth
+                self.left_smooth = (ghost_rho, ghost_theta + delta_theta)
+                self.left_ghost_frames += 1
+            else:
+                # Ghost expired → drop it so single-line / front-wall fallback takes over
+                self.left_smooth = None
 
-        # Right missing, left visible
-        elif (
+        elif left_rep is not None:
+            self.left_ghost_frames = 0  # reset whenever line is actually seen
+
+        # Right missing, left visible → ghost-update right angle
+        if (
             right_rep is None
             and self.right_smooth is not None
             and left_rep is not None
             and self.prev_left_rep is not None
         ):
-            delta_theta = self.wrap_angle_diff(left_rep[1] - self.prev_left_rep[1])
-            ghost_rho, ghost_theta = self.right_smooth
-            self.right_smooth = (ghost_rho, ghost_theta + delta_theta)
+            if self.right_ghost_frames < self.ghost_max_frames:
+                delta_theta = self.wrap_angle_diff(left_rep[1] - self.prev_left_rep[1])
+                ghost_rho, ghost_theta = self.right_smooth
+                self.right_smooth = (ghost_rho, ghost_theta + delta_theta)
+                self.right_ghost_frames += 1
+            else:
+                # Ghost expired → drop it
+                self.right_smooth = None
+
+        elif right_rep is not None:
+            self.right_ghost_frames = 0  # reset whenever line is actually seen
 
         # Save current measurements for next frame's delta computation
         if left_rep is not None:
             self.prev_left_rep = left_rep
-
         if right_rep is not None:
             self.prev_right_rep = right_rep
 
