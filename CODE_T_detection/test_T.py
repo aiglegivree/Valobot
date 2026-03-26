@@ -133,6 +133,11 @@ def main():
             # Line endpoints for PC2
             start2 = mean - scale2 * pc2
             end2 = mean + scale2 * pc2
+            
+            # Calcul des longueurs de la ligne secondaire à gauche et droite de la principale
+            # La ligne secondaire passe par mean, donc gauche: start2 à mean, droite: mean à end2
+            length_left = np.linalg.norm(mean - start2)
+            length_right = np.linalg.norm(end2 - mean)
 
         # display
         frame_disp = frame.copy()
@@ -143,6 +148,10 @@ def main():
         if len(points) > 0:
             cv2.line(roi_disp, (int(start1[1]), int(start1[0])), (int(end1[1]), int(end1[0])), (0, 255, 0), 2)
             cv2.line(roi_disp, (int(start2[1]), int(start2[0])), (int(end2[1]), int(end2[0])), (255, 0, 0), 2)
+            
+            # Afficher les longueurs
+            cv2.putText(frame_disp, f"Longueur gauche: {length_left:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"Longueur droite: {length_right:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
         
 
         cv2.imshow("frame", frame)
