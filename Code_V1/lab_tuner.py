@@ -1,6 +1,3 @@
-Lab tuner · PY
-Copier
-
 #!/usr/bin/env python3
 """
 Live LAB tuner for Raspberry Pi camera feed using Picamera2 + OpenCV.
