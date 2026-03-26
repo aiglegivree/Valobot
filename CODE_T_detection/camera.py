@@ -1,10 +1,6 @@
 from __future__ import annotations
 import cv2
 
-# ============================================================
-# CONFIG CAMERA
-# ============================================================
-
 W = 640
 H = 480
 CAM_ID = 0
@@ -24,7 +20,6 @@ class Camera:
             )
             self.cam.start()
             self.type = "picamera2"
-
         else:
             cap = cv2.VideoCapture(CAM_ID)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
