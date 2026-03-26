@@ -599,6 +599,7 @@ class CorridorNavigator:
         self.mask = self.create_mask(self.original)
         
         cv2.imshow("MASK", self.mask)
+        
         self.edges = self.detect_edges(self.mask)
         lines = self.detect_hough_lines(self.edges)
 
