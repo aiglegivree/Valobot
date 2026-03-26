@@ -142,18 +142,22 @@ def main():
             # Déterminer quelle composante est la plus parallèle à la verticale (axe y)
             vert_parallel_pc1 = abs(pc1[0])  # composante y
             vert_parallel_pc2 = abs(pc2[0])
+            vertical_color = (0, 0, 255)  # rouge
+            other_color = (255, 0, 0)  # bleu
+            vertical_thickness = 3
+            other_thickness = 1
             if vert_parallel_pc1 > vert_parallel_pc2:
                 most_vertical = "principale"
-                color_vert = (0, 0, 255)  # rouge
-                thickness_vert = 3
-                color_other = (255, 0, 0)  # bleu
-                thickness_other = 1
+                color1 = vertical_color
+                thickness1 = vertical_thickness
+                color2 = other_color
+                thickness2 = other_thickness
             else:
                 most_vertical = "secondaire"
-                color_other = (0, 0, 255)  # rouge
-                thickness_other = 3
-                color_vert = (255, 0, 0)  # bleu
-                thickness_vert = 1
+                color1 = other_color
+                thickness1 = other_thickness
+                color2 = vertical_color
+                thickness2 = vertical_thickness
 
         # display
         frame_disp = frame.copy()
@@ -162,12 +166,8 @@ def main():
         # Dessiner les lignes PCA sur l'overlay
         roi_disp = frame_disp[roi_start:]
         if len(points) > 0:
-            if most_vertical == "principale":
-                cv2.line(roi_disp, (int(start1[1]), int(start1[0])), (int(end1[1]), int(end1[0])), color_vert, thickness_vert)
-                cv2.line(roi_disp, (int(start2[1]), int(start2[0])), (int(end2[1]), int(end2[0])), color_other, thickness_other)
-            else:
-                cv2.line(roi_disp, (int(start1[1]), int(start1[0])), (int(end1[1]), int(end1[0])), color_other, thickness_other)
-                cv2.line(roi_disp, (int(start2[1]), int(start2[0])), (int(end2[1]), int(end2[0])), color_vert, thickness_vert)
+            cv2.line(roi_disp, (int(start1[1]), int(start1[0])), (int(end1[1]), int(end1[0])), color1, thickness1)
+            cv2.line(roi_disp, (int(start2[1]), int(start2[0])), (int(end2[1]), int(end2[0])), color2, thickness2)
             
             # Afficher les longueurs et la composante verticale
             cv2.putText(frame_disp, f"Longueur gauche: {length_left:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
