@@ -314,21 +314,24 @@ class CorridorNavigator:
                         self.prev_right_rep = None
 
             if self.state == "TURN":
-                N = 1
-                at_least_one_side = (
+                N = 2  # raise this too while you're at it
+
+                one_side_stable = (
                     (self.left_misses == 0 and self.left_stable_frames >= N)
                     or (self.right_misses == 0 and self.right_stable_frames >= N)
                 )
-
-                front_gone = self.horizontal_misses >= 3
-
-                front_far_enough = (
+                two_sides_stable = (
+                    self.left_misses == 0 and self.left_stable_frames >= N
+                    and self.right_misses == 0 and self.right_stable_frames >= N
+                )
+                front_visible = (
                     self.horizontal_smooth is not None
-                    and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) is not None
-                    and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) <= self.start_y_threshold
+                    and self.horizontal_misses == 0
                 )
 
-                if at_least_one_side and (front_gone or front_far_enough):
+                # Exit only if we have a coherent corridor view:
+                # either both sides, or one side confirmed by a front wall
+                if two_sides_stable or (one_side_stable and front_visible):
                     self.state = "FORWARD"
                     self.candidate_locked = False
                     self.turn_candidate = None
