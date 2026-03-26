@@ -2,15 +2,50 @@ import cv2
 import numpy as np
 from leds import LED
 
-leds = LED()
-leds.turn_on_all()
-# ==============================
-# CAMERA
-# ==============================
+# Configuration caméra
 W = 640
 H = 480
 CAM_ID = 0
+USE_PICAMERA2 = True
 
+class Camera:
+    def __init__(self):
+        if USE_PICAMERA2:
+            from picamera2 import Picamera2
+            self.cam = Picamera2()
+            self.cam.configure(
+                self.cam.create_preview_configuration(
+                    main={"size": (W, H), "format": "RGB888"}
+                )
+            )
+            self.cam.start()
+            self.type = "picamera2"
+        else:
+            cap = cv2.VideoCapture(CAM_ID)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+            if not cap.isOpened():
+                raise RuntimeError("Camera not found")
+            self.cam = cap
+            self.type = "opencv"
+
+    def read(self):
+        if self.type == "picamera2":
+            frame = self.cam.capture_array()
+            frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+            return True, frame
+        else:
+            ret, frame = self.cam.read()
+            return ret, frame
+
+    def release(self):
+        if self.type == "picamera2":
+            self.cam.stop()
+        else:
+            self.cam.release()
+
+leds = LED()
+leds.turn_on_all()
 # ==============================
 # BLACK HSV THRESHOLD (comme demandé)
 # ==============================
@@ -56,12 +91,10 @@ def compute_mask(frame):
 
 
 def main():
-    cap = cv2.VideoCapture(CAM_ID)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+    cam = Camera()
 
     while True:
-        ret, frame = cap.read()
+        ret, frame = cam.read()
         if not ret:
             continue
 
@@ -91,6 +124,17 @@ def main():
                 mean_x = np.mean(x_indices)
                 row_means.append((int(mean_x), row))
 
+        # Fonction pour calculer la longueur d'une ligne
+        def calc_length(points):
+            if len(points) < 2:
+                return 0.0
+            total = 0.0
+            for i in range(1, len(points)):
+                dx = points[i][0] - points[i-1][0]
+                dy = points[i][1] - points[i-1][1]
+                total += np.sqrt(dx**2 + dy**2)
+            return total
+
         # Calcul de l'intersection des deux lignes
         x_int = avg_x  # valeur par défaut
         y_int = H_mask / 2
@@ -110,8 +154,6 @@ def main():
             if abs(denom) > 1e-6:
                 y_int = (a * b + b_col) / denom
                 x_int = m * y_int + b
-                # Dessiner le point d'intersection
-                cv2.circle(roi_disp, (int(x_int), int(y_int)), 5, (0, 0, 255), -1)
 
         # Séparer les points de la ligne horizontale en gauche et droite du point d'intersection
         left_points = [p for p in row_means if p[0] < x_int]
@@ -129,6 +171,10 @@ def main():
             cv2.polylines(roi_disp, [np.array(column_means, dtype=np.int32)], False, (0, 255, 0), 2)
         if row_means:
             cv2.polylines(roi_disp, [np.array(row_means, dtype=np.int32)], False, (255, 0, 0), 2)
+        
+        # Dessiner le point d'intersection si calculé
+        if len(column_means) >= 2 and len(row_means) >= 2 and 'denom' in locals() and abs(denom) > 1e-6:
+            cv2.circle(roi_disp, (int(x_int), int(y_int)), 5, (0, 0, 255), -1)
         
         # Afficher les longueurs
         cv2.putText(frame_disp, f"Longueur gauche: {length_left:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
@@ -151,7 +197,7 @@ def main():
         if cv2.waitKey(1) & 0xFF == 27:
             break
 
-    cap.release()
+    cam.release()
     cv2.destroyAllWindows()
 
 
