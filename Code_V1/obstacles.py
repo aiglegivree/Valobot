@@ -15,6 +15,10 @@ class CorridorNavigator:
         candidate_miss_threshold=5,
         lab_lower=(0, 0, 0),
         lab_upper=(255, 109, 255),
+        # New tuning for one-side + front-wall behavior
+        corner_target_offset_px=0,
+        corner_gain_px_per_px=0.6,
+        front_tilt_gain_px_per_deg=4.0,
     ):
         # --- Input source configuration ---
         self.proto = proto
@@ -35,6 +39,11 @@ class CorridorNavigator:
 
         self.lab_lower = np.array(lab_lower, dtype=np.uint8)
         self.lab_upper = np.array(lab_upper, dtype=np.uint8)
+
+        # --- New parameters for one-side + front-wall control ---
+        self.corner_target_offset_px = corner_target_offset_px
+        self.corner_gain_px_per_px = corner_gain_px_per_px
+        self.front_tilt_gain_px_per_deg = front_tilt_gain_px_per_deg
 
         # --- Temporal smoothing state ---
         self.horizontal_smooth = None
@@ -194,7 +203,7 @@ class CorridorNavigator:
             edges,
             rho=1,
             theta=np.pi / 180,
-            threshold=60  # raised from 34 to reduce spurious lines
+            threshold=60
         )
 
     @staticmethod
@@ -314,7 +323,7 @@ class CorridorNavigator:
                         self.prev_right_rep = None
 
             if self.state == "TURN":
-                N = 2  # raise this too while you're at it
+                N = 2
 
                 one_side_stable = (
                     (self.left_misses == 0 and self.left_stable_frames >= N)
@@ -362,14 +371,13 @@ class CorridorNavigator:
         self.target_visible = False
         self.intersection = None
 
-        # --------------------------------------------------------------
-        # Normal case: both side lines are available (real or ghost)
-        # Only use intersection when BOTH sides are present and at least
-        # one is currently measured (not both ghosts).
-        # --------------------------------------------------------------
         both_present = self.left_smooth is not None and self.right_smooth is not None
         at_least_one_measured = self.left_misses == 0 or self.right_misses == 0
+        front_visible = self.horizontal_smooth is not None and self.horizontal_misses == 0
 
+        # --------------------------------------------------------------
+        # Case 1 — Both side lines available
+        # --------------------------------------------------------------
         if both_present and at_least_one_measured:
             intersection = self.intersect_hough_lines(self.left_smooth, self.right_smooth)
             if intersection is not None:
@@ -382,16 +390,55 @@ class CorridorNavigator:
                 return
 
         # --------------------------------------------------------------
-        # Fallback: use front wall tilt to stay centred
+        # Case 2 — One side line + front wall
+        # Keep front wall horizontal and constrain the visible corner
+        # to remain on the correct side of image center.
         # --------------------------------------------------------------
-        if self.horizontal_smooth is not None and self.horizontal_misses == 0:
+        if front_visible:
+            rho, theta = self.horizontal_smooth
+            deg = math.degrees(theta)
+            angle_error_deg = deg - 90.0
+            tilt_correction = self.front_tilt_gain_px_per_deg * angle_error_deg
+
+            if self.left_smooth is not None and self.left_misses == 0:
+                corner = self.intersect_hough_lines(self.left_smooth, self.horizontal_smooth)
+                if corner is not None:
+                    ix, iy = corner
+                    self.intersection = (ix, iy)
+
+                    desired_corner_x = (self.W / 2) - self.corner_target_offset_px
+                    corner_error = ix - desired_corner_x
+                    corner_correction = -self.corner_gain_px_per_px * corner_error
+
+                    target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
+                    self.target_x = max(0, min(self.W - 1, target_x))
+                    self.target_visible = True
+                    return
+
+            if self.right_smooth is not None and self.right_misses == 0:
+                corner = self.intersect_hough_lines(self.right_smooth, self.horizontal_smooth)
+                if corner is not None:
+                    ix, iy = corner
+                    self.intersection = (ix, iy)
+
+                    desired_corner_x = (self.W / 2) + self.corner_target_offset_px
+                    corner_error = ix - desired_corner_x
+                    corner_correction = -self.corner_gain_px_per_px * corner_error
+
+                    target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
+                    self.target_x = max(0, min(self.W - 1, target_x))
+                    self.target_visible = True
+                    return
+
+        # --------------------------------------------------------------
+        # Case 3 — Front wall only
+        # --------------------------------------------------------------
+        if front_visible:
             rho, theta = self.horizontal_smooth
             deg = math.degrees(theta)
 
             angle_error_deg = deg - 90.0
-            gain_px_per_deg = 4.0
-
-            target_x = int(round((self.W / 2) + gain_px_per_deg * angle_error_deg))
+            target_x = int(round((self.W / 2) + self.front_tilt_gain_px_per_deg * angle_error_deg))
             target_x = max(0, min(self.W - 1, target_x))
 
             self.target_x = target_x
@@ -399,7 +446,7 @@ class CorridorNavigator:
             return
 
         # --------------------------------------------------------------
-        # Last fallback: no info → go straight
+        # Case 4 — No info → go straight
         # --------------------------------------------------------------
         return
 
@@ -442,19 +489,38 @@ class CorridorNavigator:
             cv2.line(image, pt1, pt2, color, thickness)
 
     def draw_overlay(self, image):
-        cv2.line(image, (0, self.stop_y_threshold), (self.W - 1, self.stop_y_threshold), (0, 0, 0), 2)
+        cv2.line(
+            image,
+            (0, self.stop_y_threshold),
+            (self.W - 1, self.stop_y_threshold),
+            (0, 0, 0),
+            2
+        )
 
         if self.horizontal_smooth is not None:
-            self.draw_hough_line(image, *self.horizontal_smooth, (0, 255, 255), 3,
-                                 dashed=(self.horizontal_misses > 0))
+            self.draw_hough_line(
+                image, *self.horizontal_smooth, (0, 255, 255), 3,
+                dashed=(self.horizontal_misses > 0)
+            )
 
         if self.left_smooth is not None:
-            self.draw_hough_line(image, *self.left_smooth, (0, 0, 255), 3,
-                                 dashed=(self.left_misses > 0))
+            self.draw_hough_line(
+                image, *self.left_smooth, (0, 0, 255), 3,
+                dashed=(self.left_misses > 0)
+            )
 
         if self.right_smooth is not None:
-            self.draw_hough_line(image, *self.right_smooth, (0, 255, 0), 3,
-                                 dashed=(self.right_misses > 0))
+            self.draw_hough_line(
+                image, *self.right_smooth, (0, 255, 0), 3,
+                dashed=(self.right_misses > 0)
+            )
+
+        # Optional center guideline for debugging
+        cv2.line(image, (self.W // 2, 0), (self.W // 2, self.H - 1), (180, 180, 180), 1)
+
+        if self.intersection is not None:
+            ix, iy = self.intersection
+            cv2.circle(image, (int(round(ix)), int(round(iy))), 6, (255, 255, 0), -1)
 
         if self.target_visible:
             target_color = (255, 0, 255) if (self.left_misses == 0 and self.right_misses == 0) else (0, 165, 255)
@@ -485,9 +551,9 @@ class CorridorNavigator:
         self.H, self.W, _ = self.original.shape
 
         self.mask = self.create_mask(self.original)
-        
+
         cv2.imshow("MASK", self.mask)
-        
+
         self.edges = self.detect_edges(self.mask)
         lines = self.detect_hough_lines(self.edges)
 
