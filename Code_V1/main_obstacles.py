@@ -55,8 +55,8 @@ def main():
     # ------------------------------------------------------------
     # Turn tuning
     # ------------------------------------------------------------
-    turn_speed = 0.25
-    dead_zone_seconds = 0.7   # suppress state updates for first 1s of turn
+    turn_speed = 0.2
+    dead_zone_seconds = 2.   # suppress state updates for first 1s of turn
     max_seconds_90 = 3.0      # budget for ~90° turn
     max_seconds_180 = 6.0     # budget for ~180° fallback turn
 
@@ -90,20 +90,25 @@ def main():
                 if not success:
                     print("90° turn failed, attempting 180° in opposite direction.")
                     motors.stop()
+                    # Force state back to TURN and lock the opposite direction
+                    # so the outer loop can't interfere
                     success = execute_turn(
                         navigator, motors,
                         direction=-direction,
-                        dead_zone_seconds=0.0,
+                        dead_zone_seconds=1.5,  # must clear origin corridor
                         max_seconds=max_seconds_180,
                         turn_speed=turn_speed
                     )
 
                 if not success:
-                    print("ERROR: could not find corridor after full rotation. Stopping.")
+                    print("ERROR: could not find corridor. Stopping.")
                     motors.stop()
                     break
 
+                # Explicitly reset navigator state to FORWARD after a successful turn
+                # so the outer loop doesn't re-enter the TURN branch immediately
                 print("Turn complete, resuming FORWARD.")
+                continue  # skip the imshow at the bottom, go straight to next iteration
 
             # ----------------------------------------------------
             # FORWARD mode
