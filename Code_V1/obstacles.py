@@ -13,8 +13,8 @@ class CorridorNavigator:
         stop_y_threshold=300,
         start_y_threshold=150,
         candidate_miss_threshold=5,
-        lab_lower=(41, 0, 0),
-        lab_upper=(74, 255, 255),
+        lab_lower=(0, 0, 0),
+        lab_upper=(255, 109, 255),
     ):
         # --- Input source configuration ---
         self.proto = proto
