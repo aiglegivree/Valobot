@@ -53,12 +53,11 @@ class CorridorNavigator:
         self.prev_right_rep = None
 
         # --- Ghost TTL: how many frames a ghost line is kept alive ---
-        self.ghost_max_frames = 5  # tune this
+        self.ghost_max_frames = 5
         self.left_ghost_frames = 0
         self.right_ghost_frames = 0
 
         # --- Turn-candidate memory ---
-        # Candidate must be lost first AND never reappear before TURN.
         self.turn_candidate = None   # "LEFT", "RIGHT", or None
         self.candidate_locked = False
         self.last_turn_candidate = "RIGHT"
@@ -84,10 +83,6 @@ class CorridorNavigator:
 
     @staticmethod
     def intersect_hough_lines(line1, line2):
-        """
-        line1, line2: (rho, theta)
-        returns: (x, y) intersection point or None if lines are parallel
-        """
         rho1, theta1 = line1
         rho2, theta2 = line2
 
@@ -96,11 +91,7 @@ class CorridorNavigator:
         a2 = np.cos(theta2)
         b2 = np.sin(theta2)
 
-        A = np.array([
-            [a1, b1],
-            [a2, b2]
-        ], dtype=np.float32)
-
+        A = np.array([[a1, b1], [a2, b2]], dtype=np.float32)
         B = np.array([rho1, rho2], dtype=np.float32)
 
         det = np.linalg.det(A)
@@ -112,11 +103,6 @@ class CorridorNavigator:
 
     @staticmethod
     def hough_y_at_x(line, x):
-        """
-        line: (rho, theta)
-        x: x coordinate where we want the corresponding y
-        returns: y or None if line is too vertical
-        """
         rho, theta = line
         a = np.cos(theta)
         b = np.sin(theta)
@@ -144,33 +130,18 @@ class CorridorNavigator:
 
     @staticmethod
     def median_line(lines):
-        """
-        lines: list of (rho, theta)
-        returns: (median_rho, median_theta) or None
-        """
         if not lines:
             return None
 
         rhos = np.array([line[0] for line in lines], dtype=np.float32)
         thetas = np.array([line[1] for line in lines], dtype=np.float32)
 
-        median_rho = float(np.median(rhos))
-        median_theta = float(np.median(thetas))
-
-        return median_rho, median_theta
+        return float(np.median(rhos)), float(np.median(thetas))
 
     @staticmethod
     def smooth_line(previous, current, alpha=0.25):
-        """
-        Exponential smoothing for a line represented as (rho, theta).
-        previous: previous smoothed line or None
-        current: current measured line or None
-        alpha: weight for current measurement
-        returns: updated smoothed line or None
-        """
         if current is None:
             return previous
-
         if previous is None:
             return current
 
@@ -184,10 +155,6 @@ class CorridorNavigator:
 
     @staticmethod
     def wrap_angle_diff(delta):
-        """
-        Wrap angle difference to [-pi, pi].
-        Useful to avoid rare discontinuities when differencing angles.
-        """
         return (delta + np.pi) % (2 * np.pi) - np.pi
 
     # ------------------------------------------------------------------
@@ -197,15 +164,11 @@ class CorridorNavigator:
     @staticmethod
     def fill_holes(mask):
         h, w = mask.shape
-
         flood = mask.copy()
         flood_mask = np.zeros((h + 2, w + 2), np.uint8)
-
         cv2.floodFill(flood, flood_mask, (0, 0), 255)
         flood_inv = cv2.bitwise_not(flood)
-        filled = cv2.bitwise_or(mask, flood_inv)
-
-        return filled
+        return cv2.bitwise_or(mask, flood_inv)
 
     def create_mask(self, frame):
         blur = cv2.GaussianBlur(frame, (3, 3), 1)
@@ -223,9 +186,7 @@ class CorridorNavigator:
 
     @staticmethod
     def detect_edges(mask):
-        canny = cv2.Canny(mask, 50, 150)
-        
-        return canny
+        return cv2.Canny(mask, 50, 150)
 
     @staticmethod
     def detect_hough_lines(edges):
@@ -233,7 +194,7 @@ class CorridorNavigator:
             edges,
             rho=1,
             theta=np.pi / 180,
-            threshold=34
+            threshold=60  # raised from 34 to reduce spurious lines
         )
 
     @staticmethod
@@ -290,7 +251,7 @@ class CorridorNavigator:
             self.right_stable_frames = 0
 
     def update_ghost_lines(self, left_rep, right_rep):
-    # Left missing, right visible → ghost-update left angle
+        # Left missing, right visible → ghost-update left angle
         if (
             left_rep is None
             and self.left_smooth is not None
@@ -303,11 +264,10 @@ class CorridorNavigator:
                 self.left_smooth = (ghost_rho, ghost_theta + delta_theta)
                 self.left_ghost_frames += 1
             else:
-                # Ghost expired → drop it so single-line / front-wall fallback takes over
                 self.left_smooth = None
 
         elif left_rep is not None:
-            self.left_ghost_frames = 0  # reset whenever line is actually seen
+            self.left_ghost_frames = 0
 
         # Right missing, left visible → ghost-update right angle
         if (
@@ -322,20 +282,15 @@ class CorridorNavigator:
                 self.right_smooth = (ghost_rho, ghost_theta + delta_theta)
                 self.right_ghost_frames += 1
             else:
-                # Ghost expired → drop it
                 self.right_smooth = None
 
         elif right_rep is not None:
-            self.right_ghost_frames = 0  # reset whenever line is actually seen
+            self.right_ghost_frames = 0
 
-        # Save current measurements for next frame's delta computation
         if left_rep is not None:
             self.prev_left_rep = left_rep
         if right_rep is not None:
             self.prev_right_rep = right_rep
-
-
-
 
     def update_state(self, update=True):
         if update:
@@ -349,7 +304,6 @@ class CorridorNavigator:
                         self.candidate_locked = True
                         self.last_turn_candidate = self.turn_candidate
 
-                        # Reset side lines so stale ghosts don't bleed into next corridor
                         self.left_smooth = None
                         self.right_smooth = None
                         self.left_misses = 0
@@ -361,43 +315,39 @@ class CorridorNavigator:
 
             if self.state == "TURN":
                 N = 1
-                at_least_one_side = (self.left_misses == 0 and self.left_stable_frames >= N) or \
-                    (self.right_misses == 0 and self.right_stable_frames >= N)
+                at_least_one_side = (
+                    (self.left_misses == 0 and self.left_stable_frames >= N)
+                    or (self.right_misses == 0 and self.right_stable_frames >= N)
+                )
 
                 front_gone = self.horizontal_misses >= 3
 
                 front_far_enough = (
                     self.horizontal_smooth is not None
                     and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) is not None
-                    and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) <= self.start_y_threshold  # << new, lower threshold
+                    and self.hough_y_at_x(self.horizontal_smooth, self.W / 2) <= self.start_y_threshold
                 )
 
                 if at_least_one_side and (front_gone or front_far_enough):
                     self.state = "FORWARD"
                     self.candidate_locked = False
                     self.turn_candidate = None
-            
 
     def update_turn_candidate(self, left_rep, right_rep):
         if self.state != "FORWARD" or self.candidate_locked:
             return
 
-        # If current candidate reappears, drop it immediately
         if self.turn_candidate == "LEFT" and left_rep is not None:
             self.turn_candidate = None
-
         elif self.turn_candidate == "RIGHT" and right_rep is not None:
             self.turn_candidate = None
 
-        # If no candidate currently active, assign the first side
-        # that has become persistently missing
         if self.turn_candidate is None:
             if (
                 self.left_misses >= self.candidate_miss_threshold
                 and self.right_misses < self.candidate_miss_threshold
             ):
                 self.turn_candidate = "LEFT"
-
             elif (
                 self.right_misses >= self.candidate_miss_threshold
                 and self.left_misses < self.candidate_miss_threshold
@@ -410,36 +360,32 @@ class CorridorNavigator:
         self.intersection = None
 
         # --------------------------------------------------------------
-        # Normal case: at least one side line is currently detected
+        # Normal case: both side lines are available (real or ghost)
+        # Only use intersection when BOTH sides are present and at least
+        # one is currently measured (not both ghosts).
         # --------------------------------------------------------------
-        if not (self.left_misses > 0 and self.right_misses > 0):
-            if self.left_smooth is not None and self.right_smooth is not None:
-                intersection = self.intersect_hough_lines(
-                    self.left_smooth, self.right_smooth
-                )
-                if intersection is not None:
-                    ix, iy = intersection
-                    ix_clamped = int(round(ix))
-                    ix_clamped = max(0, min(self.W - 1, ix_clamped))
-                    self.intersection = (ix, iy)
-                    self.target_x = ix_clamped
-                    self.target_visible = True
-                    return
+        both_present = self.left_smooth is not None and self.right_smooth is not None
+        at_least_one_measured = self.left_misses == 0 or self.right_misses == 0
+
+        if both_present and at_least_one_measured:
+            intersection = self.intersect_hough_lines(self.left_smooth, self.right_smooth)
+            if intersection is not None:
+                ix, iy = intersection
+                ix_clamped = int(round(ix))
+                ix_clamped = max(0, min(self.W - 1, ix_clamped))
+                self.intersection = (ix, iy)
+                self.target_x = ix_clamped
+                self.target_visible = True
+                return
 
         # --------------------------------------------------------------
-        # Fallback case: both side lines are currently missing
-        # Use front wall line to keep it horizontal if available.
+        # Fallback: use front wall tilt to stay centred
         # --------------------------------------------------------------
         if self.horizontal_smooth is not None and self.horizontal_misses == 0:
             rho, theta = self.horizontal_smooth
             deg = math.degrees(theta)
 
-            # For a horizontal line in your Hough convention, theta should be near 90 deg.
             angle_error_deg = deg - 90.0
-
-            # Convert front-line tilt into a synthetic x target shift.
-            # Positive error -> push target to one side, negative to the other.
-            # You may flip the sign below if steering comes out reversed on your robot.
             gain_px_per_deg = 4.0
 
             target_x = int(round((self.W / 2) + gain_px_per_deg * angle_error_deg))
@@ -450,7 +396,7 @@ class CorridorNavigator:
             return
 
         # --------------------------------------------------------------
-        # Last fallback: no side lines, no front line -> go straight
+        # Last fallback: no info → go straight
         # --------------------------------------------------------------
         return
 
@@ -487,88 +433,35 @@ class CorridorNavigator:
 
     def draw_hough_line(self, image, rho, theta, color, thickness=2, dashed=False):
         pt1, pt2 = self.hough_line_endpoints(rho, theta)
-
         if dashed:
             self.draw_dashed_line(image, pt1, pt2, color, thickness)
         else:
             cv2.line(image, pt1, pt2, color, thickness)
 
     def draw_overlay(self, image):
-        # Stop threshold line
-        cv2.line(
-            image,
-            (0, self.stop_y_threshold),
-            (self.W - 1, self.stop_y_threshold),
-            (0, 0, 0),
-            2
-        )
+        cv2.line(image, (0, self.stop_y_threshold), (self.W - 1, self.stop_y_threshold), (0, 0, 0), 2)
 
-        # Horizontal line
         if self.horizontal_smooth is not None:
-            self.draw_hough_line(
-                image,
-                self.horizontal_smooth[0],
-                self.horizontal_smooth[1],
-                (0, 255, 255),
-                3,
-                dashed=(self.horizontal_misses > 0)
-            )
+            self.draw_hough_line(image, *self.horizontal_smooth, (0, 255, 255), 3,
+                                 dashed=(self.horizontal_misses > 0))
 
-        # Left line
         if self.left_smooth is not None:
-            self.draw_hough_line(
-                image,
-                self.left_smooth[0],
-                self.left_smooth[1],
-                (0, 0, 255),
-                3,
-                dashed=(self.left_misses > 0)
-            )
+            self.draw_hough_line(image, *self.left_smooth, (0, 0, 255), 3,
+                                 dashed=(self.left_misses > 0))
 
-        # Right line
         if self.right_smooth is not None:
-            self.draw_hough_line(
-                image,
-                self.right_smooth[0],
-                self.right_smooth[1],
-                (0, 255, 0),
-                3,
-                dashed=(self.right_misses > 0)
-            )
+            self.draw_hough_line(image, *self.right_smooth, (0, 255, 0), 3,
+                                 dashed=(self.right_misses > 0))
 
-        # Target
         if self.target_visible:
-            target_color = (
-                (255, 0, 255)
-                if (self.left_misses == 0 and self.right_misses == 0)
-                else (0, 165, 255)
-            )
-
+            target_color = (255, 0, 255) if (self.left_misses == 0 and self.right_misses == 0) else (0, 165, 255)
             cv2.circle(image, (self.target_x, self.H - 1), 8, target_color, -1)
             cv2.line(image, (self.W // 2, self.H - 1), (self.target_x, self.H - 1), target_color, 2)
 
-        # State text
-        cv2.putText(
-            image,
-            self.state,
-            (20, 40),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            1.0,
-            (0, 0, 0),
-            3
-        )
+        cv2.putText(image, self.state, (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 3)
 
-        # Candidate text
         candidate_text = f"CANDIDATE: {self.turn_candidate if self.turn_candidate is not None else 'NONE'}"
-        cv2.putText(
-            image,
-            candidate_text,
-            (20, 80),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 0, 0),
-            2
-        )
+        cv2.putText(image, candidate_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
 
         return image
 
@@ -578,20 +471,12 @@ class CorridorNavigator:
 
     def read_frame(self):
         ret, frame = self.cap.read()
-
         if self.proto and not ret:
             self.cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
             ret, frame = self.cap.read()
-
         return ret, frame
 
-    def process_frame(self, frame, update = True, draw=True):
-        """
-        Processes one frame and updates all public attributes.
-
-        Returns:
-            output_frame: annotated frame if draw=True, otherwise original copy
-        """
+    def process_frame(self, frame, update=True, draw=True):
         self.frame = frame
         self.original = frame.copy()
         self.H, self.W, _ = self.original.shape
@@ -611,7 +496,7 @@ class CorridorNavigator:
 
         self.update_smoothed_lines(horizontal_rep, left_rep, right_rep)
         self.update_ghost_lines(left_rep, right_rep)
-        self.update_state(update = update)
+        self.update_state(update=update)
         self.update_turn_candidate(left_rep, right_rep)
         self.update_target()
 
@@ -622,24 +507,13 @@ class CorridorNavigator:
         return output
 
     def step(self, draw=True, update=True):
-        """
-        Reads and processes one frame from the configured source.
-
-        Returns:
-            ret, output_frame
-        """
         ret, frame = self.read_frame()
         if not ret or frame is None:
             return False, None
-
         output = self.process_frame(frame, draw=draw, update=update)
         return True, output
 
     def get_control_data(self):
-        """
-        Helper for the main robot code.
-        Returns a compact dictionary with the most useful outputs.
-        """
         return {
             "state": self.state,
             "turn_candidate": self.turn_candidate,
