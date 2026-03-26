@@ -1,4 +1,3 @@
-# t_detector.py
 from __future__ import annotations
 from dataclasses import dataclass
 import math
@@ -13,27 +12,25 @@ import numpy as np
 ROI_START_FRAC = 0.45
 
 GAUSS_KSIZE = 5
+KERNEL_SIZE = 3
 MORPH_CLOSE_IT = 2
 MORPH_OPEN_IT = 1
-KERNEL_SIZE = 3
-
 MIN_COMPONENT_AREA = 120
 
 BOTTOM_BAND_FRAC = 0.12
-NODE_MERGE_DIST = 10
 
-# seuils relâchés pour mise au point
-MIN_BRANCH_LEN = 10
-MIN_TRUNK_LEN_BELOW = 10
-MAX_TRUNK_ANGLE_DEG = 55
-MIN_BRANCH_ANGLE_DEG = 30
-MAX_OPPOSITION_ANGLE_DEG = 55
+TRUNK_LOOKBACK = 10
+SCAN_HALF_LEN = 120
+SCAN_STEP = 1.0
 
-MAX_NODE_HEIGHT_FRAC = 0.88
-MIN_NODE_HEIGHT_FRAC = 0.08
+MIN_SIDE_LEN = 22
+MIN_TRUNK_BELOW = 25
+SIDE_BALANCE_MIN = 0.45     # min(left,right)/max(left,right)
+T_CONFIRM_FRAMES = 2
+T_MEMORY_FRAMES = 3
 
-T_CONFIRM_FRAMES = 1
-T_MEMORY_FRAMES = 2
+CANDIDATE_START_FRAC = 0.15
+CANDIDATE_END_FRAC = 0.85
 
 
 # ============================================================
@@ -53,7 +50,7 @@ class TDetectionResult:
 
 
 # ============================================================
-# LOW LEVEL IMAGE OPS
+# IMAGE
 # ============================================================
 
 def _build_mask(frame: np.ndarray) -> tuple[np.ndarray, int]:
@@ -73,11 +70,10 @@ def _build_mask(frame: np.ndarray) -> tuple[np.ndarray, int]:
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=MORPH_OPEN_IT)
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-
     clean = np.zeros_like(mask)
+
     for i in range(1, num_labels):
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area >= MIN_COMPONENT_AREA:
+        if stats[i, cv2.CC_STAT_AREA] >= MIN_COMPONENT_AREA:
             clean[labels == i] = 255
 
     return clean, roi_start
@@ -136,7 +132,6 @@ def _find_bottom_seed(skel: np.ndarray) -> tuple[int, int] | None:
     idxs = np.where(ys == max_y)[0]
     cx = w / 2.0
     best_i = idxs[np.argmin(np.abs(xs[idxs] - cx))]
-
     return int(xs[best_i]), int(ys[best_i])
 
 
@@ -147,14 +142,11 @@ def _trace_trunk_from_bottom(skel: np.ndarray, seed: tuple[int, int]) -> list[tu
 
     for _ in range(5000):
         neigh = _neighbors8(cur[0], cur[1], skel)
-
         if prev is not None:
             neigh = [p for p in neigh if p != prev]
-
         if not neigh:
             break
 
-        # priorité à la remontée
         up = [p for p in neigh if p[1] < cur[1]]
         same = [p for p in neigh if p[1] == cur[1]]
         down = [p for p in neigh if p[1] > cur[1]]
@@ -165,9 +157,11 @@ def _trace_trunk_from_bottom(skel: np.ndarray, seed: tuple[int, int]) -> list[tu
         elif same:
             same.sort(key=lambda p: abs(p[0] - cur[0]))
             nxt = same[0]
-        else:
+        elif down:
             down.sort(key=lambda p: abs(p[0] - cur[0]))
             nxt = down[0]
+        else:
+            break
 
         if nxt in path:
             break
@@ -178,219 +172,118 @@ def _trace_trunk_from_bottom(skel: np.ndarray, seed: tuple[int, int]) -> list[tu
     return path
 
 
-def _branch_pixels(skel: np.ndarray) -> list[tuple[int, int]]:
-    ys, xs = np.where(skel > 0)
-    out = []
-    for x, y in zip(xs, ys):
-        deg = len(_neighbors8(x, y, skel))
-        if deg >= 3:
-            out.append((x, y))
-    return out
+# ============================================================
+# GEOMETRIC T TEST
+# ============================================================
 
-
-def _merge_close_points(points: list[tuple[int, int]], dist_thr: float) -> list[tuple[int, int]]:
-    groups = []
-
-    for p in points:
-        added = False
-        for g in groups:
-            gx = g["sumx"] / g["n"]
-            gy = g["sumy"] / g["n"]
-            if (p[0] - gx) ** 2 + (p[1] - gy) ** 2 <= dist_thr ** 2:
-                g["sumx"] += p[0]
-                g["sumy"] += p[1]
-                g["n"] += 1
-                added = True
-                break
-
-        if not added:
-            groups.append({"sumx": p[0], "sumy": p[1], "n": 1})
-
-    merged = []
-    for g in groups:
-        merged.append((int(round(g["sumx"] / g["n"])), int(round(g["sumy"] / g["n"]))))
-
-    return merged
-
-
-def _closest_point_on_path(path: list[tuple[int, int]], p: tuple[int, int]) -> tuple[int, float]:
-    best_i = -1
-    best_d2 = 1e18
-
-    for i, q in enumerate(path):
-        d2 = (p[0] - q[0]) ** 2 + (p[1] - q[1]) ** 2
-        if d2 < best_d2:
-            best_d2 = d2
-            best_i = i
-
-    return best_i, math.sqrt(best_d2)
-
-
-def _walk_branch(
-    skel: np.ndarray,
-    start: tuple[int, int],
-    prev: tuple[int, int],
-    max_steps: int = 300
-) -> list[tuple[int, int]]:
-    pts = [start]
-    cur = start
-    last = prev
-
-    for _ in range(max_steps):
-        neigh = _neighbors8(cur[0], cur[1], skel)
-        neigh = [p for p in neigh if p != last]
-
-        if not neigh:
-            break
-
-        if len(neigh) > 1:
-            dx0 = cur[0] - last[0]
-            dy0 = cur[1] - last[1]
-            n0 = math.hypot(dx0, dy0) + 1e-9
-
-            def score(p):
-                dx = p[0] - cur[0]
-                dy = p[1] - cur[1]
-                n = math.hypot(dx, dy) + 1e-9
-                # on préfère continuer "droit"
-                return -((dx * dx0 + dy * dy0) / (n * n0))
-
-            neigh.sort(key=score)
-
-        nxt = neigh[0]
-
-        if nxt in pts:
-            break
-
-        pts.append(nxt)
-        last, cur = cur, nxt
-
-    return pts
-
-
-def _path_length(path: list[tuple[int, int]]) -> float:
-    if len(path) < 2:
-        return 0.0
-
-    s = 0.0
-    for i in range(1, len(path)):
-        dx = path[i][0] - path[i - 1][0]
-        dy = path[i][1] - path[i - 1][1]
-        s += math.hypot(dx, dy)
-
-    return s
-
-
-def _dir_between(a: tuple[int, int], b: tuple[int, int]) -> np.ndarray | None:
-    v = np.array([b[0] - a[0], b[1] - a[1]], dtype=np.float32)
-    n = np.linalg.norm(v)
+def _unit(vx: float, vy: float):
+    n = math.hypot(vx, vy)
     if n < 1e-6:
         return None
-    return v / n
+    return np.array([vx / n, vy / n], dtype=np.float32)
 
 
-def _dir_from_path(path: list[tuple[int, int]], from_start: bool = True, nseg: int = 8) -> np.ndarray | None:
-    if len(path) < 2:
-        return None
-
-    if from_start:
-        a = path[0]
-        b = path[min(len(path) - 1, nseg)]
-    else:
-        a = path[max(0, len(path) - 1 - nseg)]
-        b = path[-1]
-
-    return _dir_between(a, b)
+def _sample_binary(mask: np.ndarray, x: float, y: float) -> int:
+    h, w = mask.shape
+    xi = int(round(x))
+    yi = int(round(y))
+    if 0 <= xi < w and 0 <= yi < h:
+        return 1 if mask[yi, xi] > 0 else 0
+    return 0
 
 
-def _angle_deg(u: np.ndarray, v: np.ndarray) -> float:
-    c = float(np.clip(np.dot(u, v), -1.0, 1.0))
-    return math.degrees(math.acos(c))
+def _run_length(mask: np.ndarray, x: float, y: float, dx: float, dy: float, max_len: int) -> int:
+    cnt = 0
+    for k in range(1, max_len + 1):
+        xx = x + dx * k
+        yy = y + dy * k
+        if _sample_binary(mask, xx, yy):
+            cnt += 1
+        else:
+            break
+    return cnt
 
 
-# ============================================================
-# CORE
-# ============================================================
+def _evaluate_t_on_trunk(mask: np.ndarray, trunk_path: list[tuple[int, int]]):
+    dbg = {"candidates": []}
 
-def _evaluate_t_candidate(
-    skel: np.ndarray,
-    trunk_path: list[tuple[int, int]],
-    node: tuple[int, int]
-):
-    dbg = {}
-
-    node_idx, node_dist = _closest_point_on_path(trunk_path, node)
-
-    if node_idx < 0 or node_dist > 6:
-        dbg["reject"] = "node not on trunk"
-        return False, 0.0, dbg
-
-    neigh = _neighbors8(node[0], node[1], skel)
-
-    if len(neigh) < 3:
-        dbg["reject"] = "not a junction"
-        return False, 0.0, dbg
-
-    # direction tronc local
-    if node_idx >= 2:
-        trunk_dir = _dir_between(trunk_path[node_idx-2], trunk_path[node_idx])
-    else:
+    if len(trunk_path) < max(TRUNK_LOOKBACK + 5, MIN_TRUNK_BELOW):
         dbg["reject"] = "trunk too short"
-        return False, 0.0, dbg
+        return False, 0.0, None, dbg
 
-    branches = []
+    n = len(trunk_path)
+    i0 = max(TRUNK_LOOKBACK + 2, int(n * CANDIDATE_START_FRAC))
+    i1 = min(n - 2, int(n * CANDIDATE_END_FRAC))
 
-    for seed in neigh:
-        bpath = _walk_branch(skel, start=seed, prev=node)
+    best_score = 0.0
+    best_pt = None
+    best_dbg = None
 
-        full = [node] + bpath
-        blen = _path_length(full)
+    for i in range(i0, i1):
+        p = trunk_path[i]
+        p_back = trunk_path[max(0, i - TRUNK_LOOKBACK)]
 
-        if blen < MIN_BRANCH_LEN:
+        t = _unit(p[0] - p_back[0], p[1] - p_back[1])
+        if t is None:
             continue
 
-        bdir = _dir_from_path(full)
+        # normale au tronc
+        nvec = np.array([-t[1], t[0]], dtype=np.float32)
 
-        if bdir is None:
+        left_len = _run_length(mask, p[0], p[1],  nvec[0],  nvec[1], SCAN_HALF_LEN)
+        right_len = _run_length(mask, p[0], p[1], -nvec[0], -nvec[1], SCAN_HALF_LEN)
+
+        below_len = 0
+        for j in range(i, -1, -1):
+            below_len += math.hypot(
+                trunk_path[j][0] - trunk_path[max(0, j - 1)][0],
+                trunk_path[j][1] - trunk_path[max(0, j - 1)][1],
+            )
+            if below_len >= MIN_TRUNK_BELOW:
+                break
+
+        balance = min(left_len, right_len) / max(max(left_len, right_len), 1)
+
+        cand = {
+            "idx": i,
+            "pt": p,
+            "left_len": left_len,
+            "right_len": right_len,
+            "below_len": below_len,
+            "balance": balance,
+        }
+        dbg["candidates"].append(cand)
+
+        if left_len < MIN_SIDE_LEN:
+            continue
+        if right_len < MIN_SIDE_LEN:
+            continue
+        if below_len < MIN_TRUNK_BELOW:
+            continue
+        if balance < SIDE_BALANCE_MIN:
             continue
 
-        angle = _angle_deg(trunk_dir, bdir)
+        score = (
+            min(left_len, 80) / 80.0
+            + min(right_len, 80) / 80.0
+            + balance
+        )
 
-        branches.append({
-            "len": blen,
-            "dir": bdir,
-            "angle": angle
-        })
+        if score > best_score:
+            best_score = score
+            best_pt = p
+            best_dbg = cand
 
-    if len(branches) < 3:
-        dbg["reject"] = "not enough branches"
-        return False, 0.0, dbg
+    if best_pt is None:
+        dbg["reject"] = "no valid trunk candidate"
+        return False, 0.0, None, dbg
 
-    # séparation : 1 branche colinéaire + 2 latérales
-    colinear = [b for b in branches if b["angle"] < 40]
-    lateral  = [b for b in branches if b["angle"] > 50]
-
-    if len(colinear) < 1 or len(lateral) < 2:
-        dbg["reject"] = "bad topology"
-        return False, 0.0, dbg
-
-    # opposition des latérales
-    l1 = lateral[0]
-    l2 = lateral[1]
-
-    opp = _angle_deg(l1["dir"], -l2["dir"])
-
-    if opp > MAX_OPPOSITION_ANGLE_DEG:
-        dbg["reject"] = "not opposite"
-        return False, 0.0, dbg
-
-    score = (l1["len"] + l2["len"]) / 50.0
-
-    return True, score, dbg
+    dbg["best"] = best_dbg
+    return True, float(best_score), best_pt, dbg
 
 
 # ============================================================
-# TEMPORAL FILTER
+# DETECTOR
 # ============================================================
 
 class TDetector:
@@ -407,8 +300,6 @@ class TDetector:
         debug = {
             "seed": seed,
             "trunk_path": [],
-            "nodes": [],
-            "best_candidate": None,
         }
 
         valid_now = False
@@ -419,18 +310,13 @@ class TDetector:
             trunk_path = _trace_trunk_from_bottom(skel, seed)
             debug["trunk_path"] = trunk_path
 
-            raw_nodes = _branch_pixels(skel)
-            nodes = _merge_close_points(raw_nodes, NODE_MERGE_DIST)
-            debug["nodes"] = nodes
+            ok, score, pt, dbg2 = _evaluate_t_on_trunk(mask, trunk_path)
+            debug["geom"] = dbg2
 
-            for node in nodes:
-                ok, score, cand_dbg = _evaluate_t_candidate(skel, trunk_path, node)
-
-                if ok and score > best_score:
-                    best_score = score
-                    best_node = node
-                    debug["best_candidate"] = cand_dbg
-                    valid_now = True
+            if ok:
+                valid_now = True
+                best_score = score
+                best_node = pt
 
         if valid_now:
             self.confirm_count += 1
@@ -454,7 +340,7 @@ class TDetector:
 
 
 # ============================================================
-# DEBUG DRAW
+# DRAW
 # ============================================================
 
 def draw_t_debug(frame: np.ndarray, res: TDetectionResult) -> np.ndarray:
@@ -464,52 +350,30 @@ def draw_t_debug(frame: np.ndarray, res: TDetectionResult) -> np.ndarray:
     cv2.line(out, (0, res.roi_start), (w - 1, res.roi_start), (255, 255, 0), 1)
 
     overlay = np.zeros_like(out)
-    if h - res.roi_start > 0:
-        sk = cv2.cvtColor(res.skeleton, cv2.COLOR_GRAY2BGR)
-        overlay[res.roi_start:] = sk
-        out = cv2.addWeighted(out, 1.0, overlay, 0.35, 0)
+    sk = cv2.cvtColor(res.skeleton, cv2.COLOR_GRAY2BGR)
+    overlay[res.roi_start:] = sk
+    out = cv2.addWeighted(out, 1.0, overlay, 0.35, 0)
 
     seed = res.debug.get("seed")
     if seed is not None:
         cv2.circle(out, (seed[0], seed[1] + res.roi_start), 4, (0, 255, 255), -1)
 
-    trunk = res.debug.get("trunk_path", [])
-    for p in trunk:
+    for p in res.debug.get("trunk_path", []):
         cv2.circle(out, (p[0], p[1] + res.roi_start), 1, (0, 255, 0), -1)
-
-    for p in res.debug.get("nodes", []):
-        cv2.circle(out, (p[0], p[1] + res.roi_start), 4, (255, 0, 255), 1)
-
-    best = res.debug.get("best_candidate")
-    if best is not None:
-        for p in best.get("left_path", []):
-            cv2.circle(out, (p[0], p[1] + res.roi_start), 1, (255, 0, 0), -1)
-        for p in best.get("right_path", []):
-            cv2.circle(out, (p[0], p[1] + res.roi_start), 1, (0, 0, 255), -1)
 
     if res.node_xy is not None:
         x, y = res.node_xy
         color = (0, 0, 255) if res.t_detected else (0, 165, 255)
         cv2.circle(out, (x, y + res.roi_start), 8, color, 2)
-        cv2.putText(
-            out,
-            f"T score={res.score:.2f}",
-            (x + 10, y + res.roi_start - 10),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
-            color,
-            2,
-            cv2.LINE_AA
-        )
+
+        geom = res.debug.get("geom", {})
+        best = geom.get("best", {})
+        txt = f"L={best.get('left_len',0)} R={best.get('right_len',0)} B={best.get('balance',0):.2f}"
+        cv2.putText(out, txt, (x + 10, y + res.roi_start - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2, cv2.LINE_AA)
 
     state = "T DETECTED" if res.t_detected else ("T candidate" if res.t_valid_now else "No T")
     color = (0, 0, 255) if res.t_detected else ((0, 165, 255) if res.t_valid_now else (180, 180, 180))
     cv2.putText(out, state, (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2, cv2.LINE_AA)
-
-    best = res.debug.get("best_candidate")
-    if best is not None:
-        txt = best.get("reject", None)
-        if txt is not None:
-            cv2.putText(out, txt, (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (100, 100, 255), 1, cv2.LINE_AA)
 
     return out
