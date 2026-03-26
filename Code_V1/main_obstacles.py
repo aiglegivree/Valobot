@@ -49,7 +49,7 @@ def main():
     # ------------------------------------------------------------
     # Forward-control tuning
     # ------------------------------------------------------------
-    base_speed = 0.3
+    base_speed = 0.2
     k_p = 0.2
     max_correction = 0.20
     lost_target_speed = 0.2

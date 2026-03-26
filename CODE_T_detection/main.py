@@ -15,8 +15,6 @@ try:
 
         res = detector.detect(frame)
 
-        if res.t_detected:
-            print("T detected")
 
         dbg = draw_t_debug(frame, res)
 

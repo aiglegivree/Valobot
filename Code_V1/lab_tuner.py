@@ -96,6 +96,8 @@ def main():
     try:
         while True:
             frame_rgb = picam2.capture_array()
+            r = frame_rgb[:, :, 0]
+            cv2.imshow("RED", r)
  
             frame_to_convert = frame_rgb
             if cv2.getTrackbarPos("Blur", WINDOW_CONTROLS) > 0:
