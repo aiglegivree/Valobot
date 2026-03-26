@@ -13,8 +13,8 @@ class CorridorNavigator:
         stop_y_threshold=300,
         start_y_threshold=150,
         candidate_miss_threshold=5,
-        lab_lower=(41, 0, 0),
-        lab_upper=(74, 255, 255),
+        lab_lower=(0, 0, 0),
+        lab_upper=(255, 109, 255),
     ):
         # --- Input source configuration ---
         self.proto = proto
@@ -442,7 +442,7 @@ class CorridorNavigator:
             # You may flip the sign below if steering comes out reversed on your robot.
             gain_px_per_deg = 4.0
 
-            target_x = int(round((self.W / 2) - gain_px_per_deg * angle_error_deg))
+            target_x = int(round((self.W / 2) + gain_px_per_deg * angle_error_deg))
             target_x = max(0, min(self.W - 1, target_x))
 
             self.target_x = target_x
