@@ -49,14 +49,14 @@ def main():
     base_speed = 0.25
     k_p = 0.1
     max_correction = 0.20
-    lost_target_speed = 0.25
+    lost_target_speed = 0.2
     error_deadband_px = 10      # ignore corrections smaller than this
 
     # ------------------------------------------------------------
     # Turn tuning
     # ------------------------------------------------------------
     turn_speed = 0.25
-    dead_zone_seconds = 0.8   # suppress state updates for first 1s of turn
+    dead_zone_seconds = 0.5   # suppress state updates for first 1s of turn
     max_seconds_90 = 2.4      # budget for ~90° turn
     max_seconds_180 = 4.8     # budget for ~180° fallback turn
 
