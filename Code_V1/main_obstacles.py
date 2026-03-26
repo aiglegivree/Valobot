@@ -40,9 +40,6 @@ def main():
     leds = LED()
     leds.turn_off_all()
 
-    # ------------------------------------------------------------
-    # Vision + motors
-    # ------------------------------------------------------------
     navigator = CorridorNavigator(proto=False)
     motors = MotorDriver()
 
@@ -52,7 +49,8 @@ def main():
     base_speed = 0.25
     k_p = 0.1
     max_correction = 0.20
-    lost_target_speed = 0.15
+    lost_target_speed = 0.2
+    error_deadband_px = 10      # ignore corrections smaller than this
 
     # ------------------------------------------------------------
     # Turn tuning
@@ -71,20 +69,16 @@ def main():
 
             data = navigator.get_control_data()
             state = data["state"]
-            target_x = data["target_x"]
-            target_visible = data["target_visible"]
-            frame_width = data["frame_width"]
 
             # ----------------------------------------------------
-            # TURN condition reached
+            # TURN state — hand off entirely to execute_turn,
+            # no duplicate step() call before this block
             # ----------------------------------------------------
             if state == "TURN":
                 motors.stop()
                 turn_candidate = data["turn_candidate"]
-
                 direction = 1 if turn_candidate == "RIGHT" else -1
 
-                # First attempt: turn toward candidate (~90°)
                 success = execute_turn(
                     navigator, motors,
                     direction=direction,
@@ -96,7 +90,6 @@ def main():
                 if not success:
                     print("90° turn failed, attempting 180° in opposite direction.")
                     motors.stop()
-                    # Second attempt: turn opposite direction (~180°)
                     success = execute_turn(
                         navigator, motors,
                         direction=-direction,
@@ -116,15 +109,22 @@ def main():
             # FORWARD mode
             # ----------------------------------------------------
             elif state == "FORWARD":
+                target_x = data["target_x"]
+                target_visible = data["target_visible"]
+                frame_width = data["frame_width"]
+
                 if target_visible and frame_width is not None:
                     image_center_x = frame_width / 2.0
                     error_pixels = target_x - image_center_x
+
+                    # Deadband: ignore small jitter
+                    if abs(error_pixels) < error_deadband_px:
+                        error_pixels = 0.0
+
                     error_norm = error_pixels / image_center_x
+                    correction = clamp(k_p * error_norm, -max_correction, max_correction)
 
-                    correction = k_p * error_norm
-                    correction = clamp(correction, -max_correction, max_correction)
-
-                    left_speed = clamp(base_speed + correction, -1.0, 1.0)
+                    left_speed  = clamp(base_speed + correction, -1.0, 1.0)
                     right_speed = clamp(base_speed - correction, -1.0, 1.0)
 
                     motors.set_speeds(left_speed, right_speed)
