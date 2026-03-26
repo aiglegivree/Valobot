@@ -316,145 +316,77 @@ def _evaluate_t_candidate(
     skel: np.ndarray,
     trunk_path: list[tuple[int, int]],
     node: tuple[int, int]
-) -> tuple[bool, float, dict]:
-    h, _ = skel.shape
+):
     dbg = {}
 
     node_idx, node_dist = _closest_point_on_path(trunk_path, node)
-    dbg["node_idx"] = node_idx
-    dbg["node_path_dist"] = node_dist
 
     if node_idx < 0 or node_dist > 6:
-        dbg["reject"] = "node too far from trunk"
-        return False, 0.0, dbg
-
-    y_frac = node[1] / max(h, 1)
-    dbg["node_y_frac"] = y_frac
-    if not (MIN_NODE_HEIGHT_FRAC <= y_frac <= MAX_NODE_HEIGHT_FRAC):
-        dbg["reject"] = "node bad height"
-        return False, 0.0, dbg
-
-    trunk_below = trunk_path[:node_idx + 1]
-    trunk_len_below = _path_length(trunk_below)
-    dbg["trunk_len_below"] = trunk_len_below
-    if trunk_len_below < MIN_TRUNK_LEN_BELOW:
-        dbg["reject"] = "trunk too short below"
-        return False, 0.0, dbg
-
-    # direction du tronc juste avant le noeud, du bas vers le haut
-    if len(trunk_below) >= 2:
-        a = trunk_below[max(0, len(trunk_below) - 8)]
-        b = trunk_below[-1]
-        trunk_dir = _dir_between(a, b)
-    else:
-        trunk_dir = None
-
-    if trunk_dir is None:
-        dbg["reject"] = "invalid trunk dir"
-        return False, 0.0, dbg
-
-    vertical_up = np.array([0.0, -1.0], dtype=np.float32)
-    trunk_angle_to_vertical = _angle_deg(trunk_dir, vertical_up)
-    dbg["trunk_angle_to_vertical"] = trunk_angle_to_vertical
-
-    if trunk_angle_to_vertical > MAX_TRUNK_ANGLE_DEG:
-        dbg["reject"] = "trunk not vertical enough"
+        dbg["reject"] = "node not on trunk"
         return False, 0.0, dbg
 
     neigh = _neighbors8(node[0], node[1], skel)
-    dbg["node_degree"] = len(neigh)
 
     if len(neigh) < 3:
-        dbg["reject"] = "node degree < 3"
+        dbg["reject"] = "not a junction"
         return False, 0.0, dbg
 
-    # voisin du tronc juste avant le noeud
-    if node_idx > 0:
-        prev_on_trunk = trunk_path[node_idx - 1]
+    # direction tronc local
+    if node_idx >= 2:
+        trunk_dir = _dir_between(trunk_path[node_idx-2], trunk_path[node_idx])
     else:
-        prev_on_trunk = trunk_path[0]
-
-    # voisin le plus proche de la direction venant du tronc
-    trunk_neighbor = min(
-        neigh,
-        key=lambda p: (p[0] - prev_on_trunk[0]) ** 2 + (p[1] - prev_on_trunk[1]) ** 2
-    )
-    dbg["trunk_neighbor"] = trunk_neighbor
-
-    branch_seeds = [p for p in neigh if p != trunk_neighbor]
+        dbg["reject"] = "trunk too short"
+        return False, 0.0, dbg
 
     branches = []
-    for seed in branch_seeds:
+
+    for seed in neigh:
         bpath = _walk_branch(skel, start=seed, prev=node)
-        full_path = [node] + bpath
-        blen = _path_length(full_path)
-        bdir = _dir_from_path(full_path, from_start=True)
+
+        full = [node] + bpath
+        blen = _path_length(full)
+
+        if blen < MIN_BRANCH_LEN:
+            continue
+
+        bdir = _dir_from_path(full)
 
         if bdir is None:
             continue
 
-        angle_to_trunk = _angle_deg(trunk_dir, bdir)
-
-        cross_z = trunk_dir[0] * bdir[1] - trunk_dir[1] * bdir[0]
-        side = 1 if cross_z > 0 else -1
+        angle = _angle_deg(trunk_dir, bdir)
 
         branches.append({
-            "seed": seed,
-            "path": bpath,
             "len": blen,
             "dir": bdir,
-            "side": side,
-            "angle_to_trunk": angle_to_trunk,
+            "angle": angle
         })
 
-    dbg["branches_raw"] = branches
-    if len(branches) < 2:
+    if len(branches) < 3:
         dbg["reject"] = "not enough branches"
         return False, 0.0, dbg
 
-    good = []
-    for b in branches:
-        if b["len"] >= MIN_BRANCH_LEN and b["angle_to_trunk"] >= MIN_BRANCH_ANGLE_DEG:
-            good.append(b)
+    # séparation : 1 branche colinéaire + 2 latérales
+    colinear = [b for b in branches if b["angle"] < 40]
+    lateral  = [b for b in branches if b["angle"] > 50]
 
-    dbg["branches_good"] = good
-
-    if len(good) < 2:
-        dbg["reject"] = "not enough good branches"
+    if len(colinear) < 1 or len(lateral) < 2:
+        dbg["reject"] = "bad topology"
         return False, 0.0, dbg
 
-    lefts = [b for b in good if b["side"] > 0]
-    rights = [b for b in good if b["side"] < 0]
+    # opposition des latérales
+    l1 = lateral[0]
+    l2 = lateral[1]
 
-    if not lefts or not rights:
-        dbg["reject"] = "missing one side"
+    opp = _angle_deg(l1["dir"], -l2["dir"])
+
+    if opp > MAX_OPPOSITION_ANGLE_DEG:
+        dbg["reject"] = "not opposite"
         return False, 0.0, dbg
 
-    left = max(lefts, key=lambda b: b["len"])
-    right = max(rights, key=lambda b: b["len"])
+    score = (l1["len"] + l2["len"]) / 50.0
 
-    opp_angle = _angle_deg(left["dir"], -right["dir"])
-    dbg["left_len"] = left["len"]
-    dbg["right_len"] = right["len"]
-    dbg["left_angle_to_trunk"] = left["angle_to_trunk"]
-    dbg["right_angle_to_trunk"] = right["angle_to_trunk"]
-    dbg["opp_angle"] = opp_angle
-    dbg["left_path"] = left["path"]
-    dbg["right_path"] = right["path"]
-
-    if opp_angle > MAX_OPPOSITION_ANGLE_DEG:
-        dbg["reject"] = "branches not opposite enough"
-        return False, 0.0, dbg
-
-    score = (
-        min(left["len"], 40.0) / 40.0
-        + min(right["len"], 40.0) / 40.0
-        + max(0.0, 1.0 - opp_angle / max(MAX_OPPOSITION_ANGLE_DEG, 1.0))
-        + max(0.0, 1.0 - trunk_angle_to_vertical / max(MAX_TRUNK_ANGLE_DEG, 1.0))
-    )
-
-    dbg["reject"] = None
-    return True, float(score), dbg
+    return True, score, dbg
 
 
 # ============================================================

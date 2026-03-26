@@ -1,10 +1,12 @@
 from camera import Camera
 from t_detector import TDetector, draw_t_debug
 import cv2
+from leds import LED
 
 cam = Camera()
 detector = TDetector()
-
+leds= LED()
+leds.turn_on_all()
 try:
     while True:
         ret, frame = cam.read()
@@ -27,3 +29,4 @@ try:
 finally:
     cam.release()
     cv2.destroyAllWindows()
+    leds.turn_off_all()
