@@ -170,21 +170,12 @@ class CorridorNavigator:
     # Image processing helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def fill_holes(mask):
-        h, w = mask.shape
-        flood = mask.copy()
-        flood_mask = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(flood, flood_mask, (0, 0), 255)
-        flood_inv = cv2.bitwise_not(flood)
-        return cv2.bitwise_or(mask, flood_inv)
-
     def create_mask(self, frame):
-        blur = cv2.GaussianBlur(frame, (3, 3), 1)
+        blur = cv2.GaussianBlur(frame, (5, 5), 1)
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
         mask = cv2.inRange(hsv, self.lab_lower, self.lab_upper)
-        mask = self.fill_holes(mask)
 
+        # Remove fill_holes — it fights against floor-as-background
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
 
@@ -194,7 +185,9 @@ class CorridorNavigator:
 
     @staticmethod
     def detect_edges(mask):
-        return cv2.Canny(mask, 50, 150)
+        # Blur before Canny to avoid doubled edges on hard binary transitions
+        blurred = cv2.GaussianBlur(mask, (5, 5), 1)
+        return cv2.Canny(blurred, 30, 90)
 
     @staticmethod
     def detect_hough_lines(edges):
@@ -202,8 +195,8 @@ class CorridorNavigator:
             edges,
             rho=1,
             theta=np.pi / 180,
-            threshold=60
-        )
+            threshold=40
+    )
 
     @staticmethod
     def classify_lines(lines):
