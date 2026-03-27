@@ -139,6 +139,14 @@ def main():
             length_left = np.linalg.norm(mean - start2)
             length_right = np.linalg.norm(end2 - mean)
             
+            # Calcul des angles des composantes principales
+            angle1 = np.degrees(np.arctan2(pc1[0], pc1[1]))  # angle de pc1
+            angle2 = np.degrees(np.arctan2(pc2[0], pc2[1]))  # angle de pc2
+            
+            # Normaliser les angles entre 0 et 180
+            angle1 = (angle1 + 180) % 180
+            angle2 = (angle2 + 180) % 180
+            
             # Déterminer quelle composante est la plus parallèle à la verticale (axe y)
             vert_parallel_pc1 = abs(pc1[0])  # composante y
             vert_parallel_pc2 = abs(pc2[0])
@@ -152,12 +160,24 @@ def main():
                 thickness1 = vertical_thickness
                 color2 = other_color
                 thickness2 = other_thickness
+                vertical_angle = angle1
+                horizontal_angle = angle2
             else:
                 most_vertical = "secondaire"
                 color1 = other_color
                 thickness1 = other_thickness
                 color2 = vertical_color
                 thickness2 = vertical_thickness
+                vertical_angle = angle2
+                horizontal_angle = angle1
+            
+            # Détection du T : vérifier si les angles sont perpendiculaires (diff ~90°) et un est vertical (~90°), l'autre horizontal (~0°)
+            angle_diff = abs(vertical_angle - horizontal_angle)
+            is_perpendicular = abs(angle_diff - 90) < 15  # tolérance de 15°
+            is_vertical = abs(vertical_angle - 90) < 15
+            is_horizontal = abs(horizontal_angle - 0) < 15 or abs(horizontal_angle - 180) < 15
+            
+            is_T = is_perpendicular and is_vertical and is_horizontal
 
         # display
         frame_disp = frame.copy()
@@ -173,6 +193,9 @@ def main():
             cv2.putText(frame_disp, f"Longueur gauche: {length_left:.2f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Longueur droite: {length_right:.2f}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Plus verticale: {most_vertical}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"Angle vert: {vertical_angle:.1f}°", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"Angle horiz: {horizontal_angle:.1f}°", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"T detecte: {'Oui' if is_T else 'Non'}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if is_T else (0, 0, 255), 2)
         
 
         cv2.imshow("frame", frame)
