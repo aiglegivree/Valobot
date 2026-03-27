@@ -15,7 +15,7 @@ class CorridorNavigator:
         candidate_miss_threshold=5,
         hsv_lower=(35, 40, 30),
         hsv_upper=(85, 255, 255),
-        a_upper=118,
+        a_upper=107,
         tuning=False,
         # Tuning for one-side + front-wall behavior
         corner_target_offset_px=50,
