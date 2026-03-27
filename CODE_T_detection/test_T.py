@@ -8,6 +8,38 @@ H = 480
 CAM_ID = 0
 USE_PICAMERA2 = True
 
+# ==============================
+# PRE-FILTER
+# ==============================
+GAUSS_KSIZE = 5  # impair
+
+# ==============================
+# BLACK HSV THRESHOLD
+# ==============================
+BLACK_H_LOW = 0
+BLACK_S_LOW = 0
+BLACK_V_LOW = 0
+
+BLACK_H_HIGH = 180
+BLACK_S_HIGH = 170
+BLACK_V_HIGH = 110
+
+# ==============================
+# MORPHO
+# ==============================
+KERNEL_SIZE = 5
+MORPH_CLOSE_IT = 2
+
+# ==============================
+# DETECTION T
+# ==============================
+MIN_HORIZONTAL_LENGTH = 250
+
+# ==============================
+# ROI
+# ==============================
+ROI_START_FRAC = 0.50
+
 
 class Camera:
     def __init__(self):
@@ -46,63 +78,72 @@ class Camera:
             self.cam.release()
 
 
-leds = LED()
-leds.turn_on_all()
+def keep_only_bottom_connected(mask):
+    """
+    Garde uniquement les pixels blancs connectés à la ligne du bas.
+    """
+    h, w = mask.shape
+    visited = np.zeros((h, w), dtype=np.uint8)
+    queue = []
 
-# ==============================
-# BLACK HSV THRESHOLD
-# ==============================
-BLACK_H_LOW = 0
-BLACK_S_LOW = 0
-BLACK_V_LOW = 0
+    # seeds = tous les pixels blancs de la dernière ligne
+    for x in range(w):
+        if mask[h - 1, x] == 255:
+            visited[h - 1, x] = 1
+            queue.append((h - 1, x))
 
-BLACK_H_HIGH = 180
-BLACK_S_HIGH = 170
-BLACK_V_HIGH = 110
+    # BFS 8-connectivité
+    neighbors = [
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1),           (0, 1),
+        (1, -1),  (1, 0),  (1, 1),
+    ]
 
-# ==============================
-# MORPHO
-# ==============================
-KERNEL_SIZE = 5
-MORPH_CLOSE_IT = 2
+    head = 0
+    while head < len(queue):
+        y, x = queue[head]
+        head += 1
 
-# ==============================
-# DETECTION T
-# ==============================
-MIN_HORIZONTAL_LENGTH = 250  # Longueur minimum pour la composante horizontale
+        for dy, dx in neighbors:
+            ny = y + dy
+            nx = x + dx
+            if 0 <= ny < h and 0 <= nx < w:
+                if visited[ny, nx] == 0 and mask[ny, nx] == 255:
+                    visited[ny, nx] = 1
+                    queue.append((ny, nx))
 
-# ==============================
-# ROI
-# ==============================
-ROI_START_FRAC = 0.50  # ROI sur la moitié inférieure
+    out = np.zeros_like(mask)
+    out[visited == 1] = 255
+    return out
 
 
 def compute_mask(frame):
-    Hf, Wf = frame.shape[:2]
+    h_frame, w_frame = frame.shape[:2]
 
-    # ROI bas
-    roi_start = int(Hf * ROI_START_FRAC)
+    roi_start = int(h_frame * ROI_START_FRAC)
     roi = frame[roi_start:]
 
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    # blur AVANT HSV threshold
+    roi_blur = cv2.GaussianBlur(roi, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
+
+    hsv = cv2.cvtColor(roi_blur, cv2.COLOR_BGR2HSV)
 
     low = np.array([BLACK_H_LOW, BLACK_S_LOW, BLACK_V_LOW], dtype=np.uint8)
     high = np.array([BLACK_H_HIGH, BLACK_S_HIGH, BLACK_V_HIGH], dtype=np.uint8)
 
     mask = cv2.inRange(hsv, low, high)
 
-    # morpho close
+    # closing
     kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
 
-    return mask, roi_start
+    # garder seulement ce qui est connecté au bas
+    mask_bottom = keep_only_bottom_connected(mask)
+
+    return mask_bottom, roi_start, roi, roi_blur, mask
 
 
 def skeletonize(mask):
-    """
-    Retourne le squelette binaire du mask.
-    Utilise cv2.ximgproc.thinning si disponible, sinon fallback morphologique.
-    """
     if hasattr(cv2, "ximgproc") and hasattr(cv2.ximgproc, "thinning"):
         return cv2.ximgproc.thinning(mask)
 
@@ -124,6 +165,9 @@ def skeletonize(mask):
 
 
 def main():
+    leds = LED()
+    leds.turn_on_all()
+
     cam = Camera()
 
     try:
@@ -132,19 +176,22 @@ def main():
             if not ret:
                 continue
 
-            mask, roi_start = compute_mask(frame)
+            mask, roi_start, roi_raw, roi_blur, mask_raw = compute_mask(frame)
             skeleton = skeletonize(mask)
 
-            # Utiliser le squelette pour la PCA
+            # PCA sur le squelette
             points = np.column_stack(np.where(skeleton == 255))
 
-            # Valeurs par défaut pour éviter les erreurs si aucun point
+            # valeurs par défaut
             is_T = False
             start1 = end1 = start2 = end2 = None
+            mean = None
+
             color1 = (255, 0, 0)
             color2 = (0, 0, 255)
             thickness1 = 1
             thickness2 = 3
+
             length_left = 0.0
             length_right = 0.0
             most_vertical = "N/A"
@@ -153,56 +200,43 @@ def main():
             vertical_length = 0.0
             horizontal_length = 0.0
             bar_position = "N/A"
-            mean = None
 
             if len(points) > 1:
-                # Centre des points
                 mean = np.mean(points, axis=0)
                 centered = points - mean
 
-                # Covariance
                 cov = np.cov(centered.T)
-
-                # Valeurs/vecteurs propres
                 eigvals, eigvecs = np.linalg.eigh(cov)
 
-                # Trier décroissant
                 idx = np.argsort(eigvals)[::-1]
-                eigvecs = eigvecs[:, idx]
                 eigvals = eigvals[idx]
+                eigvecs = eigvecs[:, idx]
 
-                # Composantes principales
                 pc1 = eigvecs[:, 0]
                 pc2 = eigvecs[:, 1]
 
-                # Longueur d'affichage
                 scale1 = 2 * np.sqrt(max(eigvals[0], 0))
                 scale2 = 2 * np.sqrt(max(eigvals[1], 0))
 
-                # Extrémités des lignes PCA
                 start1 = mean - scale1 * pc1
                 end1 = mean + scale1 * pc1
-
                 start2 = mean - scale2 * pc2
                 end2 = mean + scale2 * pc2
 
-                # Longueurs gauche / droite de la composante secondaire
                 length_left = np.linalg.norm(mean - start2)
                 length_right = np.linalg.norm(end2 - mean)
 
-                # Angles
                 angle1 = np.degrees(np.arctan2(pc1[0], pc1[1]))
                 angle2 = np.degrees(np.arctan2(pc2[0], pc2[1]))
 
                 angle1 = (angle1 + 180) % 180
                 angle2 = (angle2 + 180) % 180
 
-                # Détermine quelle composante est la plus verticale
                 vert_parallel_pc1 = abs(pc1[0])
                 vert_parallel_pc2 = abs(pc2[0])
 
-                vertical_color = (0, 0, 255)   # rouge
-                other_color = (255, 0, 0)      # bleu
+                vertical_color = (0, 0, 255)
+                other_color = (255, 0, 0)
                 vertical_thickness = 3
                 other_thickness = 1
 
@@ -227,7 +261,6 @@ def main():
                     vertical_length = scale2
                     horizontal_length = scale1
 
-                # Critères T
                 angle_diff = abs(vertical_angle - horizontal_angle)
                 is_perpendicular = abs(angle_diff - 90) < 15
                 is_vertical = abs(vertical_angle - 90) < 15
@@ -236,8 +269,7 @@ def main():
                     or abs(horizontal_angle - 180) < 15
                 )
 
-                # Position de la barre
-                bar_balance_ratio = length_left / length_right if length_right > 1e-6 else 0
+                bar_balance_ratio = length_left / length_right if length_right > 1e-6 else 0.0
                 if bar_balance_ratio < 0.7:
                     bar_position = "DROITE"
                 elif bar_balance_ratio > 1.4:
@@ -252,20 +284,16 @@ def main():
                     and (horizontal_length > MIN_HORIZONTAL_LENGTH)
                 )
 
-            # ==============================
-            # AFFICHAGE
-            # ==============================
+            # affichage
             frame_disp = frame.copy()
 
-            # Overlay ROI = mask en gris + squelette en vert
             overlay = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             overlay[skeleton == 255] = (0, 255, 0)
             frame_disp[roi_start:] = overlay
 
             roi_disp = frame_disp[roi_start:]
 
-            # Dessin PCA sur l'overlay
-            if start1 is not None and end1 is not None and start2 is not None and end2 is not None:
+            if start1 is not None:
                 cv2.line(
                     roi_disp,
                     (int(start1[1]), int(start1[0])),
@@ -280,11 +308,8 @@ def main():
                     color2,
                     thickness2,
                 )
-
-                # Centre PCA
                 cv2.circle(roi_disp, (int(mean[1]), int(mean[0])), 4, (0, 255, 255), -1)
 
-            # Texte debug
             cv2.putText(frame_disp, f"Longueur gauche: {length_left:.2f}", (10, 30),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Longueur droite: {length_right:.2f}", (10, 60),
@@ -306,7 +331,10 @@ def main():
                         (0, 255, 0) if is_T else (0, 0, 255), 2)
 
             cv2.imshow("frame", frame)
-            cv2.imshow("mask", mask)
+            cv2.imshow("roi_raw", roi_raw)
+            cv2.imshow("roi_blur", roi_blur)
+            cv2.imshow("mask_raw", mask_raw)
+            cv2.imshow("mask_bottom_connected", mask)
             cv2.imshow("skeleton", skeleton)
             cv2.imshow("overlay", frame_disp)
 
