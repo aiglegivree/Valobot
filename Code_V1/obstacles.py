@@ -16,7 +16,7 @@ class CorridorNavigator:
         lab_lower=(0, 0, 0),
         lab_upper=(255, 109, 255),
         # New tuning for one-side + front-wall behavior
-        corner_target_offset_px=0,
+        corner_target_offset_px=20,
         corner_gain_px_per_px=0.6,
         front_tilt_gain_px_per_deg=4.0,
     ):
