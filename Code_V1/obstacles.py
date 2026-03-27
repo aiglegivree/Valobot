@@ -83,6 +83,13 @@ class CorridorNavigator:
         self.target_x = None
         self.target_visible = False
         self.intersection = None
+        
+        # --- Debug: store representative line angles for visualization ---
+        self.detected_angles = {
+            "horizontal": None,
+            "left": None,
+            "right": None,
+        }
 
         # --- Frame/cache attributes ---
         self.frame = None
@@ -561,6 +568,28 @@ class CorridorNavigator:
         candidate_text = f"CANDIDATE: {self.turn_candidate if self.turn_candidate is not None else 'NONE'}"
         cv2.putText(image, candidate_text, (20, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
 
+        # --- Display representative line angles ---
+        if self.debug_angles:
+            y_offset = 120
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 0.6
+            color = (0, 0, 0)
+            thickness = 2
+            
+            if self.detected_angles["horizontal"] is not None:
+                h_angle = f"Front: {self.detected_angles['horizontal']:.1f}°"
+                cv2.putText(image, h_angle, (20, y_offset), font, font_scale, (0, 255, 255), thickness)
+                y_offset += 25
+            
+            if self.detected_angles["left"] is not None:
+                l_angle = f"Left: {self.detected_angles['left']:.1f}°"
+                cv2.putText(image, l_angle, (20, y_offset), font, font_scale, (0, 0, 255), thickness)
+                y_offset += 25
+            
+            if self.detected_angles["right"] is not None:
+                r_angle = f"Right: {self.detected_angles['right']:.1f}°"
+                cv2.putText(image, r_angle, (20, y_offset), font, font_scale, (0, 255, 0), thickness)
+
         return image
 
     # ------------------------------------------------------------------
@@ -591,6 +620,11 @@ class CorridorNavigator:
         horizontal_rep = self.median_line(horizontal_lines)
         left_rep = self.median_line(left_lines)
         right_rep = self.median_line(right_lines)
+
+        # --- Store representative angles for debug visualization ---
+        self.detected_angles["horizontal"] = math.degrees(horizontal_rep[1]) if horizontal_rep is not None else None
+        self.detected_angles["left"] = math.degrees(left_rep[1]) if left_rep is not None else None
+        self.detected_angles["right"] = math.degrees(right_rep[1]) if right_rep is not None else None
 
         self.update_smoothed_lines(horizontal_rep, left_rep, right_rep)
         self.update_ghost_lines(left_rep, right_rep)
