@@ -209,7 +209,7 @@ class CorridorNavigator:
         # LAB a* channel: green < 128, grey ≈ 128 — robust to brightness/shadow changes
         lab = cv2.cvtColor(blur, cv2.COLOR_BGR2LAB)
         a_channel = lab[:, :, 1]
-        mask_lab = cv2.inRange(a_channel, np.uint8(0), np.uint8(self.a_upper))
+        mask_lab = cv2.inRange(a_channel, 0, int(self.a_upper))
 
         # HSV hue channel: eliminates non-green dark regions that pass the a* test
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
