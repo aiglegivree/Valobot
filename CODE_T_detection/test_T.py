@@ -81,7 +81,6 @@ def keep_only_bottom_connected(mask):
     visited = np.zeros((h, w), dtype=np.uint8)
     queue = []
 
-    # seeds = tous les pixels blancs de la dernière ligne
     for x in range(w):
         if mask[h - 1, x] == 255:
             visited[h - 1, x] = 1
@@ -116,9 +115,7 @@ def compute_mask(frame):
     roi_start = int(h_frame * ROI_START_FRAC)
     roi = frame[roi_start:]
 
-    # blur avant threshold
     roi_blur = cv2.GaussianBlur(roi, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
-
     hsv = cv2.cvtColor(roi_blur, cv2.COLOR_BGR2HSV)
 
     low = np.array([BLACK_H_LOW, BLACK_S_LOW, BLACK_V_LOW], dtype=np.uint8)
@@ -126,11 +123,9 @@ def compute_mask(frame):
 
     mask = cv2.inRange(hsv, low, high)
 
-    # closing
     kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
 
-    # garder seulement ce qui est connecté au bas
     mask = keep_only_bottom_connected(mask)
 
     return mask, roi_start
@@ -160,7 +155,7 @@ def skeletonize(mask):
 def count_endpoints(skeleton):
     """
     Compte uniquement les endpoints.
-    Padding ajouté pour que les extrémités au bord de l'image soient détectées.
+    Padding ajouté pour gérer les bords.
     """
     sk = (skeleton > 0).astype(np.uint8)
     sk_pad = np.pad(sk, pad_width=1, mode="constant", constant_values=0)
@@ -177,24 +172,18 @@ def count_endpoints(skeleton):
             n = int(np.sum(patch)) - 1
 
             if n == 1:
-                endpoints.append((x - 1, y - 1))  # retire l'offset du padding
+                endpoints.append((x - 1, y - 1))
 
     return endpoints
 
 
-def classify_shape(endpoint_count):
+def is_T_shape(endpoint_count):
     """
-    Règles demandées :
-    - endpoints >= 6 -> T
-    - 4 <= endpoints < 6 -> L
-    - sinon -> I
+    Règle demandée :
+    - T si endpoints >= 6
+    - sinon not T
     """
-    if endpoint_count >= 6:
-        return "T"
-    elif endpoint_count >= 4:
-        return "L"
-    else:
-        return "I"
+    return endpoint_count >= 6
 
 
 def main():
@@ -214,18 +203,15 @@ def main():
 
             endpoints = count_endpoints(skeleton)
             endpoint_count = len(endpoints)
-            shape_label = classify_shape(endpoint_count)
+            is_t = is_T_shape(endpoint_count)
 
-            # représentation unique : mask + squelette
             disp = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
             disp[skeleton == 255] = (0, 255, 0)
 
-            # endpoints en bleu
             for x, y in endpoints:
                 if 0 <= x < disp.shape[1] and 0 <= y < disp.shape[0]:
                     cv2.circle(disp, (x, y), 4, (255, 0, 0), -1)
 
-            # texte
             cv2.putText(
                 disp,
                 f"Endpoints: {endpoint_count}",
@@ -238,11 +224,11 @@ def main():
 
             cv2.putText(
                 disp,
-                f"Class: {shape_label}",
+                f"T: {'YES' if is_t else 'NO'}",
                 (10, 65),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
-                (0, 255, 255),
+                (0, 255, 0) if is_t else (0, 0, 255),
                 2
             )
 
