@@ -188,7 +188,7 @@ def count_endpoints_and_junctions(skeleton):
 
 def main():
     leds = LED()
-    leds.turn_on_all()
+    leds.turn_off_all()
 
     cam = Camera()
 
