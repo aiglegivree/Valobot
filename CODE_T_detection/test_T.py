@@ -67,11 +67,12 @@ MORPH_CLOSE_IT = 2
 # DETECTION T
 # ==============================
 MIN_HORIZONTAL_LENGTH = 250  # Longueur minimum pour la composante horizontale (en pixels)
+MIN_EIGEN_RATIO = 1.0  # Ratio minimum entre les valeurs propres verticale et horizontale (très bas pour détecter T même avec tige partiellement visible)
 
 # ==============================
 # ROI (même logique vision)
 # ==============================
-ROI_START_FRAC = 0.50
+ROI_START_FRAC = 0.50  # ROI sur la moitié inférieure où se trouve la tige du T
 
 
 def compute_mask(frame):
@@ -194,7 +195,7 @@ def main():
                 vertical_eigen = eigvals[1]
                 horizontal_eigen = eigvals[0]
             eigen_ratio = vertical_eigen / horizontal_eigen if horizontal_eigen > 0 else 0
-            sufficient_variance = eigen_ratio > 2.0
+            sufficient_variance = eigen_ratio > MIN_EIGEN_RATIO
             
             is_T = is_perpendicular and is_vertical and is_horizontal and (horizontal_length > MIN_HORIZONTAL_LENGTH) and sufficient_variance
 
