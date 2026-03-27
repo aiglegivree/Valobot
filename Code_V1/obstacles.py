@@ -15,7 +15,9 @@ class CorridorNavigator:
         candidate_miss_threshold=5,
         hsv_lower=(35, 40, 30),
         hsv_upper=(85, 255, 255),
-        # New tuning for one-side + front-wall behavior
+        a_upper=118,
+        tuning=False,
+        # Tuning for one-side + front-wall behavior
         corner_target_offset_px=50,
         corner_gain_px_per_px=1.2,
         front_tilt_gain_px_per_deg=6.0,
@@ -37,8 +39,13 @@ class CorridorNavigator:
         self.start_y_threshold = start_y_threshold
         self.candidate_miss_threshold = candidate_miss_threshold
 
-        self.lab_lower = np.array(hsv_lower, dtype=np.uint8)
-        self.lab_upper = np.array(hsv_upper, dtype=np.uint8)
+        self.hsv_lower = np.array(hsv_lower, dtype=np.uint8)
+        self.hsv_upper = np.array(hsv_upper, dtype=np.uint8)
+        self.a_upper = a_upper
+
+        self.tuning = tuning
+        if self.tuning:
+            self._create_tuning_window()
 
         # --- New parameters for one-side + front-wall control ---
         self.corner_target_offset_px = corner_target_offset_px
@@ -85,6 +92,29 @@ class CorridorNavigator:
 
         self.H = None
         self.W = None
+
+    # ------------------------------------------------------------------
+    # Tuning window
+    # ------------------------------------------------------------------
+
+    def _create_tuning_window(self):
+        cv2.namedWindow("HSV Tuning")
+        cv2.createTrackbar("H low",  "HSV Tuning", int(self.hsv_lower[0]), 179, lambda x: None)
+        cv2.createTrackbar("H high", "HSV Tuning", int(self.hsv_upper[0]), 179, lambda x: None)
+        cv2.createTrackbar("S low",  "HSV Tuning", int(self.hsv_lower[1]), 255, lambda x: None)
+        cv2.createTrackbar("S high", "HSV Tuning", int(self.hsv_upper[1]), 255, lambda x: None)
+        cv2.createTrackbar("V low",  "HSV Tuning", int(self.hsv_lower[2]), 255, lambda x: None)
+        cv2.createTrackbar("V high", "HSV Tuning", int(self.hsv_upper[2]), 255, lambda x: None)
+        cv2.createTrackbar("A upper","HSV Tuning", int(self.a_upper),      128, lambda x: None)
+
+    def _read_tuning_values(self):
+        self.hsv_lower[0] = cv2.getTrackbarPos("H low",  "HSV Tuning")
+        self.hsv_upper[0] = cv2.getTrackbarPos("H high", "HSV Tuning")
+        self.hsv_lower[1] = cv2.getTrackbarPos("S low",  "HSV Tuning")
+        self.hsv_upper[1] = cv2.getTrackbarPos("S high", "HSV Tuning")
+        self.hsv_lower[2] = cv2.getTrackbarPos("V low",  "HSV Tuning")
+        self.hsv_upper[2] = cv2.getTrackbarPos("V high", "HSV Tuning")
+        self.a_upper       = cv2.getTrackbarPos("A upper","HSV Tuning")
 
     # ------------------------------------------------------------------
     # Geometry helpers
@@ -170,20 +200,23 @@ class CorridorNavigator:
     # Image processing helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def fill_holes(mask):
-        h, w = mask.shape
-        flood = mask.copy()
-        flood_mask = np.zeros((h + 2, w + 2), np.uint8)
-        cv2.floodFill(flood, flood_mask, (0, 0), 255)
-        flood_inv = cv2.bitwise_not(flood)
-        return cv2.bitwise_or(mask, flood_inv)
-
     def create_mask(self, frame):
-        blur = cv2.GaussianBlur(frame, (3, 3), 1)
+        if self.tuning:
+            self._read_tuning_values()
+
+        blur = cv2.GaussianBlur(frame, (5, 5), 1)
+
+        # LAB a* channel: green < 128, grey ≈ 128 — robust to brightness/shadow changes
+        lab = cv2.cvtColor(blur, cv2.COLOR_BGR2LAB)
+        a_channel = lab[:, :, 1]
+        mask_lab = cv2.inRange(a_channel, np.uint8(0), np.uint8(self.a_upper))
+
+        # HSV hue channel: eliminates non-green dark regions that pass the a* test
         hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
-        mask = cv2.inRange(hsv, self.lab_lower, self.lab_upper)
-        mask = self.fill_holes(mask)
+        mask_hsv = cv2.inRange(hsv, self.hsv_lower, self.hsv_upper)
+
+        # Both must agree: AND rejects grey (fails a*) and dark non-green (fails HSV)
+        mask = cv2.bitwise_and(mask_lab, mask_hsv)
 
         kernel = np.ones((5, 5), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
@@ -194,7 +227,9 @@ class CorridorNavigator:
 
     @staticmethod
     def detect_edges(mask):
-        return cv2.Canny(mask, 50, 150)
+        # Blur before Canny to avoid doubled edges on hard binary transitions
+        blurred = cv2.GaussianBlur(mask, (5, 5), 1)
+        return cv2.Canny(blurred, 30, 90)
 
     @staticmethod
     def detect_hough_lines(edges):
@@ -202,7 +237,7 @@ class CorridorNavigator:
             edges,
             rho=1,
             theta=np.pi / 180,
-            threshold=60
+            threshold=40
         )
 
     @staticmethod
@@ -337,8 +372,6 @@ class CorridorNavigator:
                     and self.horizontal_misses == 0
                 )
 
-                # Exit only if we have a coherent corridor view:
-                # either both sides, or one side confirmed by a front wall
                 if two_sides_stable or (one_side_stable and front_visible):
                     self.state = "FORWARD"
                     self.candidate_locked = False
@@ -390,8 +423,6 @@ class CorridorNavigator:
 
         # --------------------------------------------------------------
         # Case 2 — One side line + front wall
-        # Keep front wall horizontal and constrain the visible corner
-        # to remain on the correct side of image center.
         # --------------------------------------------------------------
         if front_visible:
             rho, theta = self.horizontal_smooth
@@ -514,7 +545,6 @@ class CorridorNavigator:
                 dashed=(self.right_misses > 0)
             )
 
-        # Optional center guideline for debugging
         cv2.line(image, (self.W // 2, 0), (self.W // 2, self.H - 1), (180, 180, 180), 1)
 
         if self.intersection is not None:
