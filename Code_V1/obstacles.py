@@ -450,10 +450,10 @@ class CorridorNavigator:
                     if ix > (self.W / 2):
                         self.intersection = (ix, iy)
 
-                        # --- Apply correction to keep intersection near center ---
+                        # --- Apply correction to steer toward the intersection ---
                         desired_corner_x = (self.W / 2) - self.corner_target_offset_px
                         corner_error = ix - desired_corner_x
-                        corner_correction = -self.corner_gain_px_per_px * corner_error
+                        corner_correction = self.corner_gain_px_per_px * corner_error
 
                         target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
                         self.target_x = max(0, min(self.W - 1, target_x))
@@ -470,10 +470,10 @@ class CorridorNavigator:
                     if ix < (self.W / 2):
                         self.intersection = (ix, iy)
 
-                        # --- Apply correction to keep intersection near center ---
+                        # --- Apply correction to steer toward the intersection ---
                         desired_corner_x = (self.W / 2) + self.corner_target_offset_px
                         corner_error = ix - desired_corner_x
-                        corner_correction = -self.corner_gain_px_per_px * corner_error
+                        corner_correction = self.corner_gain_px_per_px * corner_error
 
                         target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
                         self.target_x = max(0, min(self.W - 1, target_x))
