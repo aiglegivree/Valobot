@@ -21,6 +21,7 @@ class CorridorNavigator:
         corner_target_offset_px=50,
         corner_gain_px_per_px=1.2,
         front_tilt_gain_px_per_deg=6.0,
+        debug_angles=False
     ):
         # --- Input source configuration ---
         self.proto = proto
@@ -46,6 +47,8 @@ class CorridorNavigator:
         self.tuning = tuning
         if self.tuning:
             self._create_tuning_window()
+
+        self.debug_angles = debug_angles
 
         # --- New parameters for one-side + front-wall control ---
         self.corner_target_offset_px = corner_target_offset_px
