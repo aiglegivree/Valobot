@@ -444,31 +444,41 @@ class CorridorNavigator:
                 corner = self.intersect_hough_lines(self.left_smooth, self.horizontal_smooth)
                 if corner is not None:
                     ix, iy = corner
-                    self.intersection = (ix, iy)
+                    
+                    # --- Sanity check: intersection should be RIGHT of center ---
+                    # (left wall intersects front wall on the right side when looking forward)
+                    if ix > (self.W / 2):
+                        self.intersection = (ix, iy)
 
-                    desired_corner_x = (self.W / 2) - self.corner_target_offset_px
-                    corner_error = ix - desired_corner_x
-                    corner_correction = -self.corner_gain_px_per_px * corner_error
+                        # --- Apply correction to keep intersection near center ---
+                        desired_corner_x = (self.W / 2) - self.corner_target_offset_px
+                        corner_error = ix - desired_corner_x
+                        corner_correction = -self.corner_gain_px_per_px * corner_error
 
-                    target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
-                    self.target_x = max(0, min(self.W - 1, target_x))
-                    self.target_visible = True
-                    return
+                        target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
+                        self.target_x = max(0, min(self.W - 1, target_x))
+                        self.target_visible = True
+                        return
 
             if self.right_smooth is not None and self.right_misses == 0:
                 corner = self.intersect_hough_lines(self.right_smooth, self.horizontal_smooth)
                 if corner is not None:
                     ix, iy = corner
-                    self.intersection = (ix, iy)
+                    
+                    # --- Sanity check: intersection should be LEFT of center ---
+                    # (right wall intersects front wall on the left side when looking forward)
+                    if ix < (self.W / 2):
+                        self.intersection = (ix, iy)
 
-                    desired_corner_x = (self.W / 2) + self.corner_target_offset_px
-                    corner_error = ix - desired_corner_x
-                    corner_correction = -self.corner_gain_px_per_px * corner_error
+                        # --- Apply correction to keep intersection near center ---
+                        desired_corner_x = (self.W / 2) + self.corner_target_offset_px
+                        corner_error = ix - desired_corner_x
+                        corner_correction = -self.corner_gain_px_per_px * corner_error
 
-                    target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
-                    self.target_x = max(0, min(self.W - 1, target_x))
-                    self.target_visible = True
-                    return
+                        target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
+                        self.target_x = max(0, min(self.W - 1, target_x))
+                        self.target_visible = True
+                        return
 
         # --------------------------------------------------------------
         # Case 3 — Front wall only
