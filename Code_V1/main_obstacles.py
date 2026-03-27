@@ -55,10 +55,10 @@ def main():
     # ------------------------------------------------------------
     # Turn tuning
     # ------------------------------------------------------------
-    turn_speed = 0.2
-    dead_zone_seconds = 2.   # suppress state updates for first 1s of turn
-    max_seconds_90 = 3.0      # budget for ~90° turn
-    max_seconds_180 = 6.0     # budget for ~180° fallback turn
+    turn_speed = 0.25
+    dead_zone_seconds = 0.5   # suppress state updates for first 1s of turn
+    max_seconds_90 = 2.4      # budget for ~90° turn
+    max_seconds_180 = 4.8     # budget for ~180° fallback turn
 
     try:
         while True:
@@ -95,7 +95,7 @@ def main():
                     success = execute_turn(
                         navigator, motors,
                         direction=-direction,
-                        dead_zone_seconds=1.5,  # must clear origin corridor
+                        dead_zone_seconds=max_seconds_90+dead_zone_seconds,  # must clear origin corridor
                         max_seconds=max_seconds_180,
                         turn_speed=turn_speed
                     )
