@@ -81,7 +81,7 @@ def keep_only_bottom_connected(mask):
     visited = np.zeros((h, w), dtype=np.uint8)
     queue = []
 
-    # Seeds = pixels blancs sur la dernière ligne
+    # seeds = tous les pixels blancs de la dernière ligne
     for x in range(w):
         if mask[h - 1, x] == 255:
             visited[h - 1, x] = 1
@@ -157,19 +157,16 @@ def skeletonize(mask):
     return skel
 
 
-def count_endpoints_and_junctions(skeleton):
+def count_endpoints(skeleton):
     """
-    Comptage robuste avec padding pour gérer les bords.
+    Compte uniquement les endpoints.
+    Padding ajouté pour que les extrémités au bord de l'image soient détectées.
     """
-
-    # --- padding ---
     sk = (skeleton > 0).astype(np.uint8)
-    sk_pad = np.pad(sk, pad_width=1, mode='constant', constant_values=0)
+    sk_pad = np.pad(sk, pad_width=1, mode="constant", constant_values=0)
 
     h, w = sk_pad.shape
-
     endpoints = []
-    junctions = []
 
     for y in range(1, h - 1):
         for x in range(1, w - 1):
@@ -180,11 +177,25 @@ def count_endpoints_and_junctions(skeleton):
             n = int(np.sum(patch)) - 1
 
             if n == 1:
-                endpoints.append((x - 1, y - 1))  # ← remove padding offset
-            elif n >= 3:
-                junctions.append((x - 1, y - 1))
+                endpoints.append((x - 1, y - 1))  # retire l'offset du padding
 
-    return endpoints, junctions
+    return endpoints
+
+
+def classify_shape(endpoint_count):
+    """
+    Règles demandées :
+    - endpoints >= 6 -> T
+    - 4 <= endpoints < 6 -> L
+    - sinon -> I
+    """
+    if endpoint_count >= 6:
+        return "T"
+    elif endpoint_count >= 4:
+        return "L"
+    else:
+        return "I"
+
 
 def main():
     leds = LED()
@@ -201,52 +212,37 @@ def main():
             mask, roi_start = compute_mask(frame)
             skeleton = skeletonize(mask)
 
-            endpoints, junctions = count_endpoints_and_junctions(skeleton)
+            endpoints = count_endpoints(skeleton)
+            endpoint_count = len(endpoints)
+            shape_label = classify_shape(endpoint_count)
 
-            branch_count = len(endpoints)
-
-            # représentation unique : mask en BGR
+            # représentation unique : mask + squelette
             disp = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-
-            # afficher le squelette en vert
             disp[skeleton == 255] = (0, 255, 0)
 
-            # afficher endpoints en bleu
+            # endpoints en bleu
             for x, y in endpoints:
-                cv2.circle(disp, (x, y), 4, (255, 0, 0), -1)
-
-            # afficher junctions en rouge
-            for x, y in junctions:
-                cv2.circle(disp, (x, y), 4, (0, 0, 255), -1)
+                if 0 <= x < disp.shape[1] and 0 <= y < disp.shape[0]:
+                    cv2.circle(disp, (x, y), 4, (255, 0, 0), -1)
 
             # texte
             cv2.putText(
                 disp,
-                f"Branches: {branch_count}",
+                f"Endpoints: {endpoint_count}",
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.9,
+                0.8,
                 (0, 255, 255),
                 2
             )
 
             cv2.putText(
                 disp,
-                f"Endpoints: {len(endpoints)}",
+                f"Class: {shape_label}",
                 (10, 65),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2
-            )
-
-            cv2.putText(
-                disp,
-                f"Junctions: {len(junctions)}",
-                (10, 95),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
+                0.8,
+                (0, 255, 255),
                 2
             )
 
