@@ -64,6 +64,11 @@ KERNEL_SIZE = 5
 MORPH_CLOSE_IT = 2
 
 # ==============================
+# DETECTION T
+# ==============================
+MIN_HORIZONTAL_LENGTH = 50  # Longueur minimum pour la composante horizontale (en pixels)
+
+# ==============================
 # ROI (même logique vision)
 # ==============================
 ROI_START_FRAC = 0.50
@@ -162,6 +167,8 @@ def main():
                 thickness2 = other_thickness
                 vertical_angle = angle1
                 horizontal_angle = angle2
+                vertical_length = scale1
+                horizontal_length = scale2
             else:
                 most_vertical = "secondaire"
                 color1 = other_color
@@ -170,6 +177,8 @@ def main():
                 thickness2 = vertical_thickness
                 vertical_angle = angle2
                 horizontal_angle = angle1
+                vertical_length = scale2
+                horizontal_length = scale1
             
             # Détection du T : vérifier si les angles sont perpendiculaires (diff ~90°) et un est vertical (~90°), l'autre horizontal (~0°)
             angle_diff = abs(vertical_angle - horizontal_angle)
@@ -177,7 +186,7 @@ def main():
             is_vertical = abs(vertical_angle - 90) < 15
             is_horizontal = abs(horizontal_angle - 0) < 15 or abs(horizontal_angle - 180) < 15
             
-            is_T = is_perpendicular and is_vertical and is_horizontal
+            is_T = is_perpendicular and is_vertical and is_horizontal and (horizontal_length > MIN_HORIZONTAL_LENGTH)
 
         # display
         frame_disp = frame.copy()
@@ -195,7 +204,9 @@ def main():
             cv2.putText(frame_disp, f"Plus verticale: {most_vertical}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Angle vert: {vertical_angle:.1f}°", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Angle horiz: {horizontal_angle:.1f}°", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"T detecte: {'Oui' if is_T else 'Non'}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if is_T else (0, 0, 255), 2)
+            cv2.putText(frame_disp, f"Long vert: {vertical_length:.1f}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"Long horiz: {horizontal_length:.1f}", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"T detecte: {'Oui' if is_T else 'Non'}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if is_T else (0, 0, 255), 2)
         
 
         cv2.imshow("frame", frame)
