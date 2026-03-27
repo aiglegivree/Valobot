@@ -186,20 +186,17 @@ def main():
             is_vertical = abs(vertical_angle - 90) < 15
             is_horizontal = abs(horizontal_angle - 0) < 15 or abs(horizontal_angle - 180) < 15
             
-            # Vérifier que l'intersection n'est pas au milieu (pour distinguer T d'angle droit L)
+            # Vérifier le ratio des valeurs propres (variance verticale >> horizontale pour T, ~1 pour L)
             if most_vertical == "principale":
-                start_vert = start1
-                end_vert = end1
+                vertical_eigen = eigvals[0]
+                horizontal_eigen = eigvals[1]
             else:
-                start_vert = start2
-                end_vert = end2
-            dist_start = np.linalg.norm(mean - start_vert)
-            dist_end = np.linalg.norm(mean - end_vert)
-            min_dist = min(dist_start, dist_end)
-            max_dist = max(dist_start, dist_end)
-            intersection_not_at_middle = (min_dist / max_dist) < 0.5 if max_dist > 0 else False
+                vertical_eigen = eigvals[1]
+                horizontal_eigen = eigvals[0]
+            eigen_ratio = vertical_eigen / horizontal_eigen if horizontal_eigen > 0 else 0
+            sufficient_variance = eigen_ratio > 2.0
             
-            is_T = is_perpendicular and is_vertical and is_horizontal and (horizontal_length > MIN_HORIZONTAL_LENGTH) and intersection_not_at_middle
+            is_T = is_perpendicular and is_vertical and is_horizontal and (horizontal_length > MIN_HORIZONTAL_LENGTH) and sufficient_variance
 
         # display
         frame_disp = frame.copy()
@@ -219,7 +216,7 @@ def main():
             cv2.putText(frame_disp, f"Angle horiz: {horizontal_angle:.1f}°", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Long vert: {vertical_length:.1f}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Long horiz: {horizontal_length:.1f}", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Ratio dist: {min_dist/max_dist:.2f}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"Ratio eigen: {eigen_ratio:.2f}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"T detecte: {'Oui' if is_T else 'Non'}", (10, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if is_T else (0, 0, 255), 2)
         
 
