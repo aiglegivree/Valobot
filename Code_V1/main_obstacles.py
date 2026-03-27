@@ -55,8 +55,8 @@ def main():
     # ------------------------------------------------------------
     # Turn tuning
     # ------------------------------------------------------------
-    turn_speed = 0.25
-    dead_zone_seconds = 0.5   # suppress state updates for first 1s of turn
+    turn_speed = 0.23
+    dead_zone_seconds = 0.5   # suppress state updates 
     max_seconds_90 = 2.4      # budget for ~90° turn
     max_seconds_180 = 4.8     # budget for ~180° fallback turn
 
