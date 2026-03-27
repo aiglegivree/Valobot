@@ -67,7 +67,6 @@ MORPH_CLOSE_IT = 2
 # DETECTION T
 # ==============================
 MIN_HORIZONTAL_LENGTH = 250  # Longueur minimum pour la composante horizontale (en pixels)
-MIN_EIGEN_RATIO = 1.0  # Ratio minimum entre les valeurs propres verticale et horizontale (très bas pour détecter T même avec tige partiellement visible)
 
 # ==============================
 # ROI (même logique vision)
@@ -187,17 +186,16 @@ def main():
             is_vertical = abs(vertical_angle - 90) < 15
             is_horizontal = abs(horizontal_angle - 0) < 15 or abs(horizontal_angle - 180) < 15
             
-            # Vérifier le ratio des valeurs propres (variance verticale >> horizontale pour T, ~1 pour L)
-            if most_vertical == "principale":
-                vertical_eigen = eigvals[0]
-                horizontal_eigen = eigvals[1]
+            # Détecter si la barre horizontale est à gauche, à droite ou centrée
+            bar_balance_ratio = length_left / length_right if length_right > 0 else 0
+            if bar_balance_ratio < 0.7:
+                bar_position = "DROITE"
+            elif bar_balance_ratio > 1.4:
+                bar_position = "GAUCHE"
             else:
-                vertical_eigen = eigvals[1]
-                horizontal_eigen = eigvals[0]
-            eigen_ratio = vertical_eigen / horizontal_eigen if horizontal_eigen > 0 else 0
-            sufficient_variance = eigen_ratio > MIN_EIGEN_RATIO
+                bar_position = "CENTRE"
             
-            is_T = is_perpendicular and is_vertical and is_horizontal and (horizontal_length > MIN_HORIZONTAL_LENGTH) and sufficient_variance
+            is_T = is_perpendicular and is_vertical and is_horizontal and (horizontal_length > MIN_HORIZONTAL_LENGTH)
 
         # display
         frame_disp = frame.copy()
@@ -217,7 +215,7 @@ def main():
             cv2.putText(frame_disp, f"Angle horiz: {horizontal_angle:.1f}°", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Long vert: {vertical_length:.1f}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Long horiz: {horizontal_length:.1f}", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Ratio eigen: {eigen_ratio:.2f}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"Barre: {bar_position}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"T detecte: {'Oui' if is_T else 'Non'}", (10, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if is_T else (0, 0, 255), 2)
         
 
