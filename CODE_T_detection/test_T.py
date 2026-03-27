@@ -159,31 +159,32 @@ def skeletonize(mask):
 
 def count_endpoints_and_junctions(skeleton):
     """
-    Sur le squelette :
-    - endpoint = pixel avec exactement 1 voisin
-    - junction = pixel avec >= 3 voisins
+    Comptage robuste avec padding pour gérer les bords.
     """
+
+    # --- padding ---
     sk = (skeleton > 0).astype(np.uint8)
-    h, w = sk.shape
+    sk_pad = np.pad(sk, pad_width=1, mode='constant', constant_values=0)
+
+    h, w = sk_pad.shape
 
     endpoints = []
     junctions = []
 
     for y in range(1, h - 1):
         for x in range(1, w - 1):
-            if sk[y, x] == 0:
+            if sk_pad[y, x] == 0:
                 continue
 
-            patch = sk[y - 1:y + 2, x - 1:x + 2]
-            n = int(np.sum(patch)) - 1  # enlève le pixel central
+            patch = sk_pad[y - 1:y + 2, x - 1:x + 2]
+            n = int(np.sum(patch)) - 1
 
             if n == 1:
-                endpoints.append((x, y))
+                endpoints.append((x - 1, y - 1))  # ← remove padding offset
             elif n >= 3:
-                junctions.append((x, y))
+                junctions.append((x - 1, y - 1))
 
     return endpoints, junctions
-
 
 def main():
     leds = LED()
