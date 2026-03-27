@@ -21,19 +21,14 @@ BLACK_S_LOW = 0
 BLACK_V_LOW = 0
 
 BLACK_H_HIGH = 180
-BLACK_S_HIGH = 170
-BLACK_V_HIGH = 110
+BLACK_S_HIGH = 255
+BLACK_V_HIGH = 130
 
 # ==============================
 # MORPHO
 # ==============================
 KERNEL_SIZE = 5
 MORPH_CLOSE_IT = 2
-
-# ==============================
-# DETECTION T
-# ==============================
-MIN_HORIZONTAL_LENGTH = 250
 
 # ==============================
 # ROI
@@ -86,13 +81,12 @@ def keep_only_bottom_connected(mask):
     visited = np.zeros((h, w), dtype=np.uint8)
     queue = []
 
-    # seeds = tous les pixels blancs de la dernière ligne
+    # Seeds = pixels blancs sur la dernière ligne
     for x in range(w):
         if mask[h - 1, x] == 255:
             visited[h - 1, x] = 1
             queue.append((h - 1, x))
 
-    # BFS 8-connectivité
     neighbors = [
         (-1, -1), (-1, 0), (-1, 1),
         (0, -1),           (0, 1),
@@ -105,8 +99,7 @@ def keep_only_bottom_connected(mask):
         head += 1
 
         for dy, dx in neighbors:
-            ny = y + dy
-            nx = x + dx
+            ny, nx = y + dy, x + dx
             if 0 <= ny < h and 0 <= nx < w:
                 if visited[ny, nx] == 0 and mask[ny, nx] == 255:
                     visited[ny, nx] = 1
@@ -118,12 +111,12 @@ def keep_only_bottom_connected(mask):
 
 
 def compute_mask(frame):
-    h_frame, w_frame = frame.shape[:2]
+    h_frame, _ = frame.shape[:2]
 
     roi_start = int(h_frame * ROI_START_FRAC)
     roi = frame[roi_start:]
 
-    # blur AVANT HSV threshold
+    # blur avant threshold
     roi_blur = cv2.GaussianBlur(roi, (GAUSS_KSIZE, GAUSS_KSIZE), 0)
 
     hsv = cv2.cvtColor(roi_blur, cv2.COLOR_BGR2HSV)
@@ -138,9 +131,9 @@ def compute_mask(frame):
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
 
     # garder seulement ce qui est connecté au bas
-    mask_bottom = keep_only_bottom_connected(mask)
+    mask = keep_only_bottom_connected(mask)
 
-    return mask_bottom, roi_start, roi, roi_blur, mask
+    return mask, roi_start
 
 
 def skeletonize(mask):
@@ -164,6 +157,34 @@ def skeletonize(mask):
     return skel
 
 
+def count_endpoints_and_junctions(skeleton):
+    """
+    Sur le squelette :
+    - endpoint = pixel avec exactement 1 voisin
+    - junction = pixel avec >= 3 voisins
+    """
+    sk = (skeleton > 0).astype(np.uint8)
+    h, w = sk.shape
+
+    endpoints = []
+    junctions = []
+
+    for y in range(1, h - 1):
+        for x in range(1, w - 1):
+            if sk[y, x] == 0:
+                continue
+
+            patch = sk[y - 1:y + 2, x - 1:x + 2]
+            n = int(np.sum(patch)) - 1  # enlève le pixel central
+
+            if n == 1:
+                endpoints.append((x, y))
+            elif n >= 3:
+                junctions.append((x, y))
+
+    return endpoints, junctions
+
+
 def main():
     leds = LED()
     leds.turn_on_all()
@@ -176,167 +197,59 @@ def main():
             if not ret:
                 continue
 
-            mask, roi_start, roi_raw, roi_blur, mask_raw = compute_mask(frame)
+            mask, roi_start = compute_mask(frame)
             skeleton = skeletonize(mask)
 
-            # PCA sur le squelette
-            points = np.column_stack(np.where(skeleton == 255))
+            endpoints, junctions = count_endpoints_and_junctions(skeleton)
 
-            # valeurs par défaut
-            is_T = False
-            start1 = end1 = start2 = end2 = None
-            mean = None
+            branch_count = len(endpoints)
 
-            color1 = (255, 0, 0)
-            color2 = (0, 0, 255)
-            thickness1 = 1
-            thickness2 = 3
+            # représentation unique : mask en BGR
+            disp = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
 
-            length_left = 0.0
-            length_right = 0.0
-            most_vertical = "N/A"
-            vertical_angle = 0.0
-            horizontal_angle = 0.0
-            vertical_length = 0.0
-            horizontal_length = 0.0
-            bar_position = "N/A"
+            # afficher le squelette en vert
+            disp[skeleton == 255] = (0, 255, 0)
 
-            if len(points) > 1:
-                mean = np.mean(points, axis=0)
-                centered = points - mean
+            # afficher endpoints en bleu
+            for x, y in endpoints:
+                cv2.circle(disp, (x, y), 4, (255, 0, 0), -1)
 
-                cov = np.cov(centered.T)
-                eigvals, eigvecs = np.linalg.eigh(cov)
+            # afficher junctions en rouge
+            for x, y in junctions:
+                cv2.circle(disp, (x, y), 4, (0, 0, 255), -1)
 
-                idx = np.argsort(eigvals)[::-1]
-                eigvals = eigvals[idx]
-                eigvecs = eigvecs[:, idx]
+            # texte
+            cv2.putText(
+                disp,
+                f"Branches: {branch_count}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (0, 255, 255),
+                2
+            )
 
-                pc1 = eigvecs[:, 0]
-                pc2 = eigvecs[:, 1]
+            cv2.putText(
+                disp,
+                f"Endpoints: {len(endpoints)}",
+                (10, 65),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2
+            )
 
-                scale1 = 2 * np.sqrt(max(eigvals[0], 0))
-                scale2 = 2 * np.sqrt(max(eigvals[1], 0))
+            cv2.putText(
+                disp,
+                f"Junctions: {len(junctions)}",
+                (10, 95),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2
+            )
 
-                start1 = mean - scale1 * pc1
-                end1 = mean + scale1 * pc1
-                start2 = mean - scale2 * pc2
-                end2 = mean + scale2 * pc2
-
-                length_left = np.linalg.norm(mean - start2)
-                length_right = np.linalg.norm(end2 - mean)
-
-                angle1 = np.degrees(np.arctan2(pc1[0], pc1[1]))
-                angle2 = np.degrees(np.arctan2(pc2[0], pc2[1]))
-
-                angle1 = (angle1 + 180) % 180
-                angle2 = (angle2 + 180) % 180
-
-                vert_parallel_pc1 = abs(pc1[0])
-                vert_parallel_pc2 = abs(pc2[0])
-
-                vertical_color = (0, 0, 255)
-                other_color = (255, 0, 0)
-                vertical_thickness = 3
-                other_thickness = 1
-
-                if vert_parallel_pc1 > vert_parallel_pc2:
-                    most_vertical = "principale"
-                    color1 = vertical_color
-                    thickness1 = vertical_thickness
-                    color2 = other_color
-                    thickness2 = other_thickness
-                    vertical_angle = angle1
-                    horizontal_angle = angle2
-                    vertical_length = scale1
-                    horizontal_length = scale2
-                else:
-                    most_vertical = "secondaire"
-                    color1 = other_color
-                    thickness1 = other_thickness
-                    color2 = vertical_color
-                    thickness2 = vertical_thickness
-                    vertical_angle = angle2
-                    horizontal_angle = angle1
-                    vertical_length = scale2
-                    horizontal_length = scale1
-
-                angle_diff = abs(vertical_angle - horizontal_angle)
-                is_perpendicular = abs(angle_diff - 90) < 15
-                is_vertical = abs(vertical_angle - 90) < 15
-                is_horizontal = (
-                    abs(horizontal_angle - 0) < 15
-                    or abs(horizontal_angle - 180) < 15
-                )
-
-                bar_balance_ratio = length_left / length_right if length_right > 1e-6 else 0.0
-                if bar_balance_ratio < 0.7:
-                    bar_position = "DROITE"
-                elif bar_balance_ratio > 1.4:
-                    bar_position = "GAUCHE"
-                else:
-                    bar_position = "CENTRE"
-
-                is_T = (
-                    is_perpendicular
-                    and is_vertical
-                    and is_horizontal
-                    and (horizontal_length > MIN_HORIZONTAL_LENGTH)
-                )
-
-            # affichage
-            frame_disp = frame.copy()
-
-            overlay = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-            overlay[skeleton == 255] = (0, 255, 0)
-            frame_disp[roi_start:] = overlay
-
-            roi_disp = frame_disp[roi_start:]
-
-            if start1 is not None:
-                cv2.line(
-                    roi_disp,
-                    (int(start1[1]), int(start1[0])),
-                    (int(end1[1]), int(end1[0])),
-                    color1,
-                    thickness1,
-                )
-                cv2.line(
-                    roi_disp,
-                    (int(start2[1]), int(start2[0])),
-                    (int(end2[1]), int(end2[0])),
-                    color2,
-                    thickness2,
-                )
-                cv2.circle(roi_disp, (int(mean[1]), int(mean[0])), 4, (0, 255, 255), -1)
-
-            cv2.putText(frame_disp, f"Longueur gauche: {length_left:.2f}", (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Longueur droite: {length_right:.2f}", (10, 60),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Plus verticale: {most_vertical}", (10, 90),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Angle vert: {vertical_angle:.1f} deg", (10, 120),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Angle horiz: {horizontal_angle:.1f} deg", (10, 150),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Long vert: {vertical_length:.1f}", (10, 180),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Long horiz: {horizontal_length:.1f}", (10, 210),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"Barre: {bar_position}", (10, 240),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"T detecte: {'Oui' if is_T else 'Non'}", (10, 270),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                        (0, 255, 0) if is_T else (0, 0, 255), 2)
-
-            cv2.imshow("frame", frame)
-            cv2.imshow("roi_raw", roi_raw)
-            cv2.imshow("roi_blur", roi_blur)
-            cv2.imshow("mask_raw", mask_raw)
-            cv2.imshow("mask_bottom_connected", mask)
-            cv2.imshow("skeleton", skeleton)
-            cv2.imshow("overlay", frame_disp)
+            cv2.imshow("mask", disp)
 
             if cv2.waitKey(1) & 0xFF == 27:
                 break
