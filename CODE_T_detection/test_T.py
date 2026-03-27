@@ -66,7 +66,7 @@ MORPH_CLOSE_IT = 2
 # ==============================
 # DETECTION T
 # ==============================
-MIN_HORIZONTAL_LENGTH = 50  # Longueur minimum pour la composante horizontale (en pixels)
+MIN_HORIZONTAL_LENGTH = 250  # Longueur minimum pour la composante horizontale (en pixels)
 
 # ==============================
 # ROI (même logique vision)
@@ -180,13 +180,26 @@ def main():
                 vertical_length = scale2
                 horizontal_length = scale1
             
-            # Détection du T : vérifier si les angles sont perpendiculaires (diff ~90°) et un est vertical (~90°), l'autre horizontal (~0°)
+            # Détection du T : vérifier si les angles sont perpendiculaires et un est vertical, l'autre horizontal
             angle_diff = abs(vertical_angle - horizontal_angle)
             is_perpendicular = abs(angle_diff - 90) < 15  # tolérance de 15°
             is_vertical = abs(vertical_angle - 90) < 15
             is_horizontal = abs(horizontal_angle - 0) < 15 or abs(horizontal_angle - 180) < 15
             
-            is_T = is_perpendicular and is_vertical and is_horizontal and (horizontal_length > MIN_HORIZONTAL_LENGTH)
+            # Vérifier que l'intersection n'est pas au milieu (pour distinguer T d'angle droit L)
+            if most_vertical == "principale":
+                start_vert = start1
+                end_vert = end1
+            else:
+                start_vert = start2
+                end_vert = end2
+            dist_start = np.linalg.norm(mean - start_vert)
+            dist_end = np.linalg.norm(mean - end_vert)
+            min_dist = min(dist_start, dist_end)
+            max_dist = max(dist_start, dist_end)
+            intersection_not_at_middle = (min_dist / max_dist) < 0.5 if max_dist > 0 else False
+            
+            is_T = is_perpendicular and is_vertical and is_horizontal and (horizontal_length > MIN_HORIZONTAL_LENGTH) and intersection_not_at_middle
 
         # display
         frame_disp = frame.copy()
@@ -206,7 +219,8 @@ def main():
             cv2.putText(frame_disp, f"Angle horiz: {horizontal_angle:.1f}°", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Long vert: {vertical_length:.1f}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
             cv2.putText(frame_disp, f"Long horiz: {horizontal_length:.1f}", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_disp, f"T detecte: {'Oui' if is_T else 'Non'}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if is_T else (0, 0, 255), 2)
+            cv2.putText(frame_disp, f"Ratio dist: {min_dist/max_dist:.2f}", (10, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+            cv2.putText(frame_disp, f"T detecte: {'Oui' if is_T else 'Non'}", (10, 270), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if is_T else (0, 0, 255), 2)
         
 
         cv2.imshow("frame", frame)
