@@ -261,11 +261,11 @@ class CorridorNavigator:
                 rho, theta = line[0]
                 deg = math.degrees(theta)
 
-                if 80 <= deg <= 100:
+                if 85 <= deg <= 95:
                     horizontal_lines.append((rho, theta))
-                elif 30 < deg < 80:
+                elif 30 < deg < 85:
                     left_lines.append((rho, theta))
-                elif 100 < deg < 150:
+                elif 95 < deg < 150:
                     right_lines.append((rho, theta))
 
         return horizontal_lines, left_lines, right_lines
