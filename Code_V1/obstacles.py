@@ -15,7 +15,7 @@ class CorridorNavigator:
         candidate_miss_threshold=5,
         hsv_lower=(35, 40, 30),
         hsv_upper=(85, 255, 255),
-        a_upper=107,
+        a_upper=105,
         tuning=False,
         # Tuning for one-side + front-wall behavior
         corner_target_offset_px=50,
@@ -450,12 +450,12 @@ class CorridorNavigator:
                     if ix > (self.W / 2):
                         self.intersection = (ix, iy)
 
-                        # --- Apply correction to steer toward the intersection ---
+                        # --- Apply correction to steer toward desired side intersection ---
                         desired_corner_x = (self.W / 2) - self.corner_target_offset_px
                         corner_error = ix - desired_corner_x
                         corner_correction = self.corner_gain_px_per_px * corner_error
 
-                        target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
+                        target_x = int(round(desired_corner_x + tilt_correction + corner_correction))
                         self.target_x = max(0, min(self.W - 1, target_x))
                         self.target_visible = True
                         return
@@ -470,12 +470,12 @@ class CorridorNavigator:
                     if ix < (self.W / 2):
                         self.intersection = (ix, iy)
 
-                        # --- Apply correction to steer toward the intersection ---
+                        # --- Apply correction to steer toward desired side intersection ---
                         desired_corner_x = (self.W / 2) + self.corner_target_offset_px
                         corner_error = ix - desired_corner_x
                         corner_correction = self.corner_gain_px_per_px * corner_error
 
-                        target_x = int(round((self.W / 2) + tilt_correction + corner_correction))
+                        target_x = int(round(desired_corner_x + tilt_correction + corner_correction))
                         self.target_x = max(0, min(self.W - 1, target_x))
                         self.target_visible = True
                         return
