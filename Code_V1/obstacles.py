@@ -13,12 +13,12 @@ class CorridorNavigator:
         stop_y_threshold=300,
         start_y_threshold=150,
         candidate_miss_threshold=5,
-        lab_lower=(0, 0, 0),
-        lab_upper=(255, 109, 255),
+        hsv_lower=(35, 40, 30),
+        hsv_upper=(85, 255, 255),
         # New tuning for one-side + front-wall behavior
-        corner_target_offset_px=20,
-        corner_gain_px_per_px=0.6,
-        front_tilt_gain_px_per_deg=4.0,
+        corner_target_offset_px=50,
+        corner_gain_px_per_px=1.2,
+        front_tilt_gain_px_per_deg=6.0,
     ):
         # --- Input source configuration ---
         self.proto = proto
@@ -37,8 +37,8 @@ class CorridorNavigator:
         self.start_y_threshold = start_y_threshold
         self.candidate_miss_threshold = candidate_miss_threshold
 
-        self.lab_lower = np.array(lab_lower, dtype=np.uint8)
-        self.lab_upper = np.array(lab_upper, dtype=np.uint8)
+        self.lab_lower = np.array(hsv_lower, dtype=np.uint8)
+        self.lab_upper = np.array(hsv_upper, dtype=np.uint8)
 
         # --- New parameters for one-side + front-wall control ---
         self.corner_target_offset_px = corner_target_offset_px
@@ -181,9 +181,8 @@ class CorridorNavigator:
 
     def create_mask(self, frame):
         blur = cv2.GaussianBlur(frame, (3, 3), 1)
-        lab = cv2.cvtColor(blur, cv2.COLOR_RGB2LAB)
-
-        mask = cv2.inRange(lab, self.lab_lower, self.lab_upper)
+        hsv = cv2.cvtColor(blur, cv2.COLOR_BGR2HSV)
+        mask = cv2.inRange(hsv, self.lab_lower, self.lab_upper)
         mask = self.fill_holes(mask)
 
         kernel = np.ones((5, 5), np.uint8)
