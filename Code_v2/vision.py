@@ -168,12 +168,15 @@ def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray
     return out
 
 
-def keep_only_bottom_connected(mask: np.ndarray) -> np.ndarray:
+def keep_only_bottom_connected_in_rect(mask: np.ndarray, x_center: int, max_x_dist: int) -> np.ndarray:
     h, w = mask.shape
     visited = np.zeros((h, w), dtype=np.uint8)
     queue: list[tuple[int, int]] = []
 
-    for x in range(w):
+    x0 = max(0, x_center - max_x_dist)
+    x1 = min(w, x_center + max_x_dist + 1)
+
+    for x in range(x0, x1):
         if mask[h - 1, x] == 255:
             visited[h - 1, x] = 1
             queue.append((h - 1, x))
@@ -319,7 +322,11 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
     shape_mask, _ = compute_shape_mask_from_frame(frame_bgr)
-    shape_connected_mask = keep_only_bottom_connected(shape_mask)
+    shape_connected_mask = keep_only_bottom_connected_in_rect(
+        shape_mask,
+        x_center=shape_mask.shape[1] // 2,
+        max_x_dist=BOTTOM_SLICE_MAX_DIST,
+    )
     corners, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
 

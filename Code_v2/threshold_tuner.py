@@ -6,7 +6,7 @@ from pathlib import Path
 
 from camera import Camera
 from leds import LED
-from config import ROI_START_FRAC
+from config import ROI_START_FRAC, BOTTOM_SLICE_MAX_DIST
 
 
 WINDOW_CONTROLS = "Threshold Controls"
@@ -60,12 +60,15 @@ def get_values():
     }
 
 
-def keep_only_bottom_connected(mask: np.ndarray) -> np.ndarray:
+def keep_only_bottom_connected_in_rect(mask: np.ndarray, x_center: int, max_x_dist: int) -> np.ndarray:
     h, w = mask.shape
     visited = np.zeros((h, w), dtype=np.uint8)
     queue: list[tuple[int, int]] = []
 
-    for x in range(w):
+    x0 = max(0, x_center - max_x_dist)
+    x1 = min(w, x_center + max_x_dist + 1)
+
+    for x in range(x0, x1):
         if mask[h - 1, x] == 255:
             visited[h - 1, x] = 1
             queue.append((h - 1, x))
@@ -108,7 +111,11 @@ def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int
 
     kernel = np.ones((values["close_kernel"], values["close_kernel"]), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=values["close_iter"])
-    mask = keep_only_bottom_connected(mask)
+    mask = keep_only_bottom_connected_in_rect(
+        mask,
+        x_center=mask.shape[1] // 2,
+        max_x_dist=BOTTOM_SLICE_MAX_DIST,
+    )
 
     return mask, roi_start
 
