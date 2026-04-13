@@ -60,39 +60,31 @@ def get_values():
     }
 
 
-def keep_only_bottom_connected_in_rect(mask: np.ndarray, x_center: int, max_x_dist: int) -> np.ndarray:
+def keep_shape_connected_to_bottom_rect(mask: np.ndarray, x_center: int, max_x_dist: int) -> np.ndarray:
     h, w = mask.shape
-    visited = np.zeros((h, w), dtype=np.uint8)
-    queue: list[tuple[int, int]] = []
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if num_labels <= 1:
+        return np.zeros_like(mask)
 
     x0 = max(0, x_center - max_x_dist)
     x1 = min(w, x_center + max_x_dist + 1)
+    bottom_band = labels[max(0, h - 2):h, x0:x1]
+    candidate_labels = np.unique(bottom_band)
+    candidate_labels = candidate_labels[candidate_labels != 0]
 
-    for x in range(x0, x1):
-        if mask[h - 1, x] == 255:
-            visited[h - 1, x] = 1
-            queue.append((h - 1, x))
+    if candidate_labels.size == 0:
+        return np.zeros_like(mask)
 
-    neighbors = [
-        (-1, -1), (-1, 0), (-1, 1),
-        (0, -1),           (0, 1),
-        (1, -1),  (1, 0),  (1, 1),
-    ]
-
-    head = 0
-    while head < len(queue):
-        y, x = queue[head]
-        head += 1
-
-        for dy, dx in neighbors:
-            ny, nx = y + dy, x + dx
-            if 0 <= ny < h and 0 <= nx < w:
-                if visited[ny, nx] == 0 and mask[ny, nx] == 255:
-                    visited[ny, nx] = 1
-                    queue.append((ny, nx))
+    best_label = None
+    best_area = -1
+    for lab in candidate_labels:
+        area = int(stats[lab, cv2.CC_STAT_AREA])
+        if area > best_area:
+            best_area = area
+            best_label = lab
 
     out = np.zeros_like(mask)
-    out[visited == 1] = 255
+    out[labels == best_label] = 255
     return out
 
 
@@ -111,7 +103,7 @@ def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int
 
     kernel = np.ones((values["close_kernel"], values["close_kernel"]), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=values["close_iter"])
-    mask = keep_only_bottom_connected_in_rect(
+    mask = keep_shape_connected_to_bottom_rect(
         mask,
         x_center=mask.shape[1] // 2,
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
