@@ -42,6 +42,7 @@ PADDING = 1
 APPROX_EPSILON_FRAC = 0.03
 MIN_CONTOUR_AREA = 1200
 TARGET_SHARP_TURN_CORNERS = 6
+TARGET_T_CORNERS = 8
 
 
 class Camera:
@@ -185,6 +186,10 @@ def is_sharp_turn(corner_count):
     return corner_count == TARGET_SHARP_TURN_CORNERS
 
 
+def is_t_shape(corner_count):
+    return corner_count == TARGET_T_CORNERS
+
+
 def draw_contour_overlay(mask, contour, corners):
     disp = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
 
@@ -216,6 +221,7 @@ def main():
 
             corner_count = len(corners)
             is_turn = is_sharp_turn(corner_count)
+            is_t = is_t_shape(corner_count)
 
             disp = draw_contour_overlay(mask, contour, corners)
 
@@ -236,6 +242,16 @@ def main():
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
                 (0, 255, 0) if is_turn else (0, 0, 255),
+                2,
+            )
+
+            cv2.putText(
+                disp,
+                f"T: {'YES' if is_t else 'NO'}",
+                (10, 100),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 0) if is_t else (0, 0, 255),
                 2,
             )
 
