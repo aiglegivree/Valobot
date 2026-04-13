@@ -13,10 +13,10 @@ USE_PICAMERA2 = True
 # VISION
 # ============================================================
 ROI_START_FRAC = 0.50
-GAUSS_KSIZE = 5
+GAUSS_KSIZE = 15
 
-KERNEL_SIZE = 5
-MORPH_CLOSE_IT = 2
+KERNEL_SIZE = 15
+MORPH_CLOSE_IT = 1
 
 BAND_THICKNESS = 6
 
@@ -41,7 +41,7 @@ BLACK_V_LOW = 0
 
 BLACK_H_HIGH = 180
 BLACK_S_HIGH = 255
-BLACK_V_HIGH = 130
+BLACK_V_HIGH = 115
 
 # ============================================================
 # CORNER SHAPE DETECTION
