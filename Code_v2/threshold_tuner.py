@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from pathlib import Path
 
 from camera import Camera
 from leds import LED
@@ -12,6 +13,7 @@ WINDOW_CONTROLS = "Threshold Controls"
 WINDOW_CAMERA = "Camera"
 WINDOW_MASK = "Mask"
 WINDOW_SHAPE = "Shape Debug"
+CONFIG_PATH = Path(__file__).with_name("config.py")
 
 
 def nothing(_):
@@ -158,9 +160,41 @@ def print_values(values: dict):
     print(f"CORNER_APPROX_EPSILON_FRAC = {values['approx_frac']:.2f}")
 
 
+def replace_config_value(text: str, key: str, value: str) -> str:
+    marker = f"{key} = "
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(marker):
+            indent = line[: len(line) - len(line.lstrip())]
+            lines[i] = f"{indent}{key} = {value}"
+            return "\n".join(lines) + "\n"
+    raise ValueError(f"Key {key} not found in config.py")
+
+
+def save_values_to_config(values: dict):
+    text = CONFIG_PATH.read_text(encoding="utf-8")
+    updates = {
+        "BLACK_S_HIGH": str(values["black_s_max"]),
+        "BLACK_V_HIGH": str(values["black_v_max"]),
+        "GAUSS_KSIZE": str(values["blur"]),
+        "KERNEL_SIZE": str(values["close_kernel"]),
+        "MORPH_CLOSE_IT": str(values["close_iter"]),
+        "CORNER_MIN_CONTOUR_AREA": str(values["min_area"]),
+        "CORNER_APPROX_EPSILON_FRAC": f"{values['approx_frac']:.2f}",
+    }
+
+    for key, value in updates.items():
+        text = replace_config_value(text, key, value)
+
+    CONFIG_PATH.write_text(text, encoding="utf-8")
+    print(f"Saved current values to {CONFIG_PATH}")
+
+
 def main():
     leds = LED()
     leds.turn_on_all()
+    leds_on = True
     cam = Camera()
 
     create_trackbars()
@@ -220,6 +254,15 @@ def main():
                 (0, 255, 0) if corner_count == 8 else (0, 0, 255),
                 2,
             )
+            cv2.putText(
+                shape_view,
+                f"LEDs: {'ON' if leds_on else 'OFF'} | l toggle | s save config",
+                (10, 125),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                2,
+            )
 
             cv2.imshow(WINDOW_CAMERA, camera_view)
             cv2.imshow(WINDOW_MASK, mask)
@@ -235,6 +278,14 @@ def main():
                 break
             if key == ord("p"):
                 print_values(values)
+            if key == ord("l"):
+                leds_on = not leds_on
+                if leds_on:
+                    leds.turn_on_all()
+                else:
+                    leds.turn_off_all()
+            if key == ord("s"):
+                save_values_to_config(values)
 
     finally:
         try:
