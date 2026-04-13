@@ -206,7 +206,7 @@ def draw_contour_overlay(mask, contour, corners):
 
 def main():
     leds = LED()
-    leds.turn_off_all()
+    leds.turn_on_all()
 
     cam = Camera()
 
