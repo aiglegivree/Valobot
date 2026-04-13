@@ -45,7 +45,6 @@ class Controller:
 
         self.lost_count = 0
         self.hard_turn_pending = False
-        self.sharp_turn_memory = False
 
         # T stop logic
         self.t_count = 0
@@ -78,13 +77,6 @@ class Controller:
         # STEP 3: LINE VISIBLE
         # =========================================================
         if getattr(vision_result, "any_seen", False):
-            if getattr(vision_result, "sharp_turn_detected", False):
-                self.sharp_turn_memory = True
-            else:
-                # If the sharp turn disappeared but the line is still visible,
-                # continue normal tracking and drop the special recovery idea.
-                self.sharp_turn_memory = False
-
             self.mode = "TRACK"
             self.lost_count = 0
 
@@ -111,7 +103,10 @@ class Controller:
             elif vision_result.steer_error < -STEER_DEADZONE:
                 self.last_turn_sign = -1
 
-            if self.hard_turn_pending or abs(self.steer_cmd) > 0.55:
+            if getattr(vision_result, "sharp_turn_detected", False):
+                self.mode = "SHARP_TURN"
+                speed = 0.0
+            elif self.hard_turn_pending or abs(self.steer_cmd) > 0.55:
                 speed = TURN_SPEED
             else:
                 speed = BASE_SPEED
@@ -120,15 +115,6 @@ class Controller:
         # STEP 4: LINE LOST
         # =========================================================
         else:
-            if self.sharp_turn_memory:
-                self.mode = "SHARP_TURN_RECOVERY"
-                steer_target = self.last_turn_sign * BLIND_TURN_STEER
-                self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.45)
-                speed = 0.0
-
-                left, right = steering_to_wheels(speed, self.steer_cmd)
-                return left, right, speed, self.steer_cmd, self.mode
-
             self.lost_count += 1
 
             if self.lost_count <= BLIND_TURN_FRAMES:
