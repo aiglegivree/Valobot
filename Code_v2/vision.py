@@ -7,7 +7,7 @@ from config import (
     H, W,
     ROI_START_FRAC,
     GAUSS_KSIZE,
-    KERNEL_SIZE, MORPH_CLOSE_IT, MORPH_OPEN_IT,
+    KERNEL_SIZE, MORPH_CLOSE_IT,
     BAND_THICKNESS,
     SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
     W_TOP, W_MID, W_BOT,
@@ -56,15 +56,6 @@ class VisionResult:
 
     mask: np.ndarray
     connected_mask: np.ndarray
-
-
-def correct_top_down(mask: np.ndarray, angle_deg: float = 20) -> np.ndarray:
-    scale = 1.0 / np.cos(np.radians(angle_deg))
-    h, w = mask.shape
-    new_h = max(1, int(h * scale))
-    return cv2.resize(mask, (w, new_h), interpolation=cv2.INTER_NEAREST)
-
-
 def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     roi_start = int(H * ROI_START_FRAC)
     roi = frame_bgr[roi_start:H, :]
@@ -79,7 +70,6 @@ def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
 
     kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=MORPH_OPEN_IT)
 
     return mask, roi_start
 
@@ -119,34 +109,36 @@ def get_band_info(
     return cx, y, x_min, x_max, width, count
 
 
-def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray:
+def keep_only_bottom_connected(mask: np.ndarray) -> np.ndarray:
     h, w = mask.shape
+    visited = np.zeros((h, w), dtype=np.uint8)
+    queue: list[tuple[int, int]] = []
 
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    if num_labels <= 1:
-        return np.zeros_like(mask)
+    for x in range(w):
+        if mask[h - 1, x] == 255:
+            visited[h - 1, x] = 1
+            queue.append((h - 1, x))
 
-    x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
-    x1 = min(w, cx_ref + BOTTOM_SLICE_MAX_DIST + 1)
+    neighbors = [
+        (-1, -1), (-1, 0), (-1, 1),
+        (0, -1),           (0, 1),
+        (1, -1),  (1, 0),  (1, 1),
+    ]
 
-    bottom_band = labels[max(0, h - 2):h, x0:x1]
-    candidate_labels = np.unique(bottom_band)
-    candidate_labels = candidate_labels[candidate_labels != 0]
+    head = 0
+    while head < len(queue):
+        y, x = queue[head]
+        head += 1
 
-    if candidate_labels.size == 0:
-        return np.zeros_like(mask)
-
-    best_label = None
-    best_area = -1
-
-    for lab in candidate_labels:
-        area = int(stats[lab, cv2.CC_STAT_AREA])
-        if area > best_area:
-            best_area = area
-            best_label = lab
+        for dy, dx in neighbors:
+            ny, nx = y + dy, x + dx
+            if 0 <= ny < h and 0 <= nx < w:
+                if visited[ny, nx] == 0 and mask[ny, nx] == 255:
+                    visited[ny, nx] = 1
+                    queue.append((ny, nx))
 
     out = np.zeros_like(mask)
-    out[labels == best_label] = 255
+    out[visited == 1] = 255
     return out
 
 
@@ -196,16 +188,13 @@ def shift_contour_back(contour: np.ndarray | None) -> np.ndarray | None:
 
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     mask, roi_start = compute_mask_from_frame(frame_bgr)
+    connected_mask = keep_only_bottom_connected(mask)
+    h_mask, w_mask = connected_mask.shape
+    cx_ref = w_mask // 2
 
-    mask_td = correct_top_down(mask, angle_deg)
-    h_td, w_td = mask_td.shape
-    cx_ref = w_td // 2
-
-    connected_mask = keep_bottom_connected_component(mask_td, cx_ref)
-
-    y_top = int(SLICE_TOP_FRAC * h_td)
-    y_mid = int(SLICE_MID_FRAC * h_td)
-    y_bot = int(SLICE_BOT_FRAC * h_td)
+    y_top = int(SLICE_TOP_FRAC * h_mask)
+    y_mid = int(SLICE_MID_FRAC * h_mask)
+    y_bot = int(SLICE_BOT_FRAC * h_mask)
 
     cx_top, _, _, _, width_top, _ = get_band_info(
         connected_mask, SLICE_TOP_FRAC, BAND_THICKNESS
@@ -297,7 +286,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         t_detected=t_detected,
         corner_count=corner_count,
         corners=corners,
-        mask=mask_td,
+        mask=mask,
         connected_mask=connected_mask,
     )
 
