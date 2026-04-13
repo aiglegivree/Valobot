@@ -41,14 +41,14 @@ BLACK_V_LOW = 0
 
 BLACK_H_HIGH = 180
 BLACK_S_HIGH = 255
-BLACK_V_HIGH = 115
+BLACK_V_HIGH = 100
 
 # ============================================================
 # CORNER SHAPE DETECTION
 # ============================================================
 CORNER_PADDING = 1
 CORNER_APPROX_EPSILON_FRAC = 0.02
-CORNER_MIN_CONTOUR_AREA = 1200
+CORNER_MIN_CONTOUR_AREA = 1500
 SHARP_TURN_CORNERS = 6
 T_CORNERS = 8
 
