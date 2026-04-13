@@ -118,7 +118,9 @@ def apply_min_area_filter(
     area: float,
     min_area: int,
 ) -> np.ndarray:
-    if contour is None or area >= min_area:
+    if contour is None:
+        return mask
+    if area >= min_area:
         return mask
     return np.zeros_like(mask)
 
@@ -133,7 +135,7 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
     contour = max(contours, key=cv2.contourArea)
     area = float(cv2.contourArea(contour))
     if area < values["min_area"]:
-        return [], None, area
+        return [], contour, area
 
     perimeter = cv2.arcLength(contour, True)
     epsilon = values["approx_frac"] * perimeter
