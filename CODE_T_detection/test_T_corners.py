@@ -41,7 +41,7 @@ ROI_START_FRAC = 0.50
 PADDING = 1
 APPROX_EPSILON_FRAC = 0.03
 MIN_CONTOUR_AREA = 1200
-TARGET_T_CORNERS = 8
+TARGET_SHARP_TURN_CORNERS = 6
 
 
 class Camera:
@@ -181,8 +181,8 @@ def extract_corners_from_contour(mask):
     return corners, biggest, padded
 
 
-def is_T_shape(corner_count):
-    return corner_count == TARGET_T_CORNERS
+def is_sharp_turn(corner_count):
+    return corner_count == TARGET_SHARP_TURN_CORNERS
 
 
 def draw_contour_overlay(mask, contour, corners):
@@ -215,7 +215,7 @@ def main():
             corners, contour, _ = extract_corners_from_contour(mask)
 
             corner_count = len(corners)
-            is_t = is_T_shape(corner_count)
+            is_turn = is_sharp_turn(corner_count)
 
             disp = draw_contour_overlay(mask, contour, corners)
 
@@ -231,11 +231,11 @@ def main():
 
             cv2.putText(
                 disp,
-                f"T: {'YES' if is_t else 'NO'}",
+                f"Sharp turn: {'YES' if is_turn else 'NO'}",
                 (10, 65),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
-                (0, 255, 0) if is_t else (0, 0, 255),
+                (0, 255, 0) if is_turn else (0, 0, 255),
                 2,
             )
 
