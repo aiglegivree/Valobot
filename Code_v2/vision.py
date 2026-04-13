@@ -56,7 +56,35 @@ class VisionResult:
 
     mask: np.ndarray
     connected_mask: np.ndarray
-def compute_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
+    shape_mask: np.ndarray
+
+
+def correct_top_down(mask: np.ndarray, angle_deg: float = 20) -> np.ndarray:
+    scale = 1.0 / np.cos(np.radians(angle_deg))
+    h, w = mask.shape
+    new_h = max(1, int(h * scale))
+    return cv2.resize(mask, (w, new_h), interpolation=cv2.INTER_NEAREST)
+
+
+def compute_line_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
+    roi_start = int(H * ROI_START_FRAC)
+    roi = frame_bgr[roi_start:H, :]
+
+    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+
+    lower_black = np.array([BLACK_H_LOW, BLACK_S_LOW, BLACK_V_LOW], dtype=np.uint8)
+    upper_black = np.array([180, 170, 110], dtype=np.uint8)
+
+    mask = cv2.inRange(hsv, lower_black, upper_black)
+
+    kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+
+    return mask, roi_start
+
+
+def compute_shape_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int]:
     roi_start = int(H * ROI_START_FRAC)
     roi = frame_bgr[roi_start:H, :]
 
@@ -107,6 +135,37 @@ def get_band_info(
     count = int(xs_full.size)
 
     return cx, y, x_min, x_max, width, count
+
+
+def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray:
+    h, w = mask.shape
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if num_labels <= 1:
+        return np.zeros_like(mask)
+
+    x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
+    x1 = min(w, cx_ref + BOTTOM_SLICE_MAX_DIST + 1)
+
+    bottom_band = labels[max(0, h - 2):h, x0:x1]
+    candidate_labels = np.unique(bottom_band)
+    candidate_labels = candidate_labels[candidate_labels != 0]
+
+    if candidate_labels.size == 0:
+        return np.zeros_like(mask)
+
+    best_label = None
+    best_area = -1
+
+    for lab in candidate_labels:
+        area = int(stats[lab, cv2.CC_STAT_AREA])
+        if area > best_area:
+            best_area = area
+            best_label = lab
+
+    out = np.zeros_like(mask)
+    out[labels == best_label] = 255
+    return out
 
 
 def keep_only_bottom_connected(mask: np.ndarray) -> np.ndarray:
@@ -187,14 +246,16 @@ def shift_contour_back(contour: np.ndarray | None) -> np.ndarray | None:
 
 
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
-    mask, roi_start = compute_mask_from_frame(frame_bgr)
-    connected_mask = keep_only_bottom_connected(mask)
-    h_mask, w_mask = connected_mask.shape
-    cx_ref = w_mask // 2
+    line_mask, roi_start = compute_line_mask_from_frame(frame_bgr)
+    mask_td = correct_top_down(line_mask, angle_deg)
+    h_td, w_td = mask_td.shape
+    cx_ref = w_td // 2
 
-    y_top = int(SLICE_TOP_FRAC * h_mask)
-    y_mid = int(SLICE_MID_FRAC * h_mask)
-    y_bot = int(SLICE_BOT_FRAC * h_mask)
+    connected_mask = keep_bottom_connected_component(mask_td, cx_ref)
+
+    y_top = int(SLICE_TOP_FRAC * h_td)
+    y_mid = int(SLICE_MID_FRAC * h_td)
+    y_bot = int(SLICE_BOT_FRAC * h_td)
 
     cx_top, _, _, _, width_top, _ = get_band_info(
         connected_mask, SLICE_TOP_FRAC, BAND_THICKNESS
@@ -257,7 +318,9 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     err_bot = float(cx_bot_use - cx_ref)
     steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
-    corners, _ = extract_corners_from_connected_mask(connected_mask)
+    shape_mask, _ = compute_shape_mask_from_frame(frame_bgr)
+    shape_connected_mask = keep_only_bottom_connected(shape_mask)
+    corners, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
     sharp_turn_detected = corner_count == SHARP_TURN_CORNERS
     t_detected = corner_count == T_CORNERS
@@ -286,8 +349,9 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         t_detected=t_detected,
         corner_count=corner_count,
         corners=corners,
-        mask=mask,
+        mask=mask_td,
         connected_mask=connected_mask,
+        shape_mask=shape_connected_mask,
     )
 
 
@@ -341,16 +405,6 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
     draw_one(vision_result.y_top, vision_result.cx_top, (0, 255, 0), "TOP")
     draw_one(vision_result.y_mid, vision_result.cx_mid, (0, 200, 255), "MID")
     draw_one(vision_result.y_bot, vision_result.cx_bot, (0, 0, 255), "BOT")
-
-    _, contour = extract_corners_from_connected_mask(mask)
-    shifted = shift_contour_back(contour)
-    if shifted is not None:
-        roi_vis = out[roi_start:roi_start + h_roi, :w_roi]
-        cv2.drawContours(roi_vis, [shifted], -1, (0, 255, 0), 2)
-
-    for x, y in vision_result.corners:
-        if 0 <= x < w_roi and 0 <= y < h_roi:
-            cv2.circle(out, (x, roi_start + y), 4, (255, 0, 255), -1)
 
     cv2.putText(
         out,
@@ -419,15 +473,6 @@ def draw_mask_slices(vision_result: VisionResult):
     )
 
     cv2.line(vis, (cx_ref, 0), (cx_ref, vis.shape[0] - 1), (255, 0, 0), 1)
-
-    _, contour = extract_corners_from_connected_mask(vision_result.connected_mask)
-    shifted = shift_contour_back(contour)
-    if shifted is not None:
-        cv2.drawContours(vis, [shifted], -1, (0, 255, 0), 2)
-
-    for x, y in vision_result.corners:
-        if 0 <= x < vis.shape[1] and 0 <= y < vis.shape[0]:
-            cv2.circle(vis, (x, y), 4, (255, 0, 255), -1)
 
     cv2.putText(
         vis,
