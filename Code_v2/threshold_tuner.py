@@ -112,16 +112,17 @@ def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int
     return mask, roi_start
 
 
-def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int]], np.ndarray | None]:
+def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int]], np.ndarray | None, float]:
     padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
     contours, _ = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
     if not contours:
-        return [], None
+        return [], None, 0.0
 
     contour = max(contours, key=cv2.contourArea)
-    if cv2.contourArea(contour) < values["min_area"]:
-        return [], contour
+    area = float(cv2.contourArea(contour))
+    if area < values["min_area"]:
+        return [], None, area
 
     perimeter = cv2.arcLength(contour, True)
     epsilon = values["approx_frac"] * perimeter
@@ -131,7 +132,7 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
     for point in approx.reshape(-1, 2):
         corners.append((int(point[0]) - 1, int(point[1]) - 1))
 
-    return corners, contour
+    return corners, contour, area
 
 
 def draw_shape_debug(mask: np.ndarray, contour: np.ndarray | None, corners: list[tuple[int, int]]) -> np.ndarray:
@@ -198,7 +199,7 @@ def main():
 
             values = get_values()
             mask, roi_start = compute_shape_mask(frame, values)
-            corners, contour = extract_corners(mask, values)
+            corners, contour, area = extract_corners(mask, values)
             corner_count = len(corners)
 
             camera_view = frame.copy()
@@ -252,6 +253,15 @@ def main():
                 shape_view,
                 f"Min area: {values['min_area']}",
                 (10, 155),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                2,
+            )
+            cv2.putText(
+                shape_view,
+                f"Area: {int(area)}",
+                (10, 185),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
                 (255, 255, 255),
