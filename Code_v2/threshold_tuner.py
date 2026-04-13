@@ -29,7 +29,7 @@ def create_trackbars():
     cv2.createTrackbar("Blur", WINDOW_CONTROLS, 5, 15, nothing)
     cv2.createTrackbar("Close kernel", WINDOW_CONTROLS, 5, 15, nothing)
     cv2.createTrackbar("Close iter", WINDOW_CONTROLS, 2, 10, nothing)
-    cv2.createTrackbar("Min area", WINDOW_CONTROLS, 1200, 10000, nothing)
+    cv2.createTrackbar("Min area", WINDOW_CONTROLS, 1200, 100000, nothing)
     cv2.createTrackbar("Approx x100", WINDOW_CONTROLS, 2, 20, nothing)
 
 
@@ -156,17 +156,6 @@ def draw_shape_debug(mask: np.ndarray, contour: np.ndarray | None, corners: list
     return disp
 
 
-def print_values(values: dict):
-    print("Suggested config values:")
-    print(f"BLACK_S_HIGH = {values['black_s_max']}")
-    print(f"BLACK_V_HIGH = {values['black_v_max']}")
-    print(f"GAUSS_KSIZE = {values['blur']}")
-    print(f"KERNEL_SIZE = {values['close_kernel']}")
-    print(f"MORPH_CLOSE_IT = {values['close_iter']}")
-    print(f"CORNER_MIN_CONTOUR_AREA = {values['min_area']}")
-    print(f"CORNER_APPROX_EPSILON_FRAC = {values['approx_frac']:.2f}")
-
-
 def replace_config_value(text: str, key: str, value: str) -> str:
     marker = f"{key} = "
     lines = text.splitlines()
@@ -195,7 +184,6 @@ def save_values_to_config(values: dict):
         text = replace_config_value(text, key, value)
 
     CONFIG_PATH.write_text(text, encoding="utf-8")
-    print(f"Saved current values to {CONFIG_PATH}")
 
 
 def main():
@@ -209,8 +197,6 @@ def main():
     cv2.namedWindow(WINDOW_CAMERA, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_MASK, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_SHAPE, cv2.WINDOW_NORMAL)
-
-    last_values = None
 
     try:
         while True:
@@ -270,21 +256,23 @@ def main():
                 (255, 255, 255),
                 2,
             )
+            cv2.putText(
+                shape_view,
+                f"Min area: {values['min_area']}",
+                (10, 155),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                2,
+            )
 
             cv2.imshow(WINDOW_CAMERA, camera_view)
             cv2.imshow(WINDOW_MASK, mask)
             cv2.imshow(WINDOW_SHAPE, shape_view)
 
-            current_values = tuple(values.items())
-            if current_values != last_values:
-                print_values(values)
-                last_values = current_values
-
             key = cv2.waitKey(1) & 0xFF
             if key == 27 or key == ord("q"):
                 break
-            if key == ord("p"):
-                print_values(values)
             if key == ord("l"):
                 leds_on = not leds_on
                 if leds_on:
