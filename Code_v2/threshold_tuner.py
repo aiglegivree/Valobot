@@ -112,6 +112,17 @@ def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int
     return mask, roi_start
 
 
+def apply_min_area_filter(
+    mask: np.ndarray,
+    contour: np.ndarray | None,
+    area: float,
+    min_area: int,
+) -> np.ndarray:
+    if contour is None or area >= min_area:
+        return mask
+    return np.zeros_like(mask)
+
+
 def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int]], np.ndarray | None, float]:
     padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
     contours, _ = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -200,6 +211,7 @@ def main():
             values = get_values()
             mask, roi_start = compute_shape_mask(frame, values)
             corners, contour, area = extract_corners(mask, values)
+            filtered_mask = apply_min_area_filter(mask, contour, area, values["min_area"])
             corner_count = len(corners)
 
             camera_view = frame.copy()
@@ -211,7 +223,7 @@ def main():
                 2,
             )
 
-            shape_view = draw_shape_debug(mask, contour, corners)
+            shape_view = draw_shape_debug(filtered_mask, contour, corners)
 
             cv2.putText(
                 shape_view,
@@ -269,7 +281,7 @@ def main():
             )
 
             cv2.imshow(WINDOW_CAMERA, camera_view)
-            cv2.imshow(WINDOW_MASK, mask)
+            cv2.imshow(WINDOW_MASK, filtered_mask)
             cv2.imshow(WINDOW_SHAPE, shape_view)
 
             key = cv2.waitKey(1) & 0xFF
