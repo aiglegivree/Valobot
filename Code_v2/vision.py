@@ -322,8 +322,25 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     shape_connected_mask = keep_only_bottom_connected(shape_mask)
     corners, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
-    sharp_turn_detected = corner_count == SHARP_TURN_CORNERS
-    t_detected = corner_count == T_CORNERS
+
+    # Only trust corner-based shape classification when the line-following
+    # pipeline also sees a real bottom segment. This prevents random dark
+    # blobs or floor shadows from being labeled as turns/Ts.
+    shape_detection_allowed = (
+        seen_bot and
+        width_bot > 0 and
+        abs(cx_bot - cx_ref) <= BOTTOM_SLICE_MAX_DIST
+    )
+
+    if shape_detection_allowed:
+        sharp_turn_detected = corner_count == SHARP_TURN_CORNERS
+        t_detected = corner_count == T_CORNERS
+    else:
+        sharp_turn_detected = False
+        t_detected = False
+        corner_count = 0
+        corners = []
+        shape_connected_mask = np.zeros_like(shape_connected_mask)
 
     return VisionResult(
         cx_top=cx_top,
