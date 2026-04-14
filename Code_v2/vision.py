@@ -490,6 +490,10 @@ def draw_mask_slices(vision_result: VisionResult):
 
     cv2.line(vis, (cx_ref, 0), (cx_ref, vis.shape[0] - 1), (255, 0, 0), 1)
 
+    for x, y in vision_result.corners:
+        if 0 <= x < vis.shape[1] and 0 <= y < vis.shape[0]:
+            cv2.circle(vis, (x, y), 4, (255, 0, 255), -1)
+
     cv2.putText(
         vis,
         f"Corners: {vision_result.corner_count}",
