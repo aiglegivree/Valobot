@@ -144,10 +144,12 @@ def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray
     if num_labels <= 1:
         return np.zeros_like(mask)
 
+    pad = min(CORNER_PADDING, max(0, h - 1))
+    anchor_bottom = max(1, h - pad)
     x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
     x1 = min(w, cx_ref + BOTTOM_SLICE_MAX_DIST + 1)
 
-    bottom_band = labels[max(0, h - 2):h, x0:x1]
+    bottom_band = labels[max(0, anchor_bottom - 2):anchor_bottom, x0:x1]
     candidate_labels = np.unique(bottom_band)
     candidate_labels = candidate_labels[candidate_labels != 0]
 
@@ -174,9 +176,11 @@ def keep_shape_connected_to_bottom_rect(mask: np.ndarray, x_center: int, max_x_d
     if num_labels <= 1:
         return np.zeros_like(mask)
 
+    pad = min(CORNER_PADDING, max(0, h - 1))
+    anchor_bottom = max(1, h - pad)
     x0 = max(0, x_center - max_x_dist)
     x1 = min(w, x_center + max_x_dist + 1)
-    bottom_band = labels[max(0, h - 2):h, x0:x1]
+    bottom_band = labels[max(0, anchor_bottom - 2):anchor_bottom, x0:x1]
     candidate_labels = np.unique(bottom_band)
     candidate_labels = candidate_labels[candidate_labels != 0]
 
@@ -259,10 +263,12 @@ def shift_contour_back(contour: np.ndarray | None) -> np.ndarray | None:
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     line_mask, roi_start = compute_line_mask_from_frame(frame_bgr)
     mask_td = correct_top_down(line_mask, angle_deg)
+    mask_td = apply_black_border(mask_td)
     h_td, w_td = mask_td.shape
     cx_ref = w_td // 2
 
     connected_mask = keep_bottom_connected_component(mask_td, cx_ref)
+    connected_mask = apply_black_border(connected_mask)
 
     y_top = int(SLICE_TOP_FRAC * h_td)
     y_mid = int(SLICE_MID_FRAC * h_td)
@@ -330,6 +336,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
     shape_mask, _ = compute_shape_mask_from_frame(frame_bgr)
+    shape_mask = apply_black_border(shape_mask)
     shape_connected_mask = keep_shape_connected_to_bottom_rect(
         shape_mask,
         x_center=shape_mask.shape[1] // 2,
