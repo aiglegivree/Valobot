@@ -438,6 +438,7 @@ def main():
                 values["brown_min_area"],
             )
             filtered_mask = apply_min_area_filter(mask, contour, area, values["min_area"])
+            black_visible = bool(np.any(filtered_mask > 0))
             corner_count = len(corners)
             edge_margin = max(1, 2 * CORNER_PADDING)
             left_border_corners, right_border_corners = count_side_border_corners(
@@ -445,7 +446,7 @@ def main():
                 filtered_mask.shape[1],
                 edge_margin,
             )
-            brown_detected = brown_area >= values["brown_min_area"]
+            brown_detected = (not black_visible) and (brown_area >= values["brown_min_area"])
 
             camera_view = frame.copy()
             cv2.rectangle(
@@ -525,6 +526,15 @@ def main():
                 shape_view,
                 f"Brown area: {int(brown_area)} / {values['brown_min_area']}",
                 (10, 245),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                2,
+            )
+            cv2.putText(
+                shape_view,
+                f"Black visible: {'YES' if black_visible else 'NO'}",
+                (10, 275),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
                 (255, 255, 255),
