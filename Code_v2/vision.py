@@ -237,6 +237,23 @@ def is_near_frame_edge(x: int, y: int, width: int, height: int, margin: int) -> 
     )
 
 
+def count_side_border_corners(
+    corners: list[tuple[int, int]],
+    width: int,
+    margin: int,
+) -> tuple[int, int]:
+    left_count = 0
+    right_count = 0
+
+    for x, _ in corners:
+        if x <= margin:
+            left_count += 1
+        if x >= width - 1 - margin:
+            right_count += 1
+
+    return left_count, right_count
+
+
 def extract_corners_from_connected_mask(
     connected_mask: np.ndarray,
 ) -> tuple[list[tuple[int, int]], np.ndarray | None]:
@@ -385,6 +402,12 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     shape_connected_mask = apply_black_border(shape_connected_mask)
     corners, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
+    t_edge_margin = max(1, 2 * CORNER_PADDING)
+    left_border_corners, right_border_corners = count_side_border_corners(
+        corners,
+        shape_connected_mask.shape[1],
+        t_edge_margin,
+    )
 
     # Only trust corner-based shape classification when the line-following
     # pipeline also sees a real bottom segment. This prevents random dark
@@ -397,7 +420,11 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 
     if shape_detection_allowed:
         sharp_turn_detected = corner_count == SHARP_TURN_CORNERS
-        t_detected = corner_count == T_CORNERS
+        t_detected = (
+            corner_count == T_CORNERS and
+            left_border_corners >= 2 and
+            right_border_corners >= 2
+        )
     else:
         sharp_turn_detected = False
         t_detected = False
