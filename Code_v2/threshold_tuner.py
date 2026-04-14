@@ -6,7 +6,17 @@ from pathlib import Path
 
 from camera import Camera
 from leds import LED
-from config import ROI_START_FRAC, BOTTOM_SLICE_MAX_DIST
+from config import (
+    ROI_START_FRAC,
+    BOTTOM_SLICE_MAX_DIST,
+    BLACK_S_HIGH,
+    BLACK_V_HIGH,
+    GAUSS_KSIZE,
+    KERNEL_SIZE,
+    MORPH_CLOSE_IT,
+    CORNER_MIN_CONTOUR_AREA,
+    CORNER_APPROX_EPSILON_FRAC,
+)
 
 
 WINDOW_CONTROLS = "Threshold Controls"
@@ -24,13 +34,19 @@ def create_trackbars():
     cv2.namedWindow(WINDOW_CONTROLS, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_CONTROLS, 460, 520)
 
-    cv2.createTrackbar("Black S max", WINDOW_CONTROLS, 255, 255, nothing)
-    cv2.createTrackbar("Black V max", WINDOW_CONTROLS, 130, 255, nothing)
-    cv2.createTrackbar("Blur", WINDOW_CONTROLS, 5, 15, nothing)
-    cv2.createTrackbar("Close kernel", WINDOW_CONTROLS, 5, 15, nothing)
-    cv2.createTrackbar("Close iter", WINDOW_CONTROLS, 2, 10, nothing)
-    cv2.createTrackbar("Min area", WINDOW_CONTROLS, 1200, 100000, nothing)
-    cv2.createTrackbar("Approx x100", WINDOW_CONTROLS, 2, 20, nothing)
+    cv2.createTrackbar("Black S max", WINDOW_CONTROLS, BLACK_S_HIGH, 255, nothing)
+    cv2.createTrackbar("Black V max", WINDOW_CONTROLS, BLACK_V_HIGH, 255, nothing)
+    cv2.createTrackbar("Blur", WINDOW_CONTROLS, min(GAUSS_KSIZE, 15), 15, nothing)
+    cv2.createTrackbar("Close kernel", WINDOW_CONTROLS, min(KERNEL_SIZE, 15), 15, nothing)
+    cv2.createTrackbar("Close iter", WINDOW_CONTROLS, min(MORPH_CLOSE_IT, 10), 10, nothing)
+    cv2.createTrackbar("Min area", WINDOW_CONTROLS, min(CORNER_MIN_CONTOUR_AREA, 100000), 100000, nothing)
+    cv2.createTrackbar(
+        "Approx x100",
+        WINDOW_CONTROLS,
+        min(max(int(round(CORNER_APPROX_EPSILON_FRAC * 100)), 0), 20),
+        20,
+        nothing,
+    )
 
 
 def odd_at_least_one(value: int) -> int:
