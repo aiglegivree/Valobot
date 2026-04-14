@@ -45,7 +45,7 @@ BLACK_V_HIGH = 139
 
 # brown threshold in HSV
 BROWN_H_LOW = 5
-BROWN_S_LOW = 35
+BROWN_S_LOW = 80
 BROWN_V_LOW = 61
 
 BROWN_H_HIGH = 180
