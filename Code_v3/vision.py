@@ -472,7 +472,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 
     brown_mask, _ = compute_brown_mask_from_frame(frame_bgr)
     brown_area, brown_connected_mask = extract_all_brown_regions(brown_mask, BROWN_MIN_AREA)
-    brown_detected = brown_area >= BROWN_MIN_AREA
+    brown_detected = (not any_seen) and (brown_area >= BROWN_MIN_AREA)
 
     return VisionResult(
         cx_top=cx_top,
