@@ -39,7 +39,7 @@ def create_trackbars():
     cv2.createTrackbar("Blur", WINDOW_CONTROLS, min(GAUSS_KSIZE, 15), 15, nothing)
     cv2.createTrackbar("Close kernel", WINDOW_CONTROLS, min(KERNEL_SIZE, 15), 15, nothing)
     cv2.createTrackbar("Close iter", WINDOW_CONTROLS, min(MORPH_CLOSE_IT, 10), 10, nothing)
-    cv2.createTrackbar("Min area", WINDOW_CONTROLS, min(CORNER_MIN_CONTOUR_AREA, 100000), 100000, nothing)
+    cv2.createTrackbar("Corner min area", WINDOW_CONTROLS, min(CORNER_MIN_CONTOUR_AREA, 100000), 100000, nothing)
     cv2.createTrackbar(
         "Approx x100",
         WINDOW_CONTROLS,
@@ -62,7 +62,7 @@ def get_values():
     blur = odd_at_least_one(cv2.getTrackbarPos("Blur", WINDOW_CONTROLS))
     close_kernel = odd_at_least_one(cv2.getTrackbarPos("Close kernel", WINDOW_CONTROLS))
     close_iter = max(1, cv2.getTrackbarPos("Close iter", WINDOW_CONTROLS))
-    min_area = cv2.getTrackbarPos("Min area", WINDOW_CONTROLS)
+    min_area = cv2.getTrackbarPos("Corner min area", WINDOW_CONTROLS)
     approx_frac = cv2.getTrackbarPos("Approx x100", WINDOW_CONTROLS) / 100.0
 
     return {
@@ -281,7 +281,7 @@ def main():
             )
             cv2.putText(
                 shape_view,
-                f"Min area: {values['min_area']}",
+                f"Corner min area: {values['min_area']}",
                 (10, 155),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
