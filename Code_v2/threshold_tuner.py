@@ -181,6 +181,23 @@ def is_near_frame_edge(x: int, y: int, width: int, height: int, margin: int) -> 
     )
 
 
+def count_side_border_corners(
+    corners: list[tuple[int, int]],
+    width: int,
+    margin: int,
+) -> tuple[int, int]:
+    left_count = 0
+    right_count = 0
+
+    for x, _ in corners:
+        if x <= margin:
+            left_count += 1
+        if x >= width - 1 - margin:
+            right_count += 1
+
+    return left_count, right_count
+
+
 def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int]], np.ndarray | None, float]:
     padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
     contours, _ = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -305,6 +322,17 @@ def main():
             corners, contour, area = extract_corners(mask, values)
             filtered_mask = apply_min_area_filter(mask, contour, area, values["min_area"])
             corner_count = len(corners)
+            edge_margin = max(1, 2 * CORNER_PADDING)
+            left_border_corners, right_border_corners = count_side_border_corners(
+                corners,
+                filtered_mask.shape[1],
+                edge_margin,
+            )
+            t_detected = (
+                corner_count == 8 and
+                left_border_corners >= 2 and
+                right_border_corners >= 2
+            )
 
             camera_view = frame.copy()
             cv2.rectangle(
@@ -337,11 +365,11 @@ def main():
             )
             cv2.putText(
                 shape_view,
-                f"T: {'YES' if corner_count == 8 else 'NO'}",
+                f"T: {'YES' if t_detected else 'NO'}",
                 (10, 95),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (0, 255, 0) if corner_count == 8 else (0, 0, 255),
+                (0, 255, 0) if t_detected else (0, 0, 255),
                 2,
             )
             cv2.putText(
