@@ -6,12 +6,11 @@ from pathlib import Path
 
 from camera import Camera
 from leds import LED
-from config import ROI_START_FRAC, W, H
+from config import W, H
 
 
 WINDOW_CONTROLS = "Brown HSV Controls"
 WINDOW_CAMERA = "Camera"
-WINDOW_ROI = "ROI"
 WINDOW_MASK = "Brown Mask"
 WINDOW_RESULT = "Brown Result"
 SAVE_PATH = Path(__file__).with_name("brown_hsv_values.txt")
@@ -90,12 +89,9 @@ def save_values(values: dict):
     SAVE_PATH.write_text(text, encoding="utf-8")
 
 
-def build_brown_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, np.ndarray, int]:
-    roi_start = int(H * ROI_START_FRAC)
-    roi = frame[roi_start:, :]
-
-    roi_blur = cv2.GaussianBlur(roi, (values["blur"], values["blur"]), 0)
-    hsv = cv2.cvtColor(roi_blur, cv2.COLOR_BGR2HSV)
+def build_brown_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    frame_blur = cv2.GaussianBlur(frame, (values["blur"], values["blur"]), 0)
+    hsv = cv2.cvtColor(frame_blur, cv2.COLOR_BGR2HSV)
 
     low = np.array([values["h_low"], values["s_low"], values["v_low"]], dtype=np.uint8)
     high = np.array([values["h_high"], values["s_high"], values["v_high"]], dtype=np.uint8)
@@ -109,8 +105,8 @@ def build_brown_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, np.nd
         close_kernel = np.ones((values["close_kernel"], values["close_kernel"]), np.uint8)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, close_kernel, iterations=values["close_iter"])
 
-    result = cv2.bitwise_and(roi, roi, mask=mask)
-    return roi, mask, result
+    result = cv2.bitwise_and(frame, frame, mask=mask)
+    return frame, mask, result
 
 
 def main():
@@ -122,7 +118,6 @@ def main():
     create_trackbars()
 
     cv2.namedWindow(WINDOW_CAMERA, cv2.WINDOW_NORMAL)
-    cv2.namedWindow(WINDOW_ROI, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_MASK, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_RESULT, cv2.WINDOW_NORMAL)
 
@@ -133,17 +128,9 @@ def main():
                 continue
 
             values = get_values()
-            roi, mask, result = build_brown_mask(frame, values)
+            full_view, mask, result = build_brown_mask(frame, values)
 
-            camera_view = frame.copy()
-            roi_start = int(H * ROI_START_FRAC)
-            cv2.rectangle(
-                camera_view,
-                (0, roi_start),
-                (W - 1, H - 1),
-                (0, 255, 255),
-                2,
-            )
+            camera_view = full_view.copy()
 
             cv2.putText(
                 camera_view,
@@ -167,7 +154,6 @@ def main():
             )
 
             cv2.imshow(WINDOW_CAMERA, camera_view)
-            cv2.imshow(WINDOW_ROI, roi)
             cv2.imshow(WINDOW_MASK, mask)
             cv2.imshow(WINDOW_RESULT, result)
 
