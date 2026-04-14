@@ -208,6 +208,22 @@ def add_corner_padding(mask: np.ndarray) -> np.ndarray:
     )
 
 
+def apply_black_border(mask: np.ndarray) -> np.ndarray:
+    if CORNER_PADDING <= 0:
+        return mask.copy()
+
+    bordered = mask.copy()
+    pad = min(CORNER_PADDING, bordered.shape[0] // 2, bordered.shape[1] // 2)
+    if pad <= 0:
+        return bordered
+
+    bordered[:pad, :] = 0
+    bordered[-pad:, :] = 0
+    bordered[:, :pad] = 0
+    bordered[:, -pad:] = 0
+    return bordered
+
+
 def extract_corners_from_connected_mask(
     connected_mask: np.ndarray,
 ) -> tuple[list[tuple[int, int]], np.ndarray | None]:
@@ -319,6 +335,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         x_center=shape_mask.shape[1] // 2,
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
     )
+    shape_connected_mask = apply_black_border(shape_connected_mask)
     corners, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
 
