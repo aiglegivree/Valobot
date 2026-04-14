@@ -26,9 +26,9 @@ SLICE_MID_FRAC = 0.50
 SLICE_BOT_FRAC = 0.95
 
 # steering weights
-W_TOP = 0.05
-W_MID = 0.05
-W_BOT = 0.85
+W_TOP = 0.10
+W_MID = 0.15
+W_BOT = 0.75
 
 # bottom gating
 BOTTOM_SLICE_MAX_DIST = 200
@@ -78,12 +78,12 @@ SEARCH_TURN_STEER = 0.60
 # ============================================================
 # SPEED
 # ============================================================
-BASE_SPEED = 0.30
-TURN_SPEED = 0.20
+BASE_SPEED = 0.40
+TURN_SPEED = 0.25
 BLIND_SPEED = 0.20
 SEARCH_SPEED = 0.20
 
-STEER_GAIN = 0.13
+STEER_GAIN = 0.2
 
 # ============================================================
 # DEBUG
