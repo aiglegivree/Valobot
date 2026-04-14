@@ -93,9 +93,11 @@ def keep_shape_connected_to_bottom_rect(mask: np.ndarray, x_center: int, max_x_d
     if num_labels <= 1:
         return np.zeros_like(mask)
 
+    pad = min(CORNER_PADDING, max(0, h - 1))
+    anchor_bottom = max(1, h - pad)
     x0 = max(0, x_center - max_x_dist)
     x1 = min(w, x_center + max_x_dist + 1)
-    bottom_band = labels[max(0, h - 2):h, x0:x1]
+    bottom_band = labels[max(0, anchor_bottom - 2):anchor_bottom, x0:x1]
     candidate_labels = np.unique(bottom_band)
     candidate_labels = candidate_labels[candidate_labels != 0]
 
@@ -115,6 +117,22 @@ def keep_shape_connected_to_bottom_rect(mask: np.ndarray, x_center: int, max_x_d
     return out
 
 
+def apply_black_border(mask: np.ndarray) -> np.ndarray:
+    if CORNER_PADDING <= 0:
+        return mask.copy()
+
+    bordered = mask.copy()
+    pad = min(CORNER_PADDING, bordered.shape[0] // 2, bordered.shape[1] // 2)
+    if pad <= 0:
+        return bordered
+
+    bordered[:pad, :] = 0
+    bordered[-pad:, :] = 0
+    bordered[:, :pad] = 0
+    bordered[:, -pad:] = 0
+    return bordered
+
+
 def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int]:
     h_frame, _ = frame.shape[:2]
     roi_start = int(h_frame * ROI_START_FRAC)
@@ -130,11 +148,13 @@ def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int
 
     kernel = np.ones((values["close_kernel"], values["close_kernel"]), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=values["close_iter"])
+    mask = apply_black_border(mask)
     mask = keep_shape_connected_to_bottom_rect(
         mask,
         x_center=mask.shape[1] // 2,
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
     )
+    mask = apply_black_border(mask)
 
     return mask, roi_start
 
