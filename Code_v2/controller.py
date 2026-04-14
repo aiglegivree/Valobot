@@ -104,26 +104,8 @@ class Controller:
         if sharp_turn_active or now < self.sharp_turn_hold_until:
             self.mode = "SHARP_TURN"
             self.lost_count = 0
-
-            if vision_result.seen_bot:
-                err_px = vision_result.err_bot
-                self._update_turn_sign(err_px)
-                steer_target = normalize_error(err_px)
-            elif vision_result.seen_mid:
-                err_px = vision_result.err_mid
-                self._update_turn_sign(err_px)
-                steer_target = normalize_error(err_px)
-            else:
-                steer_target = self.last_turn_sign * 1.0
-
-            # During a sharp turn we do not advance, we pivot until the turn is no
-            # longer classified as sharp.
-            steer_target = clamp(steer_target, -1.0, 1.0)
-            if abs(steer_target) < 0.75:
-                steer_target = 0.75 * self.last_turn_sign
-
-            self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.55)
-            speed = 0.0
+            self.steer_cmd = smooth(self.steer_cmd, 0.0, 0.55)
+            speed = TURN_SPEED
 
             left, right = steering_to_wheels(speed, self.steer_cmd)
             return left, right, speed, self.steer_cmd, self.mode
