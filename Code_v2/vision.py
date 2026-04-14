@@ -230,6 +230,15 @@ def apply_black_border(mask: np.ndarray) -> np.ndarray:
     return bordered
 
 
+def is_near_frame_edge(x: int, y: int, width: int, height: int, margin: int) -> bool:
+    return (
+        x <= margin or
+        y <= margin or
+        x >= width - 1 - margin or
+        y >= height - 1 - margin
+    )
+
+
 def extract_corners_from_connected_mask(
     connected_mask: np.ndarray,
 ) -> tuple[list[tuple[int, int]], np.ndarray | None]:
@@ -252,7 +261,17 @@ def extract_corners_from_connected_mask(
     if len(approx_points) < 3:
         return [], biggest
 
+    padded_h, padded_w = padded.shape
+    edge_margin = max(1, CORNER_PADDING)
+
     for i, point in enumerate(approx_points):
+        px = int(point[0])
+        py = int(point[1])
+
+        if is_near_frame_edge(px, py, padded_w, padded_h, edge_margin):
+            corners.append((px - CORNER_PADDING, py - CORNER_PADDING))
+            continue
+
         prev_point = approx_points[(i - 1) % len(approx_points)].astype(np.float32)
         curr_point = point.astype(np.float32)
         next_point = approx_points[(i + 1) % len(approx_points)].astype(np.float32)
@@ -270,8 +289,8 @@ def extract_corners_from_connected_mask(
         if angle_deg > CORNER_MAX_ANGLE_DEG:
             continue
 
-        x = int(point[0]) - CORNER_PADDING
-        y = int(point[1]) - CORNER_PADDING
+        x = px - CORNER_PADDING
+        y = py - CORNER_PADDING
         corners.append((x, y))
 
     return corners, biggest
