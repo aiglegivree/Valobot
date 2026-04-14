@@ -47,7 +47,7 @@ BLACK_V_HIGH = 70
 # CORNER SHAPE DETECTION
 # ============================================================
 CORNER_PADDING = 10
-CORNER_APPROX_EPSILON_FRAC = 0.04
+CORNER_APPROX_EPSILON_FRAC = 0.01
 CORNER_MIN_CONTOUR_AREA = 1500
 CORNER_MAX_ANGLE_DEG = 110.0
 SHARP_TURN_CORNERS = 6
@@ -78,9 +78,9 @@ SEARCH_TURN_STEER = 0.60
 # ============================================================
 # SPEED
 # ============================================================
-BASE_SPEED = 0.30
-TURN_SPEED = 0.15
-BLIND_SPEED = 0.25
+BASE_SPEED = 0.50
+TURN_SPEED = 0.20
+BLIND_SPEED = 0.20
 SEARCH_SPEED = 0.15
 
 STEER_GAIN = 0.1
