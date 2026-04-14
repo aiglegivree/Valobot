@@ -48,7 +48,7 @@ def main():
                     aura_mode = False
                     leds.aura_farm_stop()
                 motors.set_speeds(left, right)
-                leds.turn_on_all()
+                leds.turn_off_all()
 
             # 4) debug
             if SHOW_DEBUG:

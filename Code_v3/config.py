@@ -12,11 +12,11 @@ USE_PICAMERA2 = True
 # ============================================================
 # VISION
 # ============================================================
-ROI_START_FRAC = 0.80
+ROI_START_FRAC = 0.50
 GAUSS_KSIZE = 15
 
 KERNEL_SIZE = 15
-MORPH_CLOSE_IT = 4
+MORPH_CLOSE_IT = 6
 
 BAND_THICKNESS = 6
 
@@ -41,17 +41,17 @@ BLACK_V_LOW = 0
 
 BLACK_H_HIGH = 180
 BLACK_S_HIGH = 255
-BLACK_V_HIGH = 70
+BLACK_V_HIGH = 122
 
 # brown threshold in HSV
 BROWN_H_LOW = 5
-BROWN_S_LOW = 60
-BROWN_V_LOW = 40
+BROWN_S_LOW = 1
+BROWN_V_LOW = 156
 
-BROWN_H_HIGH = 30
+BROWN_H_HIGH = 175
 BROWN_S_HIGH = 255
-BROWN_V_HIGH = 200
-BROWN_MIN_AREA = 1200
+BROWN_V_HIGH = 197
+BROWN_MIN_AREA = 6952
 
 # ============================================================
 # CORNER SHAPE DETECTION
