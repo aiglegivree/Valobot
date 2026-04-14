@@ -7,6 +7,7 @@ from config import (
     H, W,
     ROI_START_FRAC,
     GAUSS_KSIZE,
+    KERNEL_SIZE, MORPH_CLOSE_IT,
     BAND_THICKNESS,
     SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
     W_TOP, W_MID, W_BOT,
@@ -77,6 +78,9 @@ def compute_line_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, int
     upper_black = np.array([BLACK_H_HIGH, BLACK_S_HIGH, BLACK_V_HIGH], dtype=np.uint8)
 
     mask = cv2.inRange(hsv, lower_black, upper_black)
+    kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
 
     return mask, roi_start
 
@@ -92,6 +96,8 @@ def compute_shape_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, in
     upper_black = np.array([BLACK_H_HIGH, BLACK_S_HIGH, BLACK_V_HIGH], dtype=np.uint8)
 
     mask = cv2.inRange(hsv, lower_black, upper_black)
+    kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
 
     return mask, roi_start
 

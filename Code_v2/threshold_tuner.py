@@ -12,6 +12,8 @@ from config import (
     BLACK_S_HIGH,
     BLACK_V_HIGH,
     GAUSS_KSIZE,
+    KERNEL_SIZE,
+    MORPH_CLOSE_IT,
     CORNER_PADDING,
     CORNER_MIN_CONTOUR_AREA,
     CORNER_APPROX_EPSILON_FRAC,
@@ -37,6 +39,8 @@ def create_trackbars():
     cv2.createTrackbar("Black S max", WINDOW_CONTROLS, BLACK_S_HIGH, 255, nothing)
     cv2.createTrackbar("Black V max", WINDOW_CONTROLS, BLACK_V_HIGH, 255, nothing)
     cv2.createTrackbar("Blur", WINDOW_CONTROLS, min(GAUSS_KSIZE, 15), 15, nothing)
+    cv2.createTrackbar("Close kernel", WINDOW_CONTROLS, min(KERNEL_SIZE, 15), 15, nothing)
+    cv2.createTrackbar("Close iter", WINDOW_CONTROLS, min(MORPH_CLOSE_IT, 10), 10, nothing)
     cv2.createTrackbar("Corner min area", WINDOW_CONTROLS, min(CORNER_MIN_CONTOUR_AREA, 100000), 100000, nothing)
     cv2.createTrackbar(
         "Corner max angle",
@@ -65,6 +69,8 @@ def get_values():
     black_s_max = cv2.getTrackbarPos("Black S max", WINDOW_CONTROLS)
     black_v_max = cv2.getTrackbarPos("Black V max", WINDOW_CONTROLS)
     blur = odd_at_least_one(cv2.getTrackbarPos("Blur", WINDOW_CONTROLS))
+    close_kernel = odd_at_least_one(cv2.getTrackbarPos("Close kernel", WINDOW_CONTROLS))
+    close_iter = max(1, cv2.getTrackbarPos("Close iter", WINDOW_CONTROLS))
     min_area = cv2.getTrackbarPos("Corner min area", WINDOW_CONTROLS)
     corner_max_angle_deg = max(1, cv2.getTrackbarPos("Corner max angle", WINDOW_CONTROLS))
     approx_frac = cv2.getTrackbarPos("Approx x100", WINDOW_CONTROLS) / 100.0
@@ -73,6 +79,8 @@ def get_values():
         "black_s_max": black_s_max,
         "black_v_max": black_v_max,
         "blur": blur,
+        "close_kernel": close_kernel,
+        "close_iter": close_iter,
         "min_area": min_area,
         "corner_max_angle_deg": float(corner_max_angle_deg),
         "approx_frac": approx_frac,
@@ -138,6 +146,8 @@ def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int
 
     mask = cv2.inRange(hsv, low, high)
 
+    kernel = np.ones((values["close_kernel"], values["close_kernel"]), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=values["close_iter"])
     mask = apply_black_border(mask)
     mask = keep_shape_connected_to_bottom_rect(
         mask,
@@ -259,6 +269,8 @@ def save_values_to_config(values: dict):
         "BLACK_S_HIGH": str(values["black_s_max"]),
         "BLACK_V_HIGH": str(values["black_v_max"]),
         "GAUSS_KSIZE": str(values["blur"]),
+        "KERNEL_SIZE": str(values["close_kernel"]),
+        "MORPH_CLOSE_IT": str(values["close_iter"]),
         "CORNER_MIN_CONTOUR_AREA": str(values["min_area"]),
         "CORNER_MAX_ANGLE_DEG": f"{values['corner_max_angle_deg']:.1f}",
         "CORNER_APPROX_EPSILON_FRAC": f"{values['approx_frac']:.2f}",
