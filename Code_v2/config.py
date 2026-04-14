@@ -12,11 +12,11 @@ USE_PICAMERA2 = True
 # ============================================================
 # VISION
 # ============================================================
-ROI_START_FRAC = 0.50
+ROI_START_FRAC = 0.80
 GAUSS_KSIZE = 15
 
-KERNEL_SIZE = 1
-MORPH_CLOSE_IT = 1
+KERNEL_SIZE = 15
+MORPH_CLOSE_IT = 4
 
 BAND_THICKNESS = 6
 
@@ -41,13 +41,13 @@ BLACK_V_LOW = 0
 
 BLACK_H_HIGH = 180
 BLACK_S_HIGH = 255
-BLACK_V_HIGH = 100
+BLACK_V_HIGH = 70
 
 # ============================================================
 # CORNER SHAPE DETECTION
 # ============================================================
 CORNER_PADDING = 10
-CORNER_APPROX_EPSILON_FRAC = 0.01
+CORNER_APPROX_EPSILON_FRAC = 0.04
 CORNER_MIN_CONTOUR_AREA = 1500
 CORNER_MAX_ANGLE_DEG = 110.0
 SHARP_TURN_CORNERS = 6
@@ -78,7 +78,7 @@ SEARCH_TURN_STEER = 0.60
 # ============================================================
 # SPEED
 # ============================================================
-BASE_SPEED = 0.20
+BASE_SPEED = 0.30
 TURN_SPEED = 0.15
 BLIND_SPEED = 0.25
 SEARCH_SPEED = 0.15
