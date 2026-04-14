@@ -52,7 +52,14 @@ def parse_args():
     parser.add_argument(
         "--leds",
         action="store_true",
+        default=True,
         help="Turn all LEDs on during capture.",
+    )
+    parser.add_argument(
+        "--no-leds",
+        dest="leds",
+        action="store_false",
+        help="Keep LEDs off during capture.",
     )
     return parser.parse_args()
 
