@@ -101,8 +101,9 @@ def build_preview(
     tile = IMAGE_SIZE
     cols = min(4, max(1, len(samples)))
     rows = max(1, int(np.ceil(len(samples) / cols)))
+    panel_h = rows * tile
 
-    grid = np.zeros((rows * tile, cols * tile, 3), dtype=np.uint8)
+    grid = np.zeros((panel_h, cols * tile, 3), dtype=np.uint8)
     for idx, sample in enumerate(samples[: rows * cols]):
         r = idx // cols
         c = idx % cols
@@ -110,16 +111,18 @@ def build_preview(
         x0 = c * tile
         grid[y0:y0 + tile, x0:x0 + tile, 1] = sample
 
-    proto_bgr = np.zeros((tile, tile, 3), dtype=np.uint8)
-    proto_bgr[:, :, 2] = prototype_u8
+    proto_bgr = np.zeros((panel_h, tile, 3), dtype=np.uint8)
+    proto_bgr[:tile, :, 2] = prototype_u8
 
-    templ_bgr = np.zeros((tile, tile, 3), dtype=np.uint8)
-    templ_bgr[:, :, 0] = binary_template
+    templ_bgr = np.zeros((panel_h, tile, 3), dtype=np.uint8)
+    templ_bgr[:tile, :, 0] = binary_template
 
     dist_vis = cv2.normalize(dist_fg, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
     dist_bgr = cv2.applyColorMap(dist_vis, cv2.COLORMAP_TURBO)
+    dist_panel = np.zeros((panel_h, tile, 3), dtype=np.uint8)
+    dist_panel[:tile, :, :] = dist_bgr
 
-    preview = np.hstack([grid, proto_bgr, templ_bgr, dist_bgr])
+    preview = np.hstack([grid, proto_bgr, templ_bgr, dist_panel])
     cv2.putText(preview, "Samples", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
     cv2.putText(preview, "Avg prototype", (grid.shape[1] + 10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
     cv2.putText(preview, "Binary template", (grid.shape[1] + tile + 10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 0), 2)
