@@ -1,4 +1,5 @@
 from __future__ import annotations
+import time
 
 from config import (
     W,
@@ -7,6 +8,7 @@ from config import (
     BLIND_TURN_FRAMES, SEARCH_FRAMES,
     BLIND_TURN_STEER, SEARCH_TURN_STEER,
     T_CONFIRM_FRAMES,
+    SHARP_TURN_HOLD_S,
 )
 
 
@@ -41,6 +43,7 @@ class Controller:
         self.t_count = 0
         self.t_confirmed = False
         self.t_stop_latched = False
+        self.sharp_turn_hold_until = 0.0
 
     def _update_turn_sign(self, err_px: float):
         if err_px > STEER_DEADZONE:
@@ -69,6 +72,8 @@ class Controller:
         return self.last_turn_sign * SEARCH_TURN_STEER
 
     def update(self, vision_result):
+        now = time.monotonic()
+
         # =========================================================
         # STEP 1: CONFIRM T
         # =========================================================
@@ -92,7 +97,11 @@ class Controller:
         # =========================================================
         # STEP 3: SHARP TURN
         # =========================================================
-        if getattr(vision_result, "sharp_turn_detected", False):
+        sharp_turn_active = getattr(vision_result, "sharp_turn_detected", False)
+        if sharp_turn_active:
+            self.sharp_turn_hold_until = now + SHARP_TURN_HOLD_S
+
+        if sharp_turn_active or now < self.sharp_turn_hold_until:
             self.mode = "SHARP_TURN"
             self.lost_count = 0
 

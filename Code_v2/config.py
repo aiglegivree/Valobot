@@ -64,6 +64,7 @@ HARD_TURN_THRESH = 90.0
 T_CONFIRM_FRAMES = 3
 T_MEMORY_FRAMES = 5
 STOP_ON_T_END = True
+SHARP_TURN_HOLD_S = 1.0
 
 # ============================================================
 # LOST LINE / STATES
