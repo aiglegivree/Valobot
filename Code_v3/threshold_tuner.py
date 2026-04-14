@@ -9,6 +9,10 @@ from leds import LED
 from config import (
     ROI_START_FRAC,
     BOTTOM_SLICE_MAX_DIST,
+    BLACK_H_LOW,
+    BLACK_S_LOW,
+    BLACK_V_LOW,
+    BLACK_H_HIGH,
     BLACK_S_HIGH,
     BLACK_V_HIGH,
     BROWN_H_LOW,
@@ -44,8 +48,12 @@ def create_trackbars():
     cv2.namedWindow(WINDOW_CONTROLS, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_CONTROLS, 460, 520)
 
-    cv2.createTrackbar("Black S max", WINDOW_CONTROLS, BLACK_S_HIGH, 255, nothing)
-    cv2.createTrackbar("Black V max", WINDOW_CONTROLS, BLACK_V_HIGH, 255, nothing)
+    cv2.createTrackbar("Black H low", WINDOW_CONTROLS, BLACK_H_LOW, 180, nothing)
+    cv2.createTrackbar("Black S low", WINDOW_CONTROLS, BLACK_S_LOW, 255, nothing)
+    cv2.createTrackbar("Black V low", WINDOW_CONTROLS, BLACK_V_LOW, 255, nothing)
+    cv2.createTrackbar("Black H high", WINDOW_CONTROLS, BLACK_H_HIGH, 180, nothing)
+    cv2.createTrackbar("Black S high", WINDOW_CONTROLS, BLACK_S_HIGH, 255, nothing)
+    cv2.createTrackbar("Black V high", WINDOW_CONTROLS, BLACK_V_HIGH, 255, nothing)
     cv2.createTrackbar("Brown H low", WINDOW_CONTROLS, BROWN_H_LOW, 180, nothing)
     cv2.createTrackbar("Brown S low", WINDOW_CONTROLS, BROWN_S_LOW, 255, nothing)
     cv2.createTrackbar("Brown V low", WINDOW_CONTROLS, BROWN_V_LOW, 255, nothing)
@@ -81,8 +89,12 @@ def odd_at_least_one(value: int) -> int:
 
 
 def get_values():
-    black_s_max = cv2.getTrackbarPos("Black S max", WINDOW_CONTROLS)
-    black_v_max = cv2.getTrackbarPos("Black V max", WINDOW_CONTROLS)
+    black_h_low = cv2.getTrackbarPos("Black H low", WINDOW_CONTROLS)
+    black_s_low = cv2.getTrackbarPos("Black S low", WINDOW_CONTROLS)
+    black_v_low = cv2.getTrackbarPos("Black V low", WINDOW_CONTROLS)
+    black_h_high = cv2.getTrackbarPos("Black H high", WINDOW_CONTROLS)
+    black_s_high = cv2.getTrackbarPos("Black S high", WINDOW_CONTROLS)
+    black_v_high = cv2.getTrackbarPos("Black V high", WINDOW_CONTROLS)
     brown_h_low = cv2.getTrackbarPos("Brown H low", WINDOW_CONTROLS)
     brown_s_low = cv2.getTrackbarPos("Brown S low", WINDOW_CONTROLS)
     brown_v_low = cv2.getTrackbarPos("Brown V low", WINDOW_CONTROLS)
@@ -98,8 +110,12 @@ def get_values():
     approx_frac = cv2.getTrackbarPos("Approx x100", WINDOW_CONTROLS) / 100.0
 
     return {
-        "black_s_max": black_s_max,
-        "black_v_max": black_v_max,
+        "black_h_low": min(black_h_low, black_h_high),
+        "black_s_low": min(black_s_low, black_s_high),
+        "black_v_low": min(black_v_low, black_v_high),
+        "black_h_high": max(black_h_low, black_h_high),
+        "black_s_high": max(black_s_low, black_s_high),
+        "black_v_high": max(black_v_low, black_v_high),
         "brown_h_low": min(brown_h_low, brown_h_high),
         "brown_s_low": min(brown_s_low, brown_s_high),
         "brown_v_low": min(brown_v_low, brown_v_high),
@@ -170,8 +186,14 @@ def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int
     roi_blur = cv2.GaussianBlur(roi, (values["blur"], values["blur"]), 0)
     hsv = cv2.cvtColor(roi_blur, cv2.COLOR_BGR2HSV)
 
-    low = np.array([0, 0, 0], dtype=np.uint8)
-    high = np.array([180, values["black_s_max"], values["black_v_max"]], dtype=np.uint8)
+    low = np.array(
+        [values["black_h_low"], values["black_s_low"], values["black_v_low"]],
+        dtype=np.uint8,
+    )
+    high = np.array(
+        [values["black_h_high"], values["black_s_high"], values["black_v_high"]],
+        dtype=np.uint8,
+    )
 
     mask = cv2.inRange(hsv, low, high)
 
@@ -357,8 +379,12 @@ def replace_config_value(text: str, key: str, value: str) -> str:
 def save_values_to_config(values: dict):
     text = CONFIG_PATH.read_text(encoding="utf-8")
     updates = {
-        "BLACK_S_HIGH": str(values["black_s_max"]),
-        "BLACK_V_HIGH": str(values["black_v_max"]),
+        "BLACK_H_LOW": str(values["black_h_low"]),
+        "BLACK_S_LOW": str(values["black_s_low"]),
+        "BLACK_V_LOW": str(values["black_v_low"]),
+        "BLACK_H_HIGH": str(values["black_h_high"]),
+        "BLACK_S_HIGH": str(values["black_s_high"]),
+        "BLACK_V_HIGH": str(values["black_v_high"]),
         "BROWN_H_LOW": str(values["brown_h_low"]),
         "BROWN_S_LOW": str(values["brown_s_low"]),
         "BROWN_V_LOW": str(values["brown_v_low"]),
