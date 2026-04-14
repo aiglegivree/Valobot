@@ -37,11 +37,37 @@ WINDOW_CAMERA = "Camera"
 WINDOW_MASK = "Mask"
 WINDOW_SHAPE = "Shape Debug"
 WINDOW_BROWN = "Brown Mask"
+WINDOW_HSV = "HSV Distribution"
 CONFIG_PATH = Path(__file__).with_name("config.py")
+HSV_BUTTON_TOP_LEFT = (10, 300)
+HSV_BUTTON_SIZE = (190, 38)
+
+_last_frame_for_hsv: np.ndarray | None = None
 
 
 def nothing(_):
     pass
+
+
+def hsv_button_bounds() -> tuple[int, int, int, int]:
+    x0, y0 = HSV_BUTTON_TOP_LEFT
+    w, h = HSV_BUTTON_SIZE
+    return x0, y0, x0 + w, y0 + h
+
+
+def is_inside_hsv_button(x: int, y: int) -> bool:
+    x0, y0, x1, y1 = hsv_button_bounds()
+    return x0 <= x <= x1 and y0 <= y <= y1
+
+
+def on_shape_mouse(event, x, y, _flags, _param):
+    if event != cv2.EVENT_LBUTTONDOWN:
+        return
+    if not is_inside_hsv_button(x, y):
+        return
+    if _last_frame_for_hsv is None:
+        return
+    show_hsv_distribution(_last_frame_for_hsv)
 
 
 def create_trackbars():
@@ -339,7 +365,85 @@ def draw_shape_debug(mask: np.ndarray, contour: np.ndarray | None, corners: list
         if 0 <= x < disp.shape[1] and 0 <= y < disp.shape[0]:
             cv2.circle(disp, (x, y), 5, (255, 0, 0), -1)
 
+    x0, y0, x1, y1 = hsv_button_bounds()
+    cv2.rectangle(disp, (x0, y0), (x1, y1), (40, 40, 40), -1)
+    cv2.rectangle(disp, (x0, y0), (x1, y1), (0, 255, 255), 2)
+    cv2.putText(
+        disp,
+        "Show HSV dist",
+        (x0 + 12, y0 + 25),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (0, 255, 255),
+        2,
+    )
+
     return disp
+
+
+def make_hist_image(hist: np.ndarray, width: int, height: int, color: tuple[int, int, int]) -> np.ndarray:
+    canvas = np.zeros((height, width, 3), dtype=np.uint8)
+    if hist.size == 0 or float(hist.max()) <= 0.0:
+        return canvas
+
+    hist_norm = hist.astype(np.float32).flatten()
+    hist_norm /= float(hist_norm.max())
+    xs = np.linspace(0, width - 1, num=hist_norm.size).astype(np.int32)
+    ys = (height - 1 - hist_norm * (height - 20)).astype(np.int32)
+    pts = np.stack([xs, ys], axis=1).reshape(-1, 1, 2)
+    cv2.polylines(canvas, [pts], False, color, 2)
+    return canvas
+
+
+def show_hsv_distribution(frame: np.ndarray):
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    h_channel = hsv[:, :, 0]
+    s_channel = hsv[:, :, 1]
+    v_channel = hsv[:, :, 2]
+
+    h_hist = cv2.calcHist([h_channel], [0], None, [180], [0, 180])
+    s_hist = cv2.calcHist([s_channel], [0], None, [256], [0, 256])
+    v_hist = cv2.calcHist([v_channel], [0], None, [256], [0, 256])
+
+    hist_h = make_hist_image(h_hist, 512, 180, (0, 255, 255))
+    hist_s = make_hist_image(s_hist, 512, 180, (255, 255, 0))
+    hist_v = make_hist_image(v_hist, 512, 180, (255, 255, 255))
+
+    cv2.putText(hist_h, "Hue", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 255), 2)
+    cv2.putText(hist_s, "Saturation", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
+    cv2.putText(hist_v, "Value", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+
+    stats = np.zeros((90, 512, 3), dtype=np.uint8)
+    cv2.putText(
+        stats,
+        f"H median={int(np.median(h_channel))}  p05={int(np.percentile(h_channel, 5))}  p95={int(np.percentile(h_channel, 95))}",
+        (10, 25),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (0, 255, 255),
+        2,
+    )
+    cv2.putText(
+        stats,
+        f"S median={int(np.median(s_channel))}  p05={int(np.percentile(s_channel, 5))}  p95={int(np.percentile(s_channel, 95))}",
+        (10, 50),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 0),
+        2,
+    )
+    cv2.putText(
+        stats,
+        f"V median={int(np.median(v_channel))}  p05={int(np.percentile(v_channel, 5))}  p95={int(np.percentile(v_channel, 95))}",
+        (10, 75),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+    )
+
+    dist_view = np.vstack([hist_h, hist_s, hist_v, stats])
+    cv2.imshow(WINDOW_HSV, dist_view)
 
 
 def extract_all_brown_regions(mask: np.ndarray, min_area: float) -> tuple[float, np.ndarray]:
@@ -411,6 +515,8 @@ def save_values_to_config(values: dict):
 
 
 def main():
+    global _last_frame_for_hsv
+
     leds = LED()
     leds.turn_on_all()
     leds_on = True
@@ -422,12 +528,15 @@ def main():
     cv2.namedWindow(WINDOW_MASK, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_SHAPE, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_BROWN, cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback(WINDOW_SHAPE, on_shape_mouse)
 
     try:
         while True:
             ret, frame = cam.read()
             if not ret:
                 continue
+
+            _last_frame_for_hsv = frame.copy()
 
             values = get_values()
             mask, roi_start = compute_shape_mask(frame, values)
@@ -488,7 +597,7 @@ def main():
             )
             cv2.putText(
                 shape_view,
-                f"LEDs: {'ON' if leds_on else 'OFF'} | l toggle | s save config",
+                f"LEDs: {'ON' if leds_on else 'OFF'} | l toggle | s save | h/click HSV",
                 (10, 125),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
@@ -557,6 +666,8 @@ def main():
                     leds.turn_off_all()
             if key == ord("s"):
                 save_values_to_config(values)
+            if key == ord("h"):
+                show_hsv_distribution(frame)
 
     finally:
         try:
