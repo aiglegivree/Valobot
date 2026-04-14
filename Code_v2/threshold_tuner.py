@@ -16,6 +16,7 @@ from config import (
     MORPH_CLOSE_IT,
     CORNER_MIN_CONTOUR_AREA,
     CORNER_APPROX_EPSILON_FRAC,
+    CORNER_MAX_ANGLE_DEG,
 )
 
 
@@ -41,6 +42,13 @@ def create_trackbars():
     cv2.createTrackbar("Close iter", WINDOW_CONTROLS, min(MORPH_CLOSE_IT, 10), 10, nothing)
     cv2.createTrackbar("Corner min area", WINDOW_CONTROLS, min(CORNER_MIN_CONTOUR_AREA, 100000), 100000, nothing)
     cv2.createTrackbar(
+        "Corner max angle",
+        WINDOW_CONTROLS,
+        min(max(int(round(CORNER_MAX_ANGLE_DEG)), 1), 180),
+        180,
+        nothing,
+    )
+    cv2.createTrackbar(
         "Approx x100",
         WINDOW_CONTROLS,
         min(max(int(round(CORNER_APPROX_EPSILON_FRAC * 100)), 0), 20),
@@ -63,6 +71,7 @@ def get_values():
     close_kernel = odd_at_least_one(cv2.getTrackbarPos("Close kernel", WINDOW_CONTROLS))
     close_iter = max(1, cv2.getTrackbarPos("Close iter", WINDOW_CONTROLS))
     min_area = cv2.getTrackbarPos("Corner min area", WINDOW_CONTROLS)
+    corner_max_angle_deg = max(1, cv2.getTrackbarPos("Corner max angle", WINDOW_CONTROLS))
     approx_frac = cv2.getTrackbarPos("Approx x100", WINDOW_CONTROLS) / 100.0
 
     return {
@@ -72,6 +81,7 @@ def get_values():
         "close_kernel": close_kernel,
         "close_iter": close_iter,
         "min_area": min_area,
+        "corner_max_angle_deg": float(corner_max_angle_deg),
         "approx_frac": approx_frac,
     }
 
@@ -158,7 +168,28 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
     approx = cv2.approxPolyDP(contour, epsilon, True)
 
     corners = []
-    for point in approx.reshape(-1, 2):
+    approx_points = approx.reshape(-1, 2)
+    if len(approx_points) < 3:
+        return [], contour, area
+
+    for i, point in enumerate(approx_points):
+        prev_point = approx_points[(i - 1) % len(approx_points)].astype(np.float32)
+        curr_point = point.astype(np.float32)
+        next_point = approx_points[(i + 1) % len(approx_points)].astype(np.float32)
+
+        v1 = prev_point - curr_point
+        v2 = next_point - curr_point
+        norm1 = float(np.linalg.norm(v1))
+        norm2 = float(np.linalg.norm(v2))
+        if norm1 < 1e-6 or norm2 < 1e-6:
+            continue
+
+        cos_angle = float(np.dot(v1, v2) / (norm1 * norm2))
+        cos_angle = float(np.clip(cos_angle, -1.0, 1.0))
+        angle_deg = float(np.degrees(np.arccos(cos_angle)))
+        if angle_deg > values["corner_max_angle_deg"]:
+            continue
+
         corners.append((int(point[0]) - 1, int(point[1]) - 1))
 
     return corners, contour, area
@@ -199,6 +230,7 @@ def save_values_to_config(values: dict):
         "KERNEL_SIZE": str(values["close_kernel"]),
         "MORPH_CLOSE_IT": str(values["close_iter"]),
         "CORNER_MIN_CONTOUR_AREA": str(values["min_area"]),
+        "CORNER_MAX_ANGLE_DEG": f"{values['corner_max_angle_deg']:.1f}",
         "CORNER_APPROX_EPSILON_FRAC": f"{values['approx_frac']:.2f}",
     }
 
@@ -290,8 +322,17 @@ def main():
             )
             cv2.putText(
                 shape_view,
-                f"Area: {int(area)}",
+                f"Corner max angle: {int(values['corner_max_angle_deg'])}",
                 (10, 185),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                2,
+            )
+            cv2.putText(
+                shape_view,
+                f"Area: {int(area)}",
+                (10, 215),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
                 (255, 255, 255),

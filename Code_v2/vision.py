@@ -18,6 +18,7 @@ from config import (
     CORNER_PADDING,
     CORNER_APPROX_EPSILON_FRAC,
     CORNER_MIN_CONTOUR_AREA,
+    CORNER_MAX_ANGLE_DEG,
     SHARP_TURN_CORNERS,
     T_CORNERS,
 )
@@ -247,7 +248,28 @@ def extract_corners_from_connected_mask(
     approx = cv2.approxPolyDP(biggest, epsilon, True)
 
     corners: list[tuple[int, int]] = []
-    for point in approx.reshape(-1, 2):
+    approx_points = approx.reshape(-1, 2)
+    if len(approx_points) < 3:
+        return [], biggest
+
+    for i, point in enumerate(approx_points):
+        prev_point = approx_points[(i - 1) % len(approx_points)].astype(np.float32)
+        curr_point = point.astype(np.float32)
+        next_point = approx_points[(i + 1) % len(approx_points)].astype(np.float32)
+
+        v1 = prev_point - curr_point
+        v2 = next_point - curr_point
+        norm1 = float(np.linalg.norm(v1))
+        norm2 = float(np.linalg.norm(v2))
+        if norm1 < 1e-6 or norm2 < 1e-6:
+            continue
+
+        cos_angle = float(np.dot(v1, v2) / (norm1 * norm2))
+        cos_angle = float(np.clip(cos_angle, -1.0, 1.0))
+        angle_deg = float(np.degrees(np.arccos(cos_angle)))
+        if angle_deg > CORNER_MAX_ANGLE_DEG:
+            continue
+
         x = int(point[0]) - CORNER_PADDING
         y = int(point[1]) - CORNER_PADDING
         corners.append((x, y))
