@@ -350,10 +350,14 @@ def extract_all_brown_regions(mask: np.ndarray, min_area: float) -> tuple[float,
     area = 0.0
     out = np.zeros_like(mask)
     kept_contours = []
+    bottom_y = mask.shape[0] - 1
 
     for contour in contours:
         contour_area = float(cv2.contourArea(contour))
         if contour_area < min_area:
+            continue
+        _, y, _, h = cv2.boundingRect(contour)
+        if y + h - 1 < bottom_y:
             continue
         area += contour_area
         kept_contours.append(contour)
