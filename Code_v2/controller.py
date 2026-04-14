@@ -104,7 +104,14 @@ class Controller:
         if sharp_turn_active or now < self.sharp_turn_hold_until:
             self.mode = "SHARP_TURN"
             self.lost_count = 0
-            self.steer_cmd = smooth(self.steer_cmd, 0.0, 0.55)
+
+            if getattr(vision_result, "any_seen", False):
+                steer_target = 1.6 * self._line_visible_steer_target(vision_result)
+            else:
+                steer_target = self.last_turn_sign * BLIND_TURN_STEER
+
+            steer_target = clamp(steer_target, -1.0, 1.0)
+            self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.6)
             speed = TURN_SPEED
 
             left, right = steering_to_wheels(speed, self.steer_cmd)
