@@ -339,7 +339,7 @@ def shift_contour_back(contour: np.ndarray | None) -> np.ndarray | None:
     return contour - np.array([[[CORNER_PADDING, CORNER_PADDING]]], dtype=contour.dtype)
 
 
-def extract_all_brown_regions(mask: np.ndarray) -> tuple[float, np.ndarray]:
+def extract_all_brown_regions(mask: np.ndarray, min_area: float) -> tuple[float, np.ndarray]:
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return 0.0, np.zeros_like(mask)
@@ -350,7 +350,7 @@ def extract_all_brown_regions(mask: np.ndarray) -> tuple[float, np.ndarray]:
 
     for contour in contours:
         contour_area = float(cv2.contourArea(contour))
-        if contour_area < 1.0:
+        if contour_area < min_area:
             continue
         area += contour_area
         kept_contours.append(contour)
@@ -471,7 +471,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         shape_connected_mask = np.zeros_like(shape_connected_mask)
 
     brown_mask, _ = compute_brown_mask_from_frame(frame_bgr)
-    brown_area, brown_connected_mask = extract_all_brown_regions(brown_mask)
+    brown_area, brown_connected_mask = extract_all_brown_regions(brown_mask, BROWN_MIN_AREA)
     brown_detected = brown_area >= BROWN_MIN_AREA
 
     return VisionResult(

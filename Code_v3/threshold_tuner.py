@@ -320,7 +320,7 @@ def draw_shape_debug(mask: np.ndarray, contour: np.ndarray | None, corners: list
     return disp
 
 
-def extract_all_brown_regions(mask: np.ndarray) -> tuple[float, np.ndarray]:
+def extract_all_brown_regions(mask: np.ndarray, min_area: float) -> tuple[float, np.ndarray]:
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return 0.0, np.zeros_like(mask)
@@ -331,7 +331,7 @@ def extract_all_brown_regions(mask: np.ndarray) -> tuple[float, np.ndarray]:
 
     for contour in contours:
         contour_area = float(cv2.contourArea(contour))
-        if contour_area < 1.0:
+        if contour_area < min_area:
             continue
         area += contour_area
         kept_contours.append(contour)
@@ -403,7 +403,10 @@ def main():
             mask, roi_start = compute_shape_mask(frame, values)
             brown_mask, _ = compute_brown_mask(frame, values)
             corners, contour, area = extract_corners(mask, values)
-            brown_area, brown_filtered = extract_all_brown_regions(brown_mask)
+            brown_area, brown_filtered = extract_all_brown_regions(
+                brown_mask,
+                values["brown_min_area"],
+            )
             filtered_mask = apply_min_area_filter(mask, contour, area, values["min_area"])
             corner_count = len(corners)
             edge_margin = max(1, 2 * CORNER_PADDING)
