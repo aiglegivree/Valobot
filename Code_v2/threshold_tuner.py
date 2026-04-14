@@ -14,6 +14,7 @@ from config import (
     GAUSS_KSIZE,
     KERNEL_SIZE,
     MORPH_CLOSE_IT,
+    CORNER_PADDING,
     CORNER_MIN_CONTOUR_AREA,
     CORNER_APPROX_EPSILON_FRAC,
     CORNER_MAX_ANGLE_DEG,
@@ -181,14 +182,17 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
     if len(approx_points) < 3:
         return [], contour, area
 
-    padded_h, padded_w = padded.shape
+    edge_margin = max(1, 2 * CORNER_PADDING)
+    mask_h, mask_w = mask.shape
 
     for i, point in enumerate(approx_points):
         px = int(point[0])
         py = int(point[1])
+        x = px - 1
+        y = py - 1
 
-        if is_near_frame_edge(px, py, padded_w, padded_h, margin=1):
-            corners.append((px - 1, py - 1))
+        if is_near_frame_edge(x, y, mask_w, mask_h, margin=edge_margin):
+            corners.append((x, y))
             continue
 
         prev_point = approx_points[(i - 1) % len(approx_points)].astype(np.float32)
@@ -208,7 +212,7 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
         if angle_deg > values["corner_max_angle_deg"]:
             continue
 
-        corners.append((px - 1, py - 1))
+        corners.append((x, y))
 
     return corners, contour, area
 

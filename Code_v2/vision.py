@@ -261,15 +261,17 @@ def extract_corners_from_connected_mask(
     if len(approx_points) < 3:
         return [], biggest
 
-    padded_h, padded_w = padded.shape
-    edge_margin = max(1, CORNER_PADDING)
+    edge_margin = max(1, 2 * CORNER_PADDING)
+    mask_h, mask_w = connected_mask.shape
 
     for i, point in enumerate(approx_points):
         px = int(point[0])
         py = int(point[1])
+        x = px - CORNER_PADDING
+        y = py - CORNER_PADDING
 
-        if is_near_frame_edge(px, py, padded_w, padded_h, edge_margin):
-            corners.append((px - CORNER_PADDING, py - CORNER_PADDING))
+        if is_near_frame_edge(x, y, mask_w, mask_h, edge_margin):
+            corners.append((x, y))
             continue
 
         prev_point = approx_points[(i - 1) % len(approx_points)].astype(np.float32)
@@ -289,8 +291,6 @@ def extract_corners_from_connected_mask(
         if angle_deg > CORNER_MAX_ANGLE_DEG:
             continue
 
-        x = px - CORNER_PADDING
-        y = py - CORNER_PADDING
         corners.append((x, y))
 
     return corners, biggest
