@@ -116,6 +116,7 @@ def build_brown_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, np.nd
 def main():
     leds = LED()
     leds.turn_on_all()
+    leds_on = True
     cam = Camera()
 
     create_trackbars()
@@ -146,7 +147,7 @@ def main():
 
             cv2.putText(
                 camera_view,
-                "q quit | s save",
+                f"q quit | s save | l LEDs {'ON' if leds_on else 'OFF'}",
                 (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.8,
@@ -175,6 +176,12 @@ def main():
                 break
             if key == ord("s"):
                 save_values(values)
+            if key == ord("l"):
+                leds_on = not leds_on
+                if leds_on:
+                    leds.turn_on_all()
+                else:
+                    leds.turn_off_all()
 
     finally:
         try:
