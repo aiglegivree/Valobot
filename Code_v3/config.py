@@ -44,13 +44,14 @@ BLACK_S_HIGH = 255
 BLACK_V_HIGH = 70
 
 # brown threshold in HSV
-BROWN_H_LOW = 5
-BROWN_S_LOW = 100
-BROWN_V_LOW = 70
+BROWN_H_LOW = 2
+BROWN_S_LOW = 5
+BROWN_V_LOW = 152
 
-BROWN_H_HIGH = 30
-BROWN_S_HIGH = 255
-BROWN_V_HIGH = 170
+BROWN_H_HIGH = 175
+BROWN_S_HIGH = 59
+BROWN_V_HIGH = 236
+
 BROWN_MIN_AREA = 6943
 
 # ============================================================
@@ -89,7 +90,7 @@ SEARCH_TURN_STEER = 0.60
 # ============================================================
 # SPEED
 # ============================================================
-BASE_SPEED = 0.50
+BASE_SPEED = 0.30
 TURN_SPEED = 0.25
 BLIND_SPEED = 0.25
 SEARCH_SPEED = 0.20

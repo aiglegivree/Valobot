@@ -41,7 +41,7 @@ BLACK_V_LOW = 0
 
 BLACK_H_HIGH = 180
 BLACK_S_HIGH = 255
-BLACK_V_HIGH = 70
+BLACK_V_HIGH = 140
 
 # ============================================================
 # CORNER SHAPE DETECTION
