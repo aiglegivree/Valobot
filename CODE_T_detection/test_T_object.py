@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import cv2
 import numpy as np
 
@@ -26,9 +28,8 @@ MORPH_CLOSE_IT = 2
 # Detection
 ROI_START_FRAC = 0.50
 MIN_CONTOUR_AREA = 1800
-MIN_FILL_RATIO = 0.18
-MAX_FILL_RATIO = 0.75
-T_MATCH_THRESHOLD = 0.32
+DEFAULT_MATCH_THRESHOLD = 1.2
+MODEL_PATH = Path(__file__).with_name("t_object_model.npz")
 
 
 class Camera:
@@ -123,20 +124,43 @@ def compute_mask(frame: np.ndarray) -> tuple[np.ndarray, int]:
 
 def make_t_template(size: int = 160) -> np.ndarray:
     img = np.zeros((size, size), dtype=np.uint8)
-
-    bar_y0 = int(0.12 * size)
-    bar_y1 = int(0.36 * size)
-    stem_x0 = int(0.40 * size)
-    stem_x1 = int(0.60 * size)
-    stem_y0 = bar_y1
-    stem_y1 = int(0.95 * size)
-
-    cv2.rectangle(img, (int(0.08 * size), bar_y0), (int(0.92 * size), bar_y1), 255, -1)
-    cv2.rectangle(img, (stem_x0, stem_y0), (stem_x1, stem_y1), 255, -1)
+    cv2.rectangle(img, (int(0.08 * size), int(0.12 * size)), (int(0.92 * size), int(0.36 * size)), 255, -1)
+    cv2.rectangle(img, (int(0.40 * size), int(0.36 * size)), (int(0.60 * size), int(0.95 * size)), 255, -1)
     return img
 
 
-def normalize_candidate(mask: np.ndarray, contour: np.ndarray, out_size: int = 160) -> tuple[np.ndarray, tuple[int, int, int, int]]:
+def compute_distance_maps(binary_template: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    template_bool = binary_template > 0
+    dist_to_foreground = cv2.distanceTransform((~template_bool).astype(np.uint8), cv2.DIST_L2, 3)
+    dist_to_background = cv2.distanceTransform(template_bool.astype(np.uint8), cv2.DIST_L2, 3)
+    return dist_to_foreground.astype(np.float32), dist_to_background.astype(np.float32)
+
+
+def load_model() -> dict:
+    if MODEL_PATH.exists():
+        data = np.load(str(MODEL_PATH))
+        return {
+            "binary_template": data["binary_template"].astype(np.uint8),
+            "dist_fg": data["dist_fg"].astype(np.float32),
+            "dist_bg": data["dist_bg"].astype(np.float32),
+            "match_threshold": float(data["match_threshold"]),
+            "image_size": int(data["image_size"]),
+            "source": "trained",
+        }
+
+    binary_template = make_t_template()
+    dist_fg, dist_bg = compute_distance_maps(binary_template)
+    return {
+        "binary_template": binary_template,
+        "dist_fg": dist_fg,
+        "dist_bg": dist_bg,
+        "match_threshold": DEFAULT_MATCH_THRESHOLD,
+        "image_size": binary_template.shape[0],
+        "source": "default",
+    }
+
+
+def normalize_candidate(mask: np.ndarray, contour: np.ndarray, out_size: int) -> tuple[np.ndarray, tuple[int, int, int, int]]:
     x, y, w, h = cv2.boundingRect(contour)
     crop = mask[y:y + h, x:x + w]
 
@@ -152,24 +176,19 @@ def normalize_candidate(mask: np.ndarray, contour: np.ndarray, out_size: int = 1
     return canvas, (x, y, w, h)
 
 
-def compute_t_features(norm_mask: np.ndarray) -> tuple[float, float, float]:
-    h, w = norm_mask.shape
-    white = norm_mask > 0
+def distance_map_score(candidate_mask: np.ndarray, dist_fg: np.ndarray, dist_bg: np.ndarray) -> float:
+    candidate_bool = candidate_mask > 0
+    if not np.any(candidate_bool):
+        return float("inf")
 
-    top_band = white[: int(0.35 * h), :]
-    bottom_band = white[int(0.40 * h):, :]
-    center_band = white[:, int(0.38 * w): int(0.62 * w)]
-
-    top_width_ratio = float(np.mean(np.any(top_band, axis=0)))
-    center_height_ratio = float(np.mean(np.any(center_band, axis=1)))
-    fill_ratio = float(np.count_nonzero(white)) / float(h * w)
-
-    return top_width_ratio, center_height_ratio, fill_ratio
+    fg_error = float(np.mean(dist_fg[candidate_bool])) if np.any(candidate_bool) else 0.0
+    bg_mask = ~candidate_bool
+    bg_error = float(np.mean(dist_bg[bg_mask])) if np.any(bg_mask) else 0.0
+    return 0.5 * fg_error + 0.5 * bg_error
 
 
-def detect_t_candidates(mask: np.ndarray) -> tuple[dict | None, list[dict]]:
+def detect_t_candidates(mask: np.ndarray, model: dict) -> tuple[dict | None, list[dict]]:
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    template = make_t_template()
     candidates: list[dict] = []
     best: dict | None = None
 
@@ -178,44 +197,26 @@ def detect_t_candidates(mask: np.ndarray) -> tuple[dict | None, list[dict]]:
         if area < MIN_CONTOUR_AREA:
             continue
 
-        norm_mask, bbox = normalize_candidate(mask, contour, out_size=template.shape[0])
-        top_width_ratio, center_height_ratio, fill_ratio = compute_t_features(norm_mask)
-
-        if fill_ratio < MIN_FILL_RATIO or fill_ratio > MAX_FILL_RATIO:
-            continue
-
-        shape_score = float(cv2.matchShapes(contour, cv2.findContours(template, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0][0], cv2.CONTOURS_MATCH_I1, 0.0))
-        template_diff = float(np.mean(cv2.absdiff(norm_mask, template))) / 255.0
-
-        # Lower is better for both shape_score and template_diff.
-        total_score = 0.65 * shape_score + 0.35 * template_diff
+        norm_mask, bbox = normalize_candidate(mask, contour, out_size=model["image_size"])
+        score = distance_map_score(norm_mask, model["dist_fg"], model["dist_bg"])
 
         candidate = {
             "contour": contour,
             "bbox": bbox,
             "area": area,
-            "shape_score": shape_score,
-            "template_diff": template_diff,
-            "total_score": total_score,
-            "top_width_ratio": top_width_ratio,
-            "center_height_ratio": center_height_ratio,
-            "fill_ratio": fill_ratio,
-            "is_t": (
-                total_score <= T_MATCH_THRESHOLD and
-                top_width_ratio >= 0.55 and
-                center_height_ratio >= 0.45
-            ),
+            "score": score,
+            "is_t": score <= model["match_threshold"],
             "norm_mask": norm_mask,
         }
         candidates.append(candidate)
 
-        if best is None or candidate["total_score"] < best["total_score"]:
+        if best is None or score < best["score"]:
             best = candidate
 
     return best, candidates
 
 
-def draw_candidates(frame: np.ndarray, roi_start: int, best: dict | None, candidates: list[dict]) -> np.ndarray:
+def draw_candidates(frame: np.ndarray, roi_start: int, best: dict | None, candidates: list[dict], model: dict) -> np.ndarray:
     out = frame.copy()
     cv2.rectangle(out, (0, roi_start), (out.shape[1] - 1, out.shape[0] - 1), (0, 255, 255), 2)
 
@@ -227,57 +228,48 @@ def draw_candidates(frame: np.ndarray, roi_start: int, best: dict | None, candid
     if best is not None:
         x, y, w, h = best["bbox"]
         cv2.rectangle(out, (x, y + roi_start), (x + w, y + h + roi_start), (255, 0, 0), 3)
+        cv2.putText(out, f"score={best['score']:.3f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
         cv2.putText(
             out,
-            f"best score={best['total_score']:.3f}",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 0),
-            2,
-        )
-        cv2.putText(
-            out,
-            f"top={best['top_width_ratio']:.2f} center={best['center_height_ratio']:.2f}",
+            f"T={'YES' if best['is_t'] else 'NO'} thr={model['match_threshold']:.3f}",
             (10, 60),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (255, 255, 0),
-            2,
-        )
-        cv2.putText(
-            out,
-            f"T={'YES' if best['is_t'] else 'NO'}",
-            (10, 90),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.8,
             (0, 255, 0) if best["is_t"] else (0, 0, 255),
             2,
         )
-    else:
         cv2.putText(
             out,
-            "No valid object",
-            (10, 30),
+            f"model={model['source']}",
+            (10, 90),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 0, 255),
+            0.75,
+            (255, 255, 255),
             2,
         )
+    else:
+        cv2.putText(out, "No valid object", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
 
     return out
 
 
-def build_candidate_view(best: dict | None) -> np.ndarray:
-    view = np.zeros((220, 220, 3), dtype=np.uint8)
-    template = make_t_template()
-    view[:160, :160, 1] = template
-    cv2.putText(view, "Template", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+def build_candidate_view(best: dict | None, model: dict) -> np.ndarray:
+    size = model["image_size"]
+    binary_template = model["binary_template"]
+    dist_vis = cv2.normalize(model["dist_fg"], None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    dist_bgr = cv2.applyColorMap(dist_vis, cv2.COLORMAP_TURBO)
+
+    view = np.zeros((size + 60, size * 2, 3), dtype=np.uint8)
+    view[:size, :size, 1] = binary_template
+    view[:size, size:size * 2, :] = dist_bgr
+    cv2.putText(view, "Template", (10, size + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+    cv2.putText(view, "Distance map", (size + 10, size + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
     if best is not None:
-        candidate = best["norm_mask"]
-        view[:160, 60:220, 2] = candidate[:, :160]
-        cv2.putText(view, "Best candidate", (60, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 2)
+        candidate_panel = np.zeros((size + 60, size, 3), dtype=np.uint8)
+        candidate_panel[:size, :, 2] = best["norm_mask"]
+        cv2.putText(candidate_panel, "Best candidate", (10, size + 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        view = np.hstack([view, candidate_panel])
 
     return view
 
@@ -286,6 +278,7 @@ def main():
     leds = LED()
     leds.turn_on_all()
     cam = Camera()
+    model = load_model()
 
     try:
         while True:
@@ -294,10 +287,10 @@ def main():
                 continue
 
             mask, roi_start = compute_mask(frame)
-            best, candidates = detect_t_candidates(mask)
+            best, candidates = detect_t_candidates(mask, model)
 
-            overlay = draw_candidates(frame, roi_start, best, candidates)
-            candidate_view = build_candidate_view(best)
+            overlay = draw_candidates(frame, roi_start, best, candidates, model)
+            candidate_view = build_candidate_view(best, model)
 
             cv2.imshow("T object detection", overlay)
             cv2.imshow("T mask", mask)
