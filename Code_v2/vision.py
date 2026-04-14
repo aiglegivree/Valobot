@@ -420,11 +420,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 
     if shape_detection_allowed:
         sharp_turn_detected = corner_count == SHARP_TURN_CORNERS
-        t_detected = (
-            corner_count == T_CORNERS and
-            left_border_corners >= 2 and
-            right_border_corners >= 2
-        )
+        t_detected = corner_count == T_CORNERS
     else:
         sharp_turn_detected = False
         t_detected = False

@@ -328,11 +328,7 @@ def main():
                 filtered_mask.shape[1],
                 edge_margin,
             )
-            t_detected = (
-                corner_count == 8 and
-                left_border_corners >= 2 and
-                right_border_corners >= 2
-            )
+            t_detected = corner_count == 8
 
             camera_view = frame.copy()
             cv2.rectangle(
