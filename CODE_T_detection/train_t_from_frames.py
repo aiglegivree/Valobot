@@ -21,6 +21,8 @@ BLACK_V_HIGH = 130
 KERNEL_SIZE = 5
 MORPH_CLOSE_IT = 2
 MIN_CONTOUR_AREA = 1200
+FD_COUNT = 32
+RESAMPLE_POINTS = 256
 
 
 def iter_training_images() -> list[Path]:
@@ -48,7 +50,7 @@ def preprocess_to_mask(image_bgr: np.ndarray) -> np.ndarray:
 
 
 def largest_contour(mask: np.ndarray) -> np.ndarray | None:
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
     if not contours:
         return None
 
@@ -74,30 +76,52 @@ def normalize_contour_mask(mask: np.ndarray, contour: np.ndarray, out_size: int 
     return canvas
 
 
-def compute_distance_maps(binary_template: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    template_bool = binary_template > 0
-    dist_to_foreground = cv2.distanceTransform((~template_bool).astype(np.uint8), cv2.DIST_L2, 3)
-    dist_to_background = cv2.distanceTransform(template_bool.astype(np.uint8), cv2.DIST_L2, 3)
-    return dist_to_foreground.astype(np.float32), dist_to_background.astype(np.float32)
+def resample_contour(contour: np.ndarray, num_points: int = RESAMPLE_POINTS) -> np.ndarray:
+    pts = contour.reshape(-1, 2).astype(np.float32)
+    if len(pts) < 2:
+        raise ValueError("Contour too short")
+
+    closed = np.vstack([pts, pts[0]])
+    seg = np.linalg.norm(np.diff(closed, axis=0), axis=1)
+    cumulative = np.concatenate([[0.0], np.cumsum(seg)])
+    total = float(cumulative[-1])
+    if total <= 1e-6:
+        raise ValueError("Degenerate contour")
+
+    targets = np.linspace(0.0, total, num_points, endpoint=False)
+    out = np.zeros((num_points, 2), dtype=np.float32)
+    seg_idx = 0
+
+    for i, t in enumerate(targets):
+        while seg_idx + 1 < len(cumulative) and cumulative[seg_idx + 1] < t:
+            seg_idx += 1
+
+        p0 = closed[seg_idx]
+        p1 = closed[seg_idx + 1]
+        seg_len = max(cumulative[seg_idx + 1] - cumulative[seg_idx], 1e-6)
+        alpha = (t - cumulative[seg_idx]) / seg_len
+        out[i] = (1.0 - alpha) * p0 + alpha * p1
+
+    return out
 
 
-def distance_map_score(candidate_mask: np.ndarray, dist_fg: np.ndarray, dist_bg: np.ndarray) -> float:
-    candidate_bool = candidate_mask > 0
-    if not np.any(candidate_bool):
-        return float("inf")
+def fourier_descriptor(contour: np.ndarray, fd_count: int = FD_COUNT) -> np.ndarray:
+    pts = resample_contour(contour, RESAMPLE_POINTS)
+    z = pts[:, 0] + 1j * pts[:, 1]
+    z = z - np.mean(z)
 
-    fg_error = float(np.mean(dist_fg[candidate_bool])) if np.any(candidate_bool) else 0.0
-    bg_mask = ~candidate_bool
-    bg_error = float(np.mean(dist_bg[bg_mask])) if np.any(bg_mask) else 0.0
-    return 0.5 * fg_error + 0.5 * bg_error
+    spectrum = np.fft.fft(z)
+    magnitudes = np.abs(spectrum)
+
+    # ignore DC, keep only magnitude for rotation invariance
+    descriptor = magnitudes[1:fd_count + 1].astype(np.float32)
+    scale = float(descriptor[0]) if descriptor.size > 0 else 1.0
+    scale = max(scale, 1e-6)
+    descriptor /= scale
+    return descriptor
 
 
-def build_preview(
-    samples: list[np.ndarray],
-    prototype_u8: np.ndarray,
-    binary_template: np.ndarray,
-    dist_fg: np.ndarray,
-) -> np.ndarray:
+def build_preview(samples: list[np.ndarray], mean_descriptor: np.ndarray) -> np.ndarray:
     tile = IMAGE_SIZE
     cols = min(4, max(1, len(samples)))
     rows = max(1, int(np.ceil(len(samples) / cols)))
@@ -111,22 +135,17 @@ def build_preview(
         x0 = c * tile
         grid[y0:y0 + tile, x0:x0 + tile, 1] = sample
 
-    proto_bgr = np.zeros((panel_h, tile, 3), dtype=np.uint8)
-    proto_bgr[:tile, :, 2] = prototype_u8
+    plot = np.zeros((panel_h, 420, 3), dtype=np.uint8)
+    if mean_descriptor.size > 0:
+        xs = np.linspace(20, plot.shape[1] - 20, num=mean_descriptor.size).astype(np.int32)
+        max_val = max(float(np.max(mean_descriptor)), 1e-6)
+        ys = (panel_h - 40 - (mean_descriptor / max_val) * max(panel_h - 80, 1)).astype(np.int32)
+        pts = np.stack([xs, ys], axis=1).reshape(-1, 1, 2)
+        cv2.polylines(plot, [pts], False, (0, 255, 255), 2)
 
-    templ_bgr = np.zeros((panel_h, tile, 3), dtype=np.uint8)
-    templ_bgr[:tile, :, 0] = binary_template
-
-    dist_vis = cv2.normalize(dist_fg, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
-    dist_bgr = cv2.applyColorMap(dist_vis, cv2.COLORMAP_TURBO)
-    dist_panel = np.zeros((panel_h, tile, 3), dtype=np.uint8)
-    dist_panel[:tile, :, :] = dist_bgr
-
-    preview = np.hstack([grid, proto_bgr, templ_bgr, dist_panel])
+    cv2.putText(plot, "Mean Fourier descriptor", (20, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+    preview = np.hstack([grid, plot])
     cv2.putText(preview, "Samples", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 0), 2)
-    cv2.putText(preview, "Avg prototype", (grid.shape[1] + 10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 0, 255), 2)
-    cv2.putText(preview, "Binary template", (grid.shape[1] + tile + 10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 0, 0), 2)
-    cv2.putText(preview, "Distance map", (grid.shape[1] + 2 * tile + 10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
     return preview
 
 
@@ -139,6 +158,7 @@ def main():
         )
 
     normalized_samples: list[np.ndarray] = []
+    descriptors: list[np.ndarray] = []
 
     for image_path in image_paths:
         image = cv2.imread(str(image_path), cv2.IMREAD_COLOR)
@@ -150,41 +170,38 @@ def main():
         if contour is None:
             continue
 
+        try:
+            descriptor = fourier_descriptor(contour, FD_COUNT)
+        except ValueError:
+            continue
+
+        descriptors.append(descriptor)
         normalized_samples.append(normalize_contour_mask(mask, contour, out_size=IMAGE_SIZE))
 
-    if not normalized_samples:
-        raise RuntimeError("Images found, but none produced a usable T mask.")
+    if not descriptors:
+        raise RuntimeError("Images found, but none produced a usable T contour.")
 
-    sample_stack = np.stack(normalized_samples, axis=0).astype(np.float32) / 255.0
-    prototype_float = np.mean(sample_stack, axis=0)
-    prototype_u8 = np.clip(np.round(255.0 * prototype_float), 0, 255).astype(np.uint8)
-    binary_template = (prototype_float >= 0.50).astype(np.uint8) * 255
-
-    dist_fg, dist_bg = compute_distance_maps(binary_template)
-    training_scores = np.array(
-        [distance_map_score(sample, dist_fg, dist_bg) for sample in normalized_samples],
-        dtype=np.float32,
-    )
-    match_threshold = float(np.percentile(training_scores, 95) * 1.15)
+    descriptor_stack = np.stack(descriptors, axis=0).astype(np.float32)
+    mean_descriptor = np.mean(descriptor_stack, axis=0)
+    train_distances = np.linalg.norm(descriptor_stack - mean_descriptor[None, :], axis=1)
+    match_threshold = float(np.percentile(train_distances, 95) * 1.20 + 1e-6)
 
     np.savez(
         MODEL_PATH,
-        prototype=prototype_float.astype(np.float32),
-        binary_template=binary_template.astype(np.uint8),
-        dist_fg=dist_fg.astype(np.float32),
-        dist_bg=dist_bg.astype(np.float32),
+        mean_descriptor=mean_descriptor.astype(np.float32),
         match_threshold=np.float32(match_threshold),
-        image_size=np.int32(IMAGE_SIZE),
-        sample_count=np.int32(len(normalized_samples)),
+        fd_count=np.int32(FD_COUNT),
+        resample_points=np.int32(RESAMPLE_POINTS),
+        sample_count=np.int32(len(descriptors)),
     )
 
-    preview = build_preview(normalized_samples, prototype_u8, binary_template, dist_fg)
+    preview = build_preview(normalized_samples, mean_descriptor)
     cv2.imwrite(str(MODEL_PREVIEW_PATH), preview)
 
-    print(f"Used {len(normalized_samples)} training images.")
+    print(f"Used {len(descriptors)} training images.")
     print(f"Saved model to {MODEL_PATH}")
     print(f"Saved preview to {MODEL_PREVIEW_PATH}")
-    print(f"Distance threshold: {match_threshold:.4f}")
+    print(f"Fourier distance threshold: {match_threshold:.4f}")
 
 
 if __name__ == "__main__":
