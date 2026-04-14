@@ -320,16 +320,25 @@ def draw_shape_debug(mask: np.ndarray, contour: np.ndarray | None, corners: list
     return disp
 
 
-def extract_largest_area(mask: np.ndarray) -> tuple[float, np.ndarray]:
+def extract_all_brown_regions(mask: np.ndarray) -> tuple[float, np.ndarray]:
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
         return 0.0, np.zeros_like(mask)
 
-    contour = max(contours, key=cv2.contourArea)
-    area = float(cv2.contourArea(contour))
+    area = 0.0
     out = np.zeros_like(mask)
-    if area > 0.0:
-        cv2.drawContours(out, [contour], -1, 255, thickness=cv2.FILLED)
+    kept_contours = []
+
+    for contour in contours:
+        contour_area = float(cv2.contourArea(contour))
+        if contour_area < 1.0:
+            continue
+        area += contour_area
+        kept_contours.append(contour)
+
+    if kept_contours:
+        cv2.drawContours(out, kept_contours, -1, 255, thickness=cv2.FILLED)
+
     return area, out
 
 
@@ -394,7 +403,7 @@ def main():
             mask, roi_start = compute_shape_mask(frame, values)
             brown_mask, _ = compute_brown_mask(frame, values)
             corners, contour, area = extract_corners(mask, values)
-            brown_area, brown_filtered = extract_largest_area(brown_mask)
+            brown_area, brown_filtered = extract_all_brown_regions(brown_mask)
             filtered_mask = apply_min_area_filter(mask, contour, area, values["min_area"])
             corner_count = len(corners)
             edge_margin = max(1, 2 * CORNER_PADDING)
