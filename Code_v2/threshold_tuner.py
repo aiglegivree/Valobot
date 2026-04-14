@@ -151,6 +151,15 @@ def apply_min_area_filter(
     return np.zeros_like(mask)
 
 
+def is_near_frame_edge(x: int, y: int, width: int, height: int, margin: int) -> bool:
+    return (
+        x <= margin or
+        y <= margin or
+        x >= width - 1 - margin or
+        y >= height - 1 - margin
+    )
+
+
 def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int]], np.ndarray | None, float]:
     padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
     contours, _ = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -172,7 +181,16 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
     if len(approx_points) < 3:
         return [], contour, area
 
+    padded_h, padded_w = padded.shape
+
     for i, point in enumerate(approx_points):
+        px = int(point[0])
+        py = int(point[1])
+
+        if is_near_frame_edge(px, py, padded_w, padded_h, margin=1):
+            corners.append((px - 1, py - 1))
+            continue
+
         prev_point = approx_points[(i - 1) % len(approx_points)].astype(np.float32)
         curr_point = point.astype(np.float32)
         next_point = approx_points[(i + 1) % len(approx_points)].astype(np.float32)
@@ -190,7 +208,7 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
         if angle_deg > values["corner_max_angle_deg"]:
             continue
 
-        corners.append((int(point[0]) - 1, int(point[1]) - 1))
+        corners.append((px - 1, py - 1))
 
     return corners, contour, area
 
