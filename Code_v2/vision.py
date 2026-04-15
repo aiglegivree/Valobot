@@ -8,6 +8,7 @@ from config import (
     ROI_START_FRAC,
     GAUSS_KSIZE,
     KERNEL_SIZE, MORPH_CLOSE_IT,
+    SHAPE_MORPH_MODE,
     BAND_THICKNESS,
     SLICE_TOP_FRAC, SLICE_MID_FRAC, SLICE_BOT_FRAC,
     W_TOP, W_MID, W_BOT,
@@ -60,6 +61,24 @@ class VisionResult:
     shape_mask: np.ndarray
 
 
+def remove_holes(mask: np.ndarray) -> np.ndarray:
+    padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+    flood = padded.copy()
+    h, w = flood.shape
+    flood_fill_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    cv2.floodFill(flood, flood_fill_mask, (0, 0), 255)
+    holes = cv2.bitwise_not(flood)[1:-1, 1:-1]
+    return cv2.bitwise_or(mask, holes)
+
+
+def apply_shape_morphology(mask: np.ndarray) -> np.ndarray:
+    kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
+    if SHAPE_MORPH_MODE == "remove_holes":
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        return remove_holes(mask)
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
+
+
 def correct_top_down(mask: np.ndarray, angle_deg: float = 20) -> np.ndarray:
     scale = 1.0 / np.cos(np.radians(angle_deg))
     h, w = mask.shape
@@ -96,8 +115,7 @@ def compute_shape_mask_from_frame(frame_bgr: np.ndarray) -> tuple[np.ndarray, in
     upper_black = np.array([BLACK_H_HIGH, BLACK_S_HIGH, BLACK_V_HIGH], dtype=np.uint8)
 
     mask = cv2.inRange(hsv, lower_black, upper_black)
-    kernel = np.ones((KERNEL_SIZE, KERNEL_SIZE), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=MORPH_CLOSE_IT)
+    mask = apply_shape_morphology(mask)
 
     return mask, roi_start
 
@@ -237,21 +255,30 @@ def is_near_frame_edge(x: int, y: int, width: int, height: int, margin: int) -> 
     )
 
 
-def count_side_border_corners(
+def count_t_side_corners(
     corners: list[tuple[int, int]],
-    width: int,
-    margin: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, list[tuple[int, int]]]:
+    if len(corners) < 2:
+        return 0, 0, []
+
+    bottom_pair = sorted(corners, key=lambda p: (p[1], p[0]), reverse=True)[:2]
+    bottom_x_min = min(point[0] for point in bottom_pair)
+    bottom_x_max = max(point[0] for point in bottom_pair)
+    bottom_pair_set = set(bottom_pair)
+
     left_count = 0
     right_count = 0
+    for point in corners:
+        if point in bottom_pair_set:
+            continue
 
-    for x, _ in corners:
-        if x <= margin:
+        x, _ = point
+        if x < bottom_x_min:
             left_count += 1
-        if x >= width - 1 - margin:
+        elif x > bottom_x_max:
             right_count += 1
 
-    return left_count, right_count
+    return left_count, right_count, bottom_pair
 
 
 def extract_corners_from_connected_mask(
@@ -341,11 +368,16 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         connected_mask,
         SLICE_BOT_FRAC,
         BAND_THICKNESS,
+    )
+    cx_bot_gated, _, _, _, width_bot_gated, _ = get_band_info(
+        connected_mask,
+        SLICE_BOT_FRAC,
+        BAND_THICKNESS,
         x_center=cx_ref,
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
     )
 
-    seen_bot = cx_bot is not None
+    seen_bot = cx_bot_gated is not None
 
     top_near_center = (
         cx_top is not None and abs(cx_top - cx_ref) <= CENTER_EXCEPTION_DIST
@@ -402,25 +434,24 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     shape_connected_mask = apply_black_border(shape_connected_mask)
     corners, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
-    t_edge_margin = max(1, 2 * CORNER_PADDING)
-    left_border_corners, right_border_corners = count_side_border_corners(
-        corners,
-        shape_connected_mask.shape[1],
-        t_edge_margin,
-    )
+    left_side_corners, right_side_corners, bottom_pair = count_t_side_corners(corners)
 
     # Only trust corner-based shape classification when the line-following
     # pipeline also sees a real bottom segment. This prevents random dark
     # blobs or floor shadows from being labeled as turns/Ts.
     shape_detection_allowed = (
         seen_bot and
-        width_bot > 0 and
-        abs(cx_bot - cx_ref) <= BOTTOM_SLICE_MAX_DIST
+        width_bot_gated > 0
     )
 
     if shape_detection_allowed:
         sharp_turn_detected = corner_count == SHARP_TURN_CORNERS
-        t_detected = corner_count == T_CORNERS
+        t_detected = (
+            corner_count == T_CORNERS and
+            len(bottom_pair) == 2 and
+            left_side_corners >= 2 and
+            right_side_corners >= 2
+        )
     else:
         sharp_turn_detected = False
         t_detected = False

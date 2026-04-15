@@ -84,8 +84,8 @@ class Controller:
 
         self.t_confirmed = self.t_count >= T_CONFIRM_FRAMES
         if self.t_confirmed:
-            #self.t_stop_latched = True
-            self.t_stop_latched = False
+            self.t_stop_latched = True
+            #self.t_stop_latched = False
         # =========================================================
         # STEP 2: PERMANENT STOP ON T
         # =========================================================

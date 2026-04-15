@@ -14,6 +14,7 @@ from config import (
     GAUSS_KSIZE,
     KERNEL_SIZE,
     MORPH_CLOSE_IT,
+    SHAPE_MORPH_MODE,
     CORNER_PADDING,
     CORNER_MIN_CONTOUR_AREA,
     CORNER_APPROX_EPSILON_FRAC,
@@ -26,6 +27,8 @@ WINDOW_CAMERA = "Camera"
 WINDOW_MASK = "Mask"
 WINDOW_SHAPE = "Shape Debug"
 CONFIG_PATH = Path(__file__).with_name("config.py")
+MORPH_MODE_CLOSE = 0
+MORPH_MODE_REMOVE_HOLES = 1
 
 
 def nothing(_):
@@ -41,6 +44,13 @@ def create_trackbars():
     cv2.createTrackbar("Blur", WINDOW_CONTROLS, min(GAUSS_KSIZE, 15), 15, nothing)
     cv2.createTrackbar("Close kernel", WINDOW_CONTROLS, min(KERNEL_SIZE, 15), 15, nothing)
     cv2.createTrackbar("Close iter", WINDOW_CONTROLS, min(MORPH_CLOSE_IT, 10), 10, nothing)
+    cv2.createTrackbar(
+        "Morph mode",
+        WINDOW_CONTROLS,
+        MORPH_MODE_REMOVE_HOLES if SHAPE_MORPH_MODE == "remove_holes" else MORPH_MODE_CLOSE,
+        MORPH_MODE_REMOVE_HOLES,
+        nothing,
+    )
     cv2.createTrackbar("Corner min area", WINDOW_CONTROLS, min(CORNER_MIN_CONTOUR_AREA, 100000), 100000, nothing)
     cv2.createTrackbar(
         "Corner max angle",
@@ -71,6 +81,7 @@ def get_values():
     blur = odd_at_least_one(cv2.getTrackbarPos("Blur", WINDOW_CONTROLS))
     close_kernel = odd_at_least_one(cv2.getTrackbarPos("Close kernel", WINDOW_CONTROLS))
     close_iter = max(1, cv2.getTrackbarPos("Close iter", WINDOW_CONTROLS))
+    morph_mode = cv2.getTrackbarPos("Morph mode", WINDOW_CONTROLS)
     min_area = cv2.getTrackbarPos("Corner min area", WINDOW_CONTROLS)
     corner_max_angle_deg = max(1, cv2.getTrackbarPos("Corner max angle", WINDOW_CONTROLS))
     approx_frac = cv2.getTrackbarPos("Approx x100", WINDOW_CONTROLS) / 100.0
@@ -81,10 +92,29 @@ def get_values():
         "blur": blur,
         "close_kernel": close_kernel,
         "close_iter": close_iter,
+        "morph_mode": "remove_holes" if morph_mode == MORPH_MODE_REMOVE_HOLES else "close",
         "min_area": min_area,
         "corner_max_angle_deg": float(corner_max_angle_deg),
         "approx_frac": approx_frac,
     }
+
+
+def remove_holes(mask: np.ndarray) -> np.ndarray:
+    padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
+    flood = padded.copy()
+    h, w = flood.shape
+    flood_fill_mask = np.zeros((h + 2, w + 2), dtype=np.uint8)
+    cv2.floodFill(flood, flood_fill_mask, (0, 0), 255)
+    holes = cv2.bitwise_not(flood)[1:-1, 1:-1]
+    return cv2.bitwise_or(mask, holes)
+
+
+def apply_shape_morphology(mask: np.ndarray, values: dict) -> np.ndarray:
+    kernel = np.ones((values["close_kernel"], values["close_kernel"]), np.uint8)
+    if values["morph_mode"] == "remove_holes":
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+        return remove_holes(mask)
+    return cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=values["close_iter"])
 
 
 def keep_shape_connected_to_bottom_rect(mask: np.ndarray, x_center: int, max_x_dist: int) -> np.ndarray:
@@ -146,8 +176,7 @@ def compute_shape_mask(frame: np.ndarray, values: dict) -> tuple[np.ndarray, int
 
     mask = cv2.inRange(hsv, low, high)
 
-    kernel = np.ones((values["close_kernel"], values["close_kernel"]), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=values["close_iter"])
+    mask = apply_shape_morphology(mask, values)
     mask = apply_black_border(mask)
     mask = keep_shape_connected_to_bottom_rect(
         mask,
@@ -181,21 +210,30 @@ def is_near_frame_edge(x: int, y: int, width: int, height: int, margin: int) -> 
     )
 
 
-def count_side_border_corners(
+def count_t_side_corners(
     corners: list[tuple[int, int]],
-    width: int,
-    margin: int,
-) -> tuple[int, int]:
+) -> tuple[int, int, list[tuple[int, int]]]:
+    if len(corners) < 2:
+        return 0, 0, []
+
+    bottom_pair = sorted(corners, key=lambda p: (p[1], p[0]), reverse=True)[:2]
+    bottom_x_min = min(point[0] for point in bottom_pair)
+    bottom_x_max = max(point[0] for point in bottom_pair)
+    bottom_pair_set = set(bottom_pair)
+
     left_count = 0
     right_count = 0
+    for point in corners:
+        if point in bottom_pair_set:
+            continue
 
-    for x, _ in corners:
-        if x <= margin:
+        x, _ = point
+        if x < bottom_x_min:
             left_count += 1
-        if x >= width - 1 - margin:
+        elif x > bottom_x_max:
             right_count += 1
 
-    return left_count, right_count
+    return left_count, right_count, bottom_pair
 
 
 def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int]], np.ndarray | None, float]:
@@ -288,6 +326,7 @@ def save_values_to_config(values: dict):
         "GAUSS_KSIZE": str(values["blur"]),
         "KERNEL_SIZE": str(values["close_kernel"]),
         "MORPH_CLOSE_IT": str(values["close_iter"]),
+        "SHAPE_MORPH_MODE": repr(values["morph_mode"]),
         "CORNER_MIN_CONTOUR_AREA": str(values["min_area"]),
         "CORNER_MAX_ANGLE_DEG": f"{values['corner_max_angle_deg']:.1f}",
         "CORNER_APPROX_EPSILON_FRAC": f"{values['approx_frac']:.2f}",
@@ -322,13 +361,13 @@ def main():
             corners, contour, area = extract_corners(mask, values)
             filtered_mask = apply_min_area_filter(mask, contour, area, values["min_area"])
             corner_count = len(corners)
-            edge_margin = max(1, 2 * CORNER_PADDING)
-            left_border_corners, right_border_corners = count_side_border_corners(
-                corners,
-                filtered_mask.shape[1],
-                edge_margin,
+            left_side_corners, right_side_corners, bottom_pair = count_t_side_corners(corners)
+            t_detected = (
+                corner_count == 8 and
+                len(bottom_pair) == 2 and
+                left_side_corners >= 2 and
+                right_side_corners >= 2
             )
-            t_detected = corner_count == 8
 
             camera_view = frame.copy()
             cv2.rectangle(
@@ -370,10 +409,10 @@ def main():
             )
             cv2.putText(
                 shape_view,
-                f"LEDs: {'ON' if leds_on else 'OFF'} | l toggle | s save config",
+                f"Mode: {values['morph_mode']} | LEDs: {'ON' if leds_on else 'OFF'} | l toggle | s save config",
                 (10, 125),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
+                0.5,
                 (255, 255, 255),
                 2,
             )
@@ -399,6 +438,15 @@ def main():
                 shape_view,
                 f"Area: {int(area)}",
                 (10, 215),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.55,
+                (255, 255, 255),
+                2,
+            )
+            cv2.putText(
+                shape_view,
+                f"L/R vs bottom pair: {left_side_corners}/{right_side_corners}",
+                (10, 245),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.55,
                 (255, 255, 255),
