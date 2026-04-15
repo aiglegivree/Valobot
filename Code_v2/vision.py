@@ -346,14 +346,17 @@ def shift_contour_back(contour: np.ndarray | None) -> np.ndarray | None:
 
 
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
-    line_mask, roi_start = compute_line_mask_from_frame(frame_bgr)
-    mask_td = correct_top_down(line_mask, angle_deg)
-    mask_td = apply_black_border(mask_td)
-    h_td, w_td = mask_td.shape
+    shape_mask_raw, roi_start = compute_shape_mask_from_frame(frame_bgr)
+    shared_mask = apply_black_border(shape_mask_raw)
+    shared_mask = keep_shape_connected_to_bottom_rect(
+        shared_mask,
+        x_center=shared_mask.shape[1] // 2,
+        max_x_dist=BOTTOM_SLICE_MAX_DIST,
+    )
+    shared_mask = apply_black_border(shared_mask)
+    h_td, w_td = shared_mask.shape
     cx_ref = w_td // 2
-
-    connected_mask = keep_bottom_connected_component(mask_td, cx_ref)
-    connected_mask = apply_black_border(connected_mask)
+    connected_mask = shared_mask
 
     y_top = int(SLICE_TOP_FRAC * h_td)
     y_mid = int(SLICE_MID_FRAC * h_td)
@@ -425,14 +428,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     err_bot = float(cx_bot_use - cx_ref)
     steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
-    shape_mask, _ = compute_shape_mask_from_frame(frame_bgr)
-    shape_mask = apply_black_border(shape_mask)
-    shape_connected_mask = keep_shape_connected_to_bottom_rect(
-        shape_mask,
-        x_center=shape_mask.shape[1] // 2,
-        max_x_dist=BOTTOM_SLICE_MAX_DIST,
-    )
-    shape_connected_mask = apply_black_border(shape_connected_mask)
+    shape_connected_mask = shared_mask
     corners, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
     left_side_corners, right_side_corners, bottom_pair = count_t_side_corners(corners)
@@ -484,7 +480,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         t_detected=t_detected,
         corner_count=corner_count,
         corners=corners,
-        mask=mask_td,
+        mask=shared_mask,
         connected_mask=connected_mask,
         shape_mask=shape_connected_mask,
     )
