@@ -7,6 +7,7 @@ import sys
 
 
 WINDOW_NAME = "Obstacle Edge Direction"
+CONTROLS_WINDOW = "Detection Controls"
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CODE_V2_DIR = ROOT_DIR / "Code_v2"
@@ -53,18 +54,54 @@ class Camera:
             self.cam.release()
 
 
-def detect_edges(frame: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
+def nothing(_: int) -> None:
+    pass
+
+
+def create_trackbars() -> None:
+    cv2.namedWindow(CONTROLS_WINDOW, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(CONTROLS_WINDOW, 420, 220)
+    cv2.createTrackbar("Canny low", CONTROLS_WINDOW, 50, 255, nothing)
+    cv2.createTrackbar("Canny high", CONTROLS_WINDOW, 135, 255, nothing)
+    cv2.createTrackbar("Hough thresh", CONTROLS_WINDOW, 28, 200, nothing)
+    cv2.createTrackbar("Min line len", CONTROLS_WINDOW, 20, 200, nothing)
+    cv2.createTrackbar("Max line gap", CONTROLS_WINDOW, 18, 100, nothing)
+
+
+def get_detection_params() -> tuple[int, int, int, int, int]:
+    canny_low = cv2.getTrackbarPos("Canny low", CONTROLS_WINDOW)
+    canny_high = cv2.getTrackbarPos("Canny high", CONTROLS_WINDOW)
+    hough_thresh = cv2.getTrackbarPos("Hough thresh", CONTROLS_WINDOW)
+    min_line_len = cv2.getTrackbarPos("Min line len", CONTROLS_WINDOW)
+    max_line_gap = cv2.getTrackbarPos("Max line gap", CONTROLS_WINDOW)
+
+    canny_low = max(1, canny_low)
+    canny_high = max(canny_low + 1, canny_high)
+    hough_thresh = max(1, hough_thresh)
+    min_line_len = max(1, min_line_len)
+    max_line_gap = max(0, max_line_gap)
+    return canny_low, canny_high, hough_thresh, min_line_len, max_line_gap
+
+
+def detect_edges(
+    frame: np.ndarray,
+    canny_low: int,
+    canny_high: int,
+    hough_thresh: int,
+    min_line_len: int,
+    max_line_gap: int,
+) -> tuple[np.ndarray, list[np.ndarray]]:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edge_map = cv2.Canny(blur, 50, 135)
+    edge_map = cv2.Canny(blur, canny_low, canny_high)
 
     raw_lines = cv2.HoughLinesP(
         edge_map,
         rho=1,
         theta=np.pi / 180,
-        threshold=28,
-        minLineLength=20,
-        maxLineGap=18,
+        threshold=hough_thresh,
+        minLineLength=min_line_len,
+        maxLineGap=max_line_gap,
     )
 
     if raw_lines is None:
@@ -107,6 +144,7 @@ def draw_result(
     edge_map: np.ndarray,
     lines: list[np.ndarray],
     best_line: np.ndarray | None,
+    params: tuple[int, int, int, int, int],
 ) -> np.ndarray:
     display = frame.copy()
 
@@ -148,6 +186,26 @@ def draw_result(
         1,
     )
 
+    canny_low, canny_high, hough_thresh, min_line_len, max_line_gap = params
+    cv2.putText(
+        combined,
+        f"Canny: {canny_low}/{canny_high}  Hough: {hough_thresh}",
+        (10, 64),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 255),
+        1,
+    )
+    cv2.putText(
+        combined,
+        f"MinLen: {min_line_len}  MaxGap: {max_line_gap}",
+        (10, 84),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 255),
+        1,
+    )
+
     cv2.putText(
         combined,
         "Frame + best edge",
@@ -173,6 +231,7 @@ def draw_result(
 def main() -> None:
     cam = Camera()
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    create_trackbars()
 
     try:
         while True:
@@ -180,9 +239,10 @@ def main() -> None:
             if not ret or frame is None:
                 continue
 
-            edge_map, lines = detect_edges(frame)
+            params = get_detection_params()
+            edge_map, lines = detect_edges(frame, *params)
             best_line = select_leftmost_edge(lines)
-            result = draw_result(frame, edge_map, lines, best_line)
+            result = draw_result(frame, edge_map, lines, best_line, params)
 
             cv2.imshow(WINDOW_NAME, result)
             key = cv2.waitKey(1) & 0xFF
