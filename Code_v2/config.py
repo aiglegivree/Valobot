@@ -87,14 +87,14 @@ SHARP_TURN_INNER_SPEED = 0.10
 BLIND_SPEED = 0.20
 SEARCH_SPEED = 0.20
 
-STEER_GAIN = 0.15
+STEER_GAIN = 0.12
 
 # ============================================================
 # DEBUG
 # ============================================================
 SHOW_DEBUG = True
 RECORD_RUN_VIDEO = True
-RECORD_RUN_FPS = 20.0
+RECORD_RUN_FPS = 40.0
 RECORDINGS_DIR = "run_recordings"
 
 # ============================================================
