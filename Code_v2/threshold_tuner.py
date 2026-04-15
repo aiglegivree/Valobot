@@ -363,7 +363,7 @@ def main():
             corner_count = len(corners)
             left_side_corners, right_side_corners, bottom_pair = count_t_side_corners(corners)
             t_detected = (
-                corner_count == 8 and
+                corner_count >= 8 and
                 len(bottom_pair) == 2 and
                 left_side_corners >= 2 and
                 right_side_corners >= 2
