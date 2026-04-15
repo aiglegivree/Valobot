@@ -89,6 +89,9 @@ STEER_GAIN = 0.2
 # DEBUG
 # ============================================================
 SHOW_DEBUG = True
+RECORD_RUN_VIDEO = True
+RECORD_RUN_FPS = 20.0
+RECORDINGS_DIR = "run_recordings"
 
 # ============================================================
 # SHOOTING
