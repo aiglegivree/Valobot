@@ -4,6 +4,7 @@ import time
 from config import (
     W,
     BASE_SPEED, TURN_SPEED, BLIND_SPEED, SEARCH_SPEED,
+    SHARP_TURN_INNER_SPEED,
     STEER_GAIN, STEER_SMOOTH_ALPHA, STEER_DEADZONE,
     BLIND_TURN_FRAMES, SEARCH_FRAMES,
     BLIND_TURN_STEER, SEARCH_TURN_STEER,
@@ -35,10 +36,11 @@ def steering_to_wheels(speed: float, steer: float):
 def sharp_turn_wheels(turn_cmd: float, speed: float):
     turn_cmd = clamp(turn_cmd, -1.0, 1.0)
     speed = clamp(speed, 0.0, 1.0)
+    inner_speed = clamp(SHARP_TURN_INNER_SPEED, 0.0, 1.0)
 
     if turn_cmd >= 0:
-        return speed, 0.15
-    return 0.15, speed
+        return speed, inner_speed
+    return inner_speed, speed
 
 
 class Controller:
