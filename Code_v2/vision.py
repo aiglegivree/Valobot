@@ -20,6 +20,7 @@ from config import (
     CORNER_APPROX_EPSILON_FRAC,
     CORNER_MIN_CONTOUR_AREA,
     CORNER_MAX_ANGLE_DEG,
+    SHARP_TURN_MAX_ANGLE_DEG,
     SHARP_TURN_CORNERS,
     T_CORNERS,
     T_SIDE_MIN_X_OFFSET,
@@ -307,25 +308,26 @@ def count_t_side_corners(
 
 def extract_corners_from_connected_mask(
     connected_mask: np.ndarray,
-) -> tuple[list[tuple[int, int]], np.ndarray | None]:
+) -> tuple[list[tuple[int, int]], list[float], np.ndarray | None]:
     padded = add_corner_padding(connected_mask)
     contours, _ = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
     if not contours:
-        return [], None
+        return [], [], None
 
     biggest = max(contours, key=cv2.contourArea)
     if cv2.contourArea(biggest) < CORNER_MIN_CONTOUR_AREA:
-        return [], biggest
+        return [], [], biggest
 
     perimeter = cv2.arcLength(biggest, True)
     epsilon = CORNER_APPROX_EPSILON_FRAC * perimeter
     approx = cv2.approxPolyDP(biggest, epsilon, True)
 
     corners: list[tuple[int, int]] = []
+    corner_angles: list[float] = []
     approx_points = approx.reshape(-1, 2)
     if len(approx_points) < 3:
-        return [], biggest
+        return [], [], biggest
 
     edge_margin = max(1, 2 * CORNER_PADDING)
     mask_h, mask_w = connected_mask.shape
@@ -338,6 +340,7 @@ def extract_corners_from_connected_mask(
 
         if is_near_frame_edge(x, y, mask_w, mask_h, edge_margin):
             corners.append((x, y))
+            corner_angles.append(0.0)
             continue
 
         prev_point = approx_points[(i - 1) % len(approx_points)].astype(np.float32)
@@ -358,8 +361,9 @@ def extract_corners_from_connected_mask(
             continue
 
         corners.append((x, y))
+        corner_angles.append(angle_deg)
 
-    return corners, biggest
+    return corners, corner_angles, biggest
 
 
 def shift_contour_back(contour: np.ndarray | None) -> np.ndarray | None:
@@ -457,9 +461,10 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
     shape_connected_mask = shared_mask
-    corners, _ = extract_corners_from_connected_mask(shape_connected_mask)
+    corners, corner_angles, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
     left_side_corners, right_side_corners, bottom_pair = count_t_side_corners(corners)
+    sharp_turn_angle_ok = bool(corner_angles) and max(corner_angles) <= SHARP_TURN_MAX_ANGLE_DEG
 
     # Only trust corner-based shape classification when the line-following
     # pipeline also sees a real bottom segment. This prevents random dark
@@ -470,7 +475,10 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     )
 
     if shape_detection_allowed:
-        sharp_turn_detected = corner_count == SHARP_TURN_CORNERS
+        sharp_turn_detected = (
+            corner_count == SHARP_TURN_CORNERS and
+            sharp_turn_angle_ok
+        )
         t_detected = (
             corner_count >= T_CORNERS and
             len(bottom_pair) == 2 and

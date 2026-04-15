@@ -19,6 +19,7 @@ from config import (
     CORNER_MIN_CONTOUR_AREA,
     CORNER_APPROX_EPSILON_FRAC,
     CORNER_MAX_ANGLE_DEG,
+    SHARP_TURN_MAX_ANGLE_DEG,
     T_SIDE_MIN_X_OFFSET,
 )
 
@@ -237,26 +238,27 @@ def count_t_side_corners(
     return left_count, right_count, bottom_pair
 
 
-def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int]], np.ndarray | None, float]:
+def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int]], list[float], np.ndarray | None, float]:
     padded = cv2.copyMakeBorder(mask, 1, 1, 1, 1, cv2.BORDER_CONSTANT, value=0)
     contours, _ = cv2.findContours(padded, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
 
     if not contours:
-        return [], None, 0.0
+        return [], [], None, 0.0
 
     contour = max(contours, key=cv2.contourArea)
     area = float(cv2.contourArea(contour))
     if area < values["min_area"]:
-        return [], contour, area
+        return [], [], contour, area
 
     perimeter = cv2.arcLength(contour, True)
     epsilon = values["approx_frac"] * perimeter
     approx = cv2.approxPolyDP(contour, epsilon, True)
 
     corners = []
+    corner_angles: list[float] = []
     approx_points = approx.reshape(-1, 2)
     if len(approx_points) < 3:
-        return [], contour, area
+        return [], [], contour, area
 
     edge_margin = max(1, 2 * CORNER_PADDING)
     mask_h, mask_w = mask.shape
@@ -269,6 +271,7 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
 
         if is_near_frame_edge(x, y, mask_w, mask_h, margin=edge_margin):
             corners.append((x, y))
+            corner_angles.append(0.0)
             continue
 
         prev_point = approx_points[(i - 1) % len(approx_points)].astype(np.float32)
@@ -289,8 +292,9 @@ def extract_corners(mask: np.ndarray, values: dict) -> tuple[list[tuple[int, int
             continue
 
         corners.append((x, y))
+        corner_angles.append(angle_deg)
 
-    return corners, contour, area
+    return corners, corner_angles, contour, area
 
 
 def draw_shape_debug(mask: np.ndarray, contour: np.ndarray | None, corners: list[tuple[int, int]]) -> np.ndarray:
@@ -359,10 +363,11 @@ def main():
 
             values = get_values()
             mask, roi_start = compute_shape_mask(frame, values)
-            corners, contour, area = extract_corners(mask, values)
+            corners, corner_angles, contour, area = extract_corners(mask, values)
             filtered_mask = apply_min_area_filter(mask, contour, area, values["min_area"])
             corner_count = len(corners)
             left_side_corners, right_side_corners, bottom_pair = count_t_side_corners(corners)
+            sharp_turn_angle_ok = bool(corner_angles) and max(corner_angles) <= SHARP_TURN_MAX_ANGLE_DEG
             t_detected = (
                 corner_count >= 8 and
                 len(bottom_pair) == 2 and
@@ -392,11 +397,11 @@ def main():
             )
             cv2.putText(
                 shape_view,
-                f"Sharp turn: {'YES' if corner_count == 6 else 'NO'}",
+                f"Sharp turn: {'YES' if corner_count == 6 and sharp_turn_angle_ok else 'NO'}",
                 (10, 65),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.7,
-                (0, 255, 0) if corner_count == 6 else (0, 0, 255),
+                (0, 255, 0) if corner_count == 6 and sharp_turn_angle_ok else (0, 0, 255),
                 2,
             )
             cv2.putText(
