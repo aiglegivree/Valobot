@@ -91,38 +91,33 @@ def line_direction_vector(line: np.ndarray) -> tuple[np.ndarray, float]:
     return np.array([dx / length, dy / length], dtype=np.float32), length
 
 
-def compute_mean_direction(lines: list[np.ndarray]) -> tuple[np.ndarray | None, float | None]:
+def line_score(line: np.ndarray, frame_shape: tuple[int, int, int]) -> float:
+    x1, y1, x2, y2 = map(float, line)
+    _, length = line_direction_vector(line)
+    h, w = frame_shape[:2]
+    mid_x = 0.5 * (x1 + x2)
+    mid_y = 0.5 * (y1 + y2)
+
+    center_x = 0.5 * w
+    center_y = 0.5 * h
+    center_dist = float(np.hypot(mid_x - center_x, mid_y - center_y))
+    max_center_dist = float(np.hypot(center_x, center_y))
+    center_score = 1.0 - (center_dist / max(max_center_dist, 1e-6))
+
+    return length + 40.0 * center_score
+
+
+def select_best_edge(lines: list[np.ndarray], frame_shape: tuple[int, int, int]) -> np.ndarray | None:
     if not lines:
-        return None, None
-
-    accum = np.zeros(2, dtype=np.float32)
-    total_weight = 0.0
-
-    for line in lines:
-        unit_vec, length = line_direction_vector(line)
-        if length <= 0.0:
-            continue
-        accum += unit_vec * length
-        total_weight += length
-
-    if total_weight <= 1e-6:
-        return None, None
-
-    norm = float(np.linalg.norm(accum))
-    if norm <= 1e-6:
-        return None, None
-
-    mean_vec = accum / norm
-    mean_angle_deg = float(np.degrees(np.arctan2(mean_vec[1], mean_vec[0])))
-    return mean_vec, mean_angle_deg
+        return None
+    return max(lines, key=lambda line: line_score(line, frame_shape))
 
 
 def draw_result(
     frame: np.ndarray,
     edge_map: np.ndarray,
     lines: list[np.ndarray],
-    mean_vec: np.ndarray | None,
-    mean_angle_deg: float | None,
+    best_line: np.ndarray | None,
 ) -> np.ndarray:
     display = frame.copy()
 
@@ -130,13 +125,15 @@ def draw_result(
         x1, y1, x2, y2 = map(int, line)
         cv2.line(display, (x1, y1), (x2, y2), (80, 80, 80), 1)
 
-    if mean_vec is not None:
-        cx = display.shape[1] // 2
-        cy = display.shape[0] // 2
-        arrow_len = min(display.shape[1], display.shape[0]) // 4
-        end_x = int(round(cx + mean_vec[0] * arrow_len))
-        end_y = int(round(cy + mean_vec[1] * arrow_len))
-        cv2.arrowedLine(display, (cx, cy), (end_x, end_y), (0, 255, 255), 3, tipLength=0.2)
+    best_angle_deg: float | None = None
+    if best_line is not None:
+        x1, y1, x2, y2 = map(int, best_line)
+        cv2.line(display, (x1, y1), (x2, y2), (0, 255, 255), 3)
+        cv2.circle(display, (x1, y1), 4, (0, 255, 255), -1)
+        cv2.circle(display, (x2, y2), 4, (0, 255, 255), -1)
+
+        best_vec, _ = line_direction_vector(best_line)
+        best_angle_deg = float(np.degrees(np.arctan2(best_vec[1], best_vec[0])))
 
     edge_vis = cv2.cvtColor(edge_map, cv2.COLOR_GRAY2BGR)
     combined = np.hstack((display, edge_vis))
@@ -151,7 +148,7 @@ def draw_result(
         1,
     )
 
-    angle_text = "Mean angle: none" if mean_angle_deg is None else f"Mean angle: {mean_angle_deg:.1f} deg"
+    angle_text = "Best angle: none" if best_angle_deg is None else f"Best angle: {best_angle_deg:.1f} deg"
     cv2.putText(
         combined,
         angle_text,
@@ -164,7 +161,7 @@ def draw_result(
 
     cv2.putText(
         combined,
-        "Frame + mean direction",
+        "Frame + best edge",
         (10, combined.shape[0] - 12),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -195,8 +192,8 @@ def main() -> None:
                 continue
 
             edge_map, lines = detect_edges(frame)
-            mean_vec, mean_angle_deg = compute_mean_direction(lines)
-            result = draw_result(frame, edge_map, lines, mean_vec, mean_angle_deg)
+            best_line = select_best_edge(lines, frame.shape)
+            result = draw_result(frame, edge_map, lines, best_line)
 
             cv2.imshow(WINDOW_NAME, result)
             key = cv2.waitKey(1) & 0xFF
