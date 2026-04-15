@@ -7,7 +7,7 @@ from config import (
     STEER_GAIN, STEER_SMOOTH_ALPHA, STEER_DEADZONE,
     BLIND_TURN_FRAMES, SEARCH_FRAMES,
     BLIND_TURN_STEER, SEARCH_TURN_STEER,
-    T_CONFIRM_FRAMES,
+    T_CONFIRM_FRAMES, T_LINE_FRAMES,
     SHARP_TURN_HOLD_S,
 )
 
@@ -42,6 +42,7 @@ class Controller:
 
         self.t_count = 0
         self.t_confirmed = False
+        self.t_line_count = 0
         self.t_stop_latched = False
         self.sharp_turn_hold_until = 0.0
 
@@ -77,20 +78,23 @@ class Controller:
         # =========================================================
         # STEP 1: CONFIRM T
         # =========================================================
-        t_stop_ready = (
-            getattr(vision_result, "t_detected", False) and
-            getattr(vision_result, "bottom_slice_full_white", False)
-        )
+        if not self.t_confirmed:
+            if getattr(vision_result, "t_detected", False):
+                self.t_count += 1
+            else:
+                self.t_count = 0
 
-        if t_stop_ready:
-            self.t_count += 1
-        else:
-            self.t_count = 0
-
-        self.t_confirmed = self.t_count >= T_CONFIRM_FRAMES
-        if self.t_confirmed:
-            self.t_stop_latched = True
-            #self.t_stop_latched = False
+            self.t_confirmed = self.t_count >= T_CONFIRM_FRAMES
+            if self.t_confirmed:
+                self.t_line_count = T_LINE_FRAMES
+        elif self.t_line_count > 0:
+            if getattr(vision_result, "bottom_slice_full_white", False):
+                self.t_stop_latched = True
+            else:
+                self.t_line_count -= 1
+                if self.t_line_count == 0:
+                    self.t_count = 0
+                    self.t_confirmed = False
         # =========================================================
         # STEP 2: PERMANENT STOP ON T
         # =========================================================
