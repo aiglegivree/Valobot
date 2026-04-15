@@ -26,7 +26,7 @@ pwmB = GPIO.PWM(ENB,1000)
 pwmA.start(0)
 pwmB.start(0)
 
-speed = 50   # slow speed (0-100)
+speed = 10   # slow speed (0-100)
 
 def stop():
     pwmA.ChangeDutyCycle(0)
