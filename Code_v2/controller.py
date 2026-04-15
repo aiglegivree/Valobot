@@ -37,8 +37,8 @@ def sharp_turn_wheels(turn_cmd: float, speed: float):
     speed = clamp(speed, 0.0, 1.0)
 
     if turn_cmd >= 0:
-        return speed, 0.0
-    return 0.0, speed
+        return speed, 0.15
+    return 0.15, speed
 
 
 class Controller:

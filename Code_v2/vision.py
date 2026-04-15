@@ -59,6 +59,8 @@ class VisionResult:
     t_detected: bool
     corner_count: int
     corners: list[tuple[int, int]]
+    t_left_bar_x: int | None
+    t_right_bar_x: int | None
 
     mask: np.ndarray
     connected_mask: np.ndarray
@@ -282,13 +284,15 @@ def is_near_frame_edge(x: int, y: int, width: int, height: int, margin: int) -> 
 
 def count_t_side_corners(
     corners: list[tuple[int, int]],
-) -> tuple[int, int, list[tuple[int, int]]]:
+) -> tuple[int, int, list[tuple[int, int]], int | None, int | None]:
     if len(corners) < 2:
-        return 0, 0, []
+        return 0, 0, [], None, None
 
     bottom_pair = sorted(corners, key=lambda p: (p[1], p[0]), reverse=True)[:2]
     bottom_x_min = min(point[0] for point in bottom_pair)
     bottom_x_max = max(point[0] for point in bottom_pair)
+    left_bar_x = bottom_x_min - T_SIDE_MIN_X_OFFSET
+    right_bar_x = bottom_x_max + T_SIDE_MIN_X_OFFSET
     bottom_pair_set = set(bottom_pair)
 
     left_count = 0
@@ -298,12 +302,12 @@ def count_t_side_corners(
             continue
 
         x, _ = point
-        if x <= bottom_x_min - T_SIDE_MIN_X_OFFSET:
+        if x <= left_bar_x:
             left_count += 1
-        elif x >= bottom_x_max + T_SIDE_MIN_X_OFFSET:
+        elif x >= right_bar_x:
             right_count += 1
 
-    return left_count, right_count, bottom_pair
+    return left_count, right_count, bottom_pair, left_bar_x, right_bar_x
 
 
 def extract_corners_from_connected_mask(
@@ -463,7 +467,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     shape_connected_mask = shared_mask
     corners, corner_angles, _ = extract_corners_from_connected_mask(shape_connected_mask)
     corner_count = len(corners)
-    left_side_corners, right_side_corners, bottom_pair = count_t_side_corners(corners)
+    left_side_corners, right_side_corners, bottom_pair, t_left_bar_x, t_right_bar_x = count_t_side_corners(corners)
     sharp_turn_angle_ok = bool(corner_angles) and max(corner_angles) <= SHARP_TURN_MAX_ANGLE_DEG
 
     # Only trust corner-based shape classification when the line-following
@@ -517,6 +521,8 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         t_detected=t_detected,
         corner_count=corner_count,
         corners=corners,
+        t_left_bar_x=t_left_bar_x,
+        t_right_bar_x=t_right_bar_x,
         mask=shared_mask,
         connected_mask=connected_mask,
         shape_mask=shape_connected_mask,
@@ -555,6 +561,18 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
         (255, 255, 0),
         2,
     )
+
+    for bar_x in [vision_result.t_left_bar_x, vision_result.t_right_bar_x]:
+        if bar_x is None:
+            continue
+        bar_x = max(0, min(w_roi - 1, bar_x))
+        cv2.line(
+            out,
+            (bar_x, roi_start),
+            (bar_x, roi_start + h_roi - 1),
+            (255, 0, 255),
+            2,
+        )
 
     def draw_one(y: int, cx: int | None, color: tuple[int, int, int], name: str):
         cv2.line(out, (0, roi_start + y), (w_roi - 1, roi_start + y), color, 1)
@@ -641,6 +659,12 @@ def draw_mask_slices(vision_result: VisionResult):
     )
 
     cv2.line(vis, (cx_ref, 0), (cx_ref, vis.shape[0] - 1), (255, 0, 0), 1)
+
+    for bar_x in [vision_result.t_left_bar_x, vision_result.t_right_bar_x]:
+        if bar_x is None:
+            continue
+        bar_x = max(0, min(vis.shape[1] - 1, bar_x))
+        cv2.line(vis, (bar_x, 0), (bar_x, vis.shape[0] - 1), (255, 0, 255), 1)
 
     for x, y in vision_result.corners:
         if 0 <= x < vis.shape[1] and 0 <= y < vis.shape[0]:

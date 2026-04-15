@@ -67,7 +67,7 @@ T_CONFIRM_FRAMES = 1
 T_LINE_FRAMES = 15
 T_BOTTOM_SLICE_WHITE_RATIO = 0.90
 SHARP_TURN_HOLD_S = 1.0
-T_SIDE_MIN_X_OFFSET = 40
+T_SIDE_MIN_X_OFFSET = 25
 
 # ============================================================
 # LOST LINE / STATES
