@@ -2,12 +2,55 @@ from __future__ import annotations
 
 import cv2
 import numpy as np
+from pathlib import Path
+import sys
 
 
-CAM_ID = 0
-FRAME_WIDTH = 320
-FRAME_HEIGHT = 240
 WINDOW_NAME = "Obstacle Edge Detector"
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+CODE_V2_DIR = ROOT_DIR / "Code_v2"
+if str(CODE_V2_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_V2_DIR))
+
+from config import W, H, CAM_ID, USE_PICAMERA2  # noqa: E402
+
+
+class Camera:
+    def __init__(self):
+        if USE_PICAMERA2:
+            from picamera2 import Picamera2
+
+            self.cam = Picamera2()
+            self.cam.configure(
+                self.cam.create_preview_configuration(
+                    main={"size": (W, H), "format": "RGB888"}
+                )
+            )
+            self.cam.start()
+            self.type = "picamera2"
+        else:
+            cap = cv2.VideoCapture(CAM_ID)
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+
+            if not cap.isOpened():
+                raise RuntimeError("Could not open camera")
+
+            self.cam = cap
+            self.type = "opencv"
+
+    def read(self) -> tuple[bool, np.ndarray | None]:
+        if self.type == "picamera2":
+            frame = self.cam.capture_array()
+            return True, frame
+
+        ret, frame = self.cam.read()
+        return ret, frame
+
+    def release(self) -> None:
+        if self.type == "opencv":
+            self.cam.release()
 
 
 def line_length(line: np.ndarray) -> float:
@@ -112,18 +155,13 @@ def draw_lines(frame: np.ndarray, lines: list[np.ndarray]) -> np.ndarray:
 
 
 def main() -> None:
-    cap = cv2.VideoCapture(CAM_ID)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
-
-    if not cap.isOpened():
-        raise RuntimeError("Could not open camera")
+    cam = Camera()
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
 
     try:
         while True:
-            ret, frame = cap.read()
+            ret, frame = cam.read()
             if not ret:
                 continue
 
@@ -135,7 +173,7 @@ def main() -> None:
             if key == 27 or key == ord("q"):
                 break
     finally:
-        cap.release()
+        cam.release()
         cv2.destroyAllWindows()
 
 
