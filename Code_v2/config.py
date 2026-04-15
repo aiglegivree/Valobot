@@ -13,7 +13,7 @@ USE_PICAMERA2 = True
 # VISION
 # ============================================================
 ROI_START_FRAC = 0.50
-GAUSS_KSIZE = 15
+GAUSS_KSIZE = 7
 
 KERNEL_SIZE = 15
 MORPH_CLOSE_IT = 4
@@ -83,18 +83,18 @@ SEARCH_TURN_STEER = 0.60
 # ============================================================
 BASE_SPEED = 0.40
 TURN_SPEED = 0.25
-SHARP_TURN_INNER_SPEED = 0.10
+SHARP_TURN_INNER_SPEED = 0.00
 BLIND_SPEED = 0.20
 SEARCH_SPEED = 0.20
 
-STEER_GAIN = 0.12
+STEER_GAIN = 0.13
 
 # ============================================================
 # DEBUG
 # ============================================================
 SHOW_DEBUG = True
 RECORD_RUN_VIDEO = True
-RECORD_RUN_FPS = 40.0
+RECORD_RUN_FPS = 20.0
 RECORDINGS_DIR = "run_recordings"
 
 # ============================================================
