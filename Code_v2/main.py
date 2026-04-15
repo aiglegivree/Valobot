@@ -2,6 +2,7 @@
 from __future__ import annotations
 from pathlib import Path
 from datetime import datetime
+import time
 import cv2
 import numpy as np
 
@@ -78,12 +79,21 @@ def main():
 
     t_reached = False
     aura_mode = False
+    prev_frame_time: float | None = None
+    fps_display = 0.0
 
     try:
         while True:
             ret, frame = cam.read()
             if not ret:
                 continue
+
+            now = time.perf_counter()
+            if prev_frame_time is not None:
+                dt = now - prev_frame_time
+                if dt > 1e-6:
+                    fps_display = 1.0 / dt
+            prev_frame_time = now
 
             # 1) vision
             res = detect_line(frame, angle_deg=20)
@@ -112,6 +122,15 @@ def main():
 
             # 4) debug
             dbg = draw_debug_slices(frame, res, BAND_THICKNESS)
+            cv2.putText(
+                dbg,
+                f"FPS: {fps_display:.1f}",
+                (10, 145),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (255, 255, 0),
+                2,
+            )
             mask_vis = draw_mask_slices(res)
 
             if RECORD_RUN_VIDEO:
