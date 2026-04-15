@@ -56,15 +56,15 @@ class Camera:
 def detect_edges(frame: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edge_map = cv2.Canny(blur, 25, 90)
+    edge_map = cv2.Canny(blur, 60, 150)
 
     raw_lines = cv2.HoughLinesP(
         edge_map,
         rho=1,
         theta=np.pi / 180,
-        threshold=12,
-        minLineLength=8,
-        maxLineGap=25,
+        threshold=35,
+        minLineLength=25,
+        maxLineGap=15,
     )
 
     if raw_lines is None:
@@ -91,26 +91,15 @@ def line_direction_vector(line: np.ndarray) -> tuple[np.ndarray, float]:
     return np.array([dx / length, dy / length], dtype=np.float32), length
 
 
-def line_score(line: np.ndarray, frame_shape: tuple[int, int, int]) -> float:
-    x1, y1, x2, y2 = map(float, line)
-    _, length = line_direction_vector(line)
-    h, w = frame_shape[:2]
-    mid_x = 0.5 * (x1 + x2)
-    mid_y = 0.5 * (y1 + y2)
-
-    center_x = 0.5 * w
-    center_y = 0.5 * h
-    center_dist = float(np.hypot(mid_x - center_x, mid_y - center_y))
-    max_center_dist = float(np.hypot(center_x, center_y))
-    center_score = 1.0 - (center_dist / max(max_center_dist, 1e-6))
-
-    return length + 40.0 * center_score
+def line_left_x(line: np.ndarray) -> float:
+    x1, _, x2, _ = map(float, line)
+    return min(x1, x2)
 
 
-def select_best_edge(lines: list[np.ndarray], frame_shape: tuple[int, int, int]) -> np.ndarray | None:
+def select_leftmost_edge(lines: list[np.ndarray]) -> np.ndarray | None:
     if not lines:
         return None
-    return max(lines, key=lambda line: line_score(line, frame_shape))
+    return min(lines, key=line_left_x)
 
 
 def draw_result(
@@ -192,7 +181,7 @@ def main() -> None:
                 continue
 
             edge_map, lines = detect_edges(frame)
-            best_line = select_best_edge(lines, frame.shape)
+            best_line = select_leftmost_edge(lines)
             result = draw_result(frame, edge_map, lines, best_line)
 
             cv2.imshow(WINDOW_NAME, result)
