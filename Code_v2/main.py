@@ -35,18 +35,18 @@ def build_recording_frame(debug_frame: np.ndarray, mask_frame: np.ndarray) -> np
         "Camera + ROI/debug",
         (15, 30),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
+        0.4,
         (0, 255, 255),
-        2,
+        1,
     )
     cv2.putText(
         combined,
         "Mask",
         (target_width + 15, 30),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
+        0.4,
         (0, 255, 255),
-        2,
+        1,
     )
     return combined
 
@@ -127,9 +127,9 @@ def main():
                 f"FPS: {fps_display:.1f}",
                 (10, 145),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
+                0.3,
                 (255, 255, 0),
-                2,
+                1,
             )
             mask_vis = draw_mask_slices(res)
 

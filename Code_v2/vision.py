@@ -583,7 +583,7 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
             f"{name}: {cx}",
             (10, roi_start + y - 8),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.5,
+            0.25,
             color,
             1,
         )
@@ -597,9 +597,9 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
         f"Corners: {vision_result.corner_count}",
         (10, 25),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
+        0.4,
         (0, 255, 255),
-        2,
+        1,
     )
 
     cv2.putText(
@@ -607,9 +607,9 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
         f"Sharp turn: {'YES' if vision_result.sharp_turn_detected else 'NO'}",
         (10, 55),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
+        0.325,
         (0, 255, 0) if vision_result.sharp_turn_detected else (0, 0, 255),
-        2,
+        1,
     )
 
     cv2.putText(
@@ -617,9 +617,9 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
         f"T: {'YES' if vision_result.t_detected else 'NO'}",
         (10, 85),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
+        0.325,
         (0, 255, 0) if vision_result.t_detected else (0, 0, 255),
-        2,
+        1,
     )
 
     cv2.putText(
@@ -627,9 +627,9 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
         f"Steer error: {vision_result.steer_error:.2f}",
         (10, 115),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.6,
+        0.3,
         (0, 255, 0),
-        2,
+        1,
     )
 
     return out
@@ -675,9 +675,9 @@ def draw_mask_slices(vision_result: VisionResult):
         f"Corners: {vision_result.corner_count}",
         (10, 25),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.7,
+        0.35,
         (0, 255, 255),
-        2,
+        1,
     )
 
     if vision_result.sharp_turn_detected:
@@ -686,9 +686,9 @@ def draw_mask_slices(vision_result: VisionResult):
             "SHARP TURN",
             (10, 55),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
+            0.35,
             (0, 255, 0),
-            2,
+            1,
         )
 
     if vision_result.t_detected:
@@ -697,9 +697,9 @@ def draw_mask_slices(vision_result: VisionResult):
             "T DETECTED",
             (10, 85),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
+            0.35,
             (255, 0, 255),
-            2,
+            1,
         )
 
     return vis
