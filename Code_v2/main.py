@@ -102,7 +102,7 @@ def main():
 
                 # keep aura farm running once T is reached
                 leds.aura_farm_step()
-
+	
             else:
                 if aura_mode:
                     aura_mode = False

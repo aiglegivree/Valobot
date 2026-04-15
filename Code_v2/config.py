@@ -83,7 +83,7 @@ TURN_SPEED = 0.25
 BLIND_SPEED = 0.20
 SEARCH_SPEED = 0.20
 
-STEER_GAIN = 0.2
+STEER_GAIN = 0.13
 
 # ============================================================
 # DEBUG
