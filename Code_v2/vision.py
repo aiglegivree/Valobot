@@ -23,6 +23,7 @@ from config import (
     SHARP_TURN_CORNERS,
     T_CORNERS,
     T_SIDE_MIN_X_OFFSET,
+    T_BOTTOM_SLICE_WHITE_RATIO,
 )
 
 
@@ -174,7 +175,8 @@ def is_band_full_white(mask: np.ndarray, y_frac: float, thickness: int) -> bool:
         return False
 
     band = mask[y0_inner:y1_inner, x0_inner:x1_inner]
-    return bool(np.all(band > 0))
+    white_ratio = float(np.count_nonzero(band > 0)) / float(band.size)
+    return white_ratio >= T_BOTTOM_SLICE_WHITE_RATIO
 
 
 def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray:

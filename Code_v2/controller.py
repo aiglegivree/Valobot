@@ -32,6 +32,20 @@ def steering_to_wheels(speed: float, steer: float):
     return clamp(left, -1.0, 1.0), clamp(right, -1.0, 1.0)
 
 
+def pivot_turn_wheels(turn_cmd: float, magnitude: float):
+    turn_cmd = clamp(turn_cmd, -1.0, 1.0)
+    magnitude = clamp(magnitude, 0.0, 1.0)
+
+    if turn_cmd >= 0:
+        left = magnitude
+        right = -magnitude
+    else:
+        left = -magnitude
+        right = magnitude
+
+    return left, right
+
+
 class Controller:
     def __init__(self):
         self.mode = "TRACK"
@@ -121,9 +135,9 @@ class Controller:
 
             steer_target = clamp(steer_target, -1.0, 1.0)
             self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.6)
-            speed = TURN_SPEED
+            speed = 0.0
 
-            left, right = steering_to_wheels(speed, self.steer_cmd)
+            left, right = pivot_turn_wheels(self.steer_cmd, TURN_SPEED)
             return left, right, speed, self.steer_cmd, self.mode
 
         # =========================================================
