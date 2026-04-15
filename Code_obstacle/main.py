@@ -56,15 +56,15 @@ class Camera:
 def detect_edges(frame: np.ndarray) -> tuple[np.ndarray, list[np.ndarray]]:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
-    edge_map = cv2.Canny(blur, 60, 150)
+    edge_map = cv2.Canny(blur, 40, 120)
 
     raw_lines = cv2.HoughLinesP(
         edge_map,
         rho=1,
         theta=np.pi / 180,
-        threshold=35,
-        minLineLength=25,
-        maxLineGap=15,
+        threshold=20,
+        minLineLength=12,
+        maxLineGap=20,
     )
 
     if raw_lines is None:
