@@ -51,6 +51,7 @@ class VisionResult:
     width_top: int
     width_mid: int
     width_bot: int
+    bottom_slice_full_white: bool
 
     sharp_turn_detected: bool
     t_detected: bool
@@ -154,6 +155,26 @@ def get_band_info(
     count = int(xs_full.size)
 
     return cx, y, x_min, x_max, width, count
+
+
+def is_band_full_white(mask: np.ndarray, y_frac: float, thickness: int) -> bool:
+    h, w = mask.shape
+    y = int(h * y_frac)
+
+    y0 = max(0, y - thickness)
+    y1 = min(h, y + thickness + 1)
+
+    pad = min(CORNER_PADDING, h // 2, w // 2)
+    x0_inner = pad
+    x1_inner = w - pad
+    y0_inner = max(y0, pad)
+    y1_inner = min(y1, h - pad)
+
+    if x1_inner <= x0_inner or y1_inner <= y0_inner:
+        return False
+
+    band = mask[y0_inner:y1_inner, x0_inner:x1_inner]
+    return bool(np.all(band > 0))
 
 
 def keep_bottom_connected_component(mask: np.ndarray, cx_ref: int) -> np.ndarray:
@@ -380,6 +401,11 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         x_center=cx_ref,
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
     )
+    bottom_slice_full_white = is_band_full_white(
+        connected_mask,
+        SLICE_BOT_FRAC,
+        BAND_THICKNESS,
+    )
 
     seen_bot = cx_bot_gated is not None
 
@@ -476,6 +502,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         width_top=width_top,
         width_mid=width_mid,
         width_bot=width_bot,
+        bottom_slice_full_white=bottom_slice_full_white,
         sharp_turn_detected=sharp_turn_detected,
         t_detected=t_detected,
         corner_count=corner_count,

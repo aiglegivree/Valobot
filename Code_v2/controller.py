@@ -77,7 +77,12 @@ class Controller:
         # =========================================================
         # STEP 1: CONFIRM T
         # =========================================================
-        if getattr(vision_result, "t_detected", False):
+        t_stop_ready = (
+            getattr(vision_result, "t_detected", False) and
+            getattr(vision_result, "bottom_slice_full_white", False)
+        )
+
+        if t_stop_ready:
             self.t_count += 1
         else:
             self.t_count = 0
