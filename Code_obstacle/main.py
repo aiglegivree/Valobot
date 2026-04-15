@@ -60,35 +60,47 @@ def nothing(_: int) -> None:
 
 def create_trackbars() -> None:
     cv2.namedWindow(CONTROLS_WINDOW, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(CONTROLS_WINDOW, 320, 120)
+    cv2.resizeWindow(CONTROLS_WINDOW, 320, 160)
     cv2.createTrackbar("Canny low", CONTROLS_WINDOW, 50, 255, nothing)
     cv2.createTrackbar("Canny high", CONTROLS_WINDOW, 135, 255, nothing)
+    cv2.createTrackbar("Min length", CONTROLS_WINDOW, 20, 200, nothing)
 
 
-def get_detection_params() -> tuple[int, int]:
+def get_detection_params() -> tuple[int, int, int]:
     canny_low = cv2.getTrackbarPos("Canny low", CONTROLS_WINDOW)
     canny_high = cv2.getTrackbarPos("Canny high", CONTROLS_WINDOW)
+    min_length = cv2.getTrackbarPos("Min length", CONTROLS_WINDOW)
 
     canny_low = max(1, canny_low)
     canny_high = max(canny_low + 1, canny_high)
-    return canny_low, canny_high
+    min_length = max(1, min_length)
+    return canny_low, canny_high, min_length
 
 
 def detect_edges(
     frame: np.ndarray,
     canny_low: int,
     canny_high: int,
+    min_length: int,
 ) -> np.ndarray:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     edge_map = cv2.Canny(blur, canny_low, canny_high)
-    return edge_map
+
+    contours, _ = cv2.findContours(edge_map, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    filtered = np.zeros_like(edge_map)
+
+    for contour in contours:
+        if cv2.arcLength(contour, closed=False) >= float(min_length):
+            cv2.drawContours(filtered, [contour], -1, 255, 1)
+
+    return filtered
 
 
 def draw_result(
     frame: np.ndarray,
     edge_map: np.ndarray,
-    params: tuple[int, int],
+    params: tuple[int, int, int],
 ) -> np.ndarray:
     display = frame.copy()
 
@@ -116,11 +128,20 @@ def draw_result(
         1,
     )
 
-    canny_low, canny_high = params
+    canny_low, canny_high, min_length = params
     cv2.putText(
         combined,
         f"Canny: {canny_low}/{canny_high}",
         (10, 64),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 255),
+        1,
+    )
+    cv2.putText(
+        combined,
+        f"Min length: {min_length}",
+        (10, 84),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (0, 255, 255),
