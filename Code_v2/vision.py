@@ -22,6 +22,7 @@ from config import (
     CORNER_MAX_ANGLE_DEG,
     SHARP_TURN_CORNERS,
     T_CORNERS,
+    T_SIDE_MIN_X_OFFSET,
 )
 
 
@@ -273,9 +274,9 @@ def count_t_side_corners(
             continue
 
         x, _ = point
-        if x < bottom_x_min:
+        if x <= bottom_x_min - T_SIDE_MIN_X_OFFSET:
             left_count += 1
-        elif x > bottom_x_max:
+        elif x >= bottom_x_max + T_SIDE_MIN_X_OFFSET:
             right_count += 1
 
     return left_count, right_count, bottom_pair

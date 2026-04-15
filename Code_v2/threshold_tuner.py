@@ -19,6 +19,7 @@ from config import (
     CORNER_MIN_CONTOUR_AREA,
     CORNER_APPROX_EPSILON_FRAC,
     CORNER_MAX_ANGLE_DEG,
+    T_SIDE_MIN_X_OFFSET,
 )
 
 
@@ -228,9 +229,9 @@ def count_t_side_corners(
             continue
 
         x, _ = point
-        if x < bottom_x_min:
+        if x <= bottom_x_min - T_SIDE_MIN_X_OFFSET:
             left_count += 1
-        elif x > bottom_x_max:
+        elif x >= bottom_x_max + T_SIDE_MIN_X_OFFSET:
             right_count += 1
 
     return left_count, right_count, bottom_pair
@@ -445,10 +446,10 @@ def main():
             )
             cv2.putText(
                 shape_view,
-                f"L/R vs bottom pair: {left_side_corners}/{right_side_corners}",
+                f"L/R vs bottom pair: {left_side_corners}/{right_side_corners} | min dx: {T_SIDE_MIN_X_OFFSET}",
                 (10, 245),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
+                0.5,
                 (255, 255, 255),
                 2,
             )
