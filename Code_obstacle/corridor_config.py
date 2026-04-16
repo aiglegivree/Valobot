@@ -5,6 +5,11 @@ FORWARD_LEFT_SPEED = 0.30
 FORWARD_RIGHT_SCALE = 1.20
 TURN_SPEED = 0.20
 
+# Set these to -1 if the robot turns the opposite way from what the
+# controller asks for on your chassis.
+STEER_SIGN = -1.0
+TURN_SIGN = -1.0
+
 VANISHING_STEER_GAIN = 0.18
 BLUE_ALIGN_GAIN = 0.22
 MAX_STEER_DELTA = 0.16

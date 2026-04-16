@@ -33,6 +33,7 @@ from corridor_config import (  # noqa: E402
     MEDIAN_HISTORY_FRAMES,
     SHOW_DEBUG,
     STEER_DEADBAND_PX,
+    STEER_SIGN,
     TURN_BLIND_SEC,
     TURN_CANDIDATE_MISS_FRAMES,
     TURN_DURATION_SEC,
@@ -40,6 +41,7 @@ from corridor_config import (  # noqa: E402
     TURN_REACQUIRE_TOP_FRAC,
     TURN_RETRY_BLIND_EXTRA_SEC,
     TURN_RETRY_DURATION_MULTIPLIER,
+    TURN_SIGN,
     TURN_SPEED,
     VANISHING_STEER_GAIN,
 )
@@ -456,7 +458,7 @@ def main() -> None:
                     state = "TURN"
                     turn_phase = 1
                     turn_direction = str(vision["turn_candidate"])
-                    turn_direction_sign = 1 if turn_direction == "RIGHT" else -1
+                    turn_direction_sign = TURN_SIGN * (1 if turn_direction == "RIGHT" else -1)
                     turn_started_at = now
                     blind_until = now + TURN_BLIND_SEC
                     turn_deadline = now + TURN_DURATION_SEC
@@ -468,12 +470,20 @@ def main() -> None:
                         if abs(error_pixels) < STEER_DEADBAND_PX:
                             error_pixels = 0.0
                         error_norm = error_pixels / max(W / 2.0, 1.0)
-                        correction = clamp(VANISHING_STEER_GAIN * error_norm, -MAX_STEER_DELTA, MAX_STEER_DELTA)
+                        correction = clamp(
+                            STEER_SIGN * VANISHING_STEER_GAIN * error_norm,
+                            -MAX_STEER_DELTA,
+                            MAX_STEER_DELTA,
+                        )
                     elif vision["blue_line"] is not None and int(vision["current_side_count"]) <= 1:
                         blue_tilt = vision["blue_tilt"]
                         if blue_tilt is not None:
                             tilt_norm = float(blue_tilt) / max(H, 1.0)
-                            correction = clamp(-BLUE_ALIGN_GAIN * tilt_norm, -MAX_STEER_DELTA, MAX_STEER_DELTA)
+                            correction = clamp(
+                                -STEER_SIGN * BLUE_ALIGN_GAIN * tilt_norm,
+                                -MAX_STEER_DELTA,
+                                MAX_STEER_DELTA,
+                            )
 
                     if correction is None:
                         state = "FAIL"
@@ -495,7 +505,7 @@ def main() -> None:
                     if turn_phase == 1:
                         turn_phase = 2
                         turn_direction = "LEFT" if turn_direction == "RIGHT" else "RIGHT"
-                        turn_direction_sign = 1 if turn_direction == "RIGHT" else -1
+                        turn_direction_sign = TURN_SIGN * (1 if turn_direction == "RIGHT" else -1)
                         turn_started_at = now
                         blind_until = now + TURN_BLIND_SEC + TURN_RETRY_BLIND_EXTRA_SEC
                         turn_deadline = now + (TURN_DURATION_SEC * TURN_RETRY_DURATION_MULTIPLIER)
