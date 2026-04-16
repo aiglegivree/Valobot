@@ -17,9 +17,9 @@ if str(CODE_V2_DIR) not in sys.path:
 
 from config import W, H, CAM_ID, USE_PICAMERA2  # noqa: E402
 from obstacle_vision_config import (  # noqa: E402
+    CONFIG_PATH,
     DEFAULT_CONTOUR_MIN_LENGTH,
     DEFAULT_HOUGH_THRESHOLD,
-    SETTINGS_PATH,
     load_obstacle_settings,
     save_obstacle_settings,
 )
@@ -71,7 +71,7 @@ def save_settings(settings: dict[str, int]) -> None:
 
 def create_controls(settings: dict[str, int]) -> None:
     cv2.namedWindow(CONTROL_WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(CONTROL_WINDOW_NAME, 420, 220)
+    cv2.resizeWindow(CONTROL_WINDOW_NAME, 520, 420)
     cv2.createTrackbar("Canny low", CONTROL_WINDOW_NAME, settings["canny_low"], 255, _noop)
     cv2.createTrackbar("Canny high", CONTROL_WINDOW_NAME, settings["canny_high"], 255, _noop)
     cv2.createTrackbar(
@@ -82,6 +82,12 @@ def create_controls(settings: dict[str, int]) -> None:
         _noop,
     )
     cv2.createTrackbar("Hough thresh", CONTROL_WINDOW_NAME, settings["hough_threshold"], 300, _noop)
+    cv2.createTrackbar("Left low", CONTROL_WINDOW_NAME, settings["left_angle_low"], 180, _noop)
+    cv2.createTrackbar("Left high", CONTROL_WINDOW_NAME, settings["left_angle_high"], 180, _noop)
+    cv2.createTrackbar("Right low", CONTROL_WINDOW_NAME, settings["right_angle_low"], 180, _noop)
+    cv2.createTrackbar("Right high", CONTROL_WINDOW_NAME, settings["right_angle_high"], 180, _noop)
+    cv2.createTrackbar("Front low", CONTROL_WINDOW_NAME, settings["infront_angle_low"], 180, _noop)
+    cv2.createTrackbar("Front high", CONTROL_WINDOW_NAME, settings["infront_angle_high"], 180, _noop)
 
 
 def get_controls() -> dict[str, int]:
@@ -89,16 +95,43 @@ def get_controls() -> dict[str, int]:
     canny_high = cv2.getTrackbarPos("Canny high", CONTROL_WINDOW_NAME)
     contour_min_length = cv2.getTrackbarPos("Contour min len", CONTROL_WINDOW_NAME)
     hough_threshold = max(1, cv2.getTrackbarPos("Hough thresh", CONTROL_WINDOW_NAME))
+    left_angle_low = cv2.getTrackbarPos("Left low", CONTROL_WINDOW_NAME)
+    left_angle_high = cv2.getTrackbarPos("Left high", CONTROL_WINDOW_NAME)
+    right_angle_low = cv2.getTrackbarPos("Right low", CONTROL_WINDOW_NAME)
+    right_angle_high = cv2.getTrackbarPos("Right high", CONTROL_WINDOW_NAME)
+    infront_angle_low = cv2.getTrackbarPos("Front low", CONTROL_WINDOW_NAME)
+    infront_angle_high = cv2.getTrackbarPos("Front high", CONTROL_WINDOW_NAME)
 
     if canny_high < canny_low:
         canny_high = canny_low
         cv2.setTrackbarPos("Canny high", CONTROL_WINDOW_NAME, canny_high)
+
+    for low_name, high_name, low_value, high_value in [
+        ("Left low", "Left high", left_angle_low, left_angle_high),
+        ("Right low", "Right high", right_angle_low, right_angle_high),
+        ("Front low", "Front high", infront_angle_low, infront_angle_high),
+    ]:
+        if high_value < low_value:
+            high_value = low_value
+            cv2.setTrackbarPos(high_name, CONTROL_WINDOW_NAME, high_value)
+        if low_name == "Left low":
+            left_angle_high = high_value
+        elif low_name == "Right low":
+            right_angle_high = high_value
+        else:
+            infront_angle_high = high_value
 
     return {
         "canny_low": canny_low,
         "canny_high": canny_high,
         "contour_min_length": contour_min_length,
         "hough_threshold": hough_threshold,
+        "left_angle_low": left_angle_low,
+        "left_angle_high": left_angle_high,
+        "right_angle_low": right_angle_low,
+        "right_angle_high": right_angle_high,
+        "infront_angle_low": infront_angle_low,
+        "infront_angle_high": infront_angle_high,
     }
 
 
@@ -131,13 +164,42 @@ def detect_hough_lines(edge_map: np.ndarray, hough_threshold: int) -> np.ndarray
     return cv2.HoughLines(edge_map, rho=1, theta=np.pi / 180, threshold=hough_threshold)
 
 
-def draw_result(frame: np.ndarray, edge_map: np.ndarray, controls: dict[str, int], lines: np.ndarray | None) -> np.ndarray:
+def classify_lines(lines: np.ndarray | None, controls: dict[str, int]) -> dict[str, list[tuple[float, float]]]:
+    categories: dict[str, list[tuple[float, float]]] = {
+        "right": [],
+        "left": [],
+        "infront": [],
+    }
+    if lines is None:
+        return categories
+
+    for line in lines:
+        rho, theta = line[0]
+        angle_deg = int(round(np.degrees(theta)))
+        if controls["right_angle_low"] <= angle_deg <= controls["right_angle_high"]:
+            categories["right"].append((rho, theta))
+        elif controls["left_angle_low"] <= angle_deg <= controls["left_angle_high"]:
+            categories["left"].append((rho, theta))
+        elif controls["infront_angle_low"] <= angle_deg <= controls["infront_angle_high"]:
+            categories["infront"].append((rho, theta))
+    return categories
+
+
+def draw_result(
+    frame: np.ndarray,
+    edge_map: np.ndarray,
+    controls: dict[str, int],
+    categories: dict[str, list[tuple[float, float]]],
+) -> np.ndarray:
     overlay = frame.copy()
-    if lines is not None:
-        for line in lines:
-            rho, theta = line[0]
+    for name, color in [
+        ("right", (0, 0, 255)),
+        ("left", (0, 255, 0)),
+        ("infront", (255, 0, 0)),
+    ]:
+        for rho, theta in categories[name]:
             pt1, pt2 = hough_line_endpoints(rho, theta)
-            cv2.line(overlay, pt1, pt2, (0, 0, 255), 2)
+            cv2.line(overlay, pt1, pt2, color, 2)
 
     edge_vis = cv2.cvtColor(edge_map, cv2.COLOR_GRAY2BGR)
     combined = np.hstack((overlay, edge_vis))
@@ -171,8 +233,41 @@ def draw_result(frame: np.ndarray, edge_map: np.ndarray, controls: dict[str, int
     )
     cv2.putText(
         combined,
-        f"Edges: {int(np.count_nonzero(edge_map))}  Lines: {0 if lines is None else len(lines)}",
+        f"Right {controls['right_angle_low']}-{controls['right_angle_high']}: {len(categories['right'])}",
         (10, 72),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 0, 255),
+        1,
+    )
+    cv2.putText(
+        combined,
+        f"Left {controls['left_angle_low']}-{controls['left_angle_high']}: {len(categories['left'])}",
+        (10, 90),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 0),
+        1,
+    )
+    cv2.putText(
+        combined,
+        (
+            f"Infront {controls['infront_angle_low']}-"
+            f"{controls['infront_angle_high']}: {len(categories['infront'])}"
+        ),
+        (10, 108),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 0, 0),
+        1,
+    )
+    cv2.putText(
+        combined,
+        (
+            f"Edges: {int(np.count_nonzero(edge_map))}  "
+            f"Classified lines: {sum(len(items) for items in categories.values())}"
+        ),
+        (10, 126),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (0, 255, 255),
@@ -205,12 +300,13 @@ def main() -> None:
                 edges,
                 controls["hough_threshold"],
             )
-            result = draw_result(frame, edges, controls, lines)
+            categories = classify_lines(lines, controls)
+            result = draw_result(frame, edges, controls, categories)
             if time.monotonic() < save_message_until:
                 cv2.putText(
                     result,
-                    f"Saved to {SETTINGS_PATH.name}",
-                    (10, 96),
+                    f"Saved to {CONFIG_PATH.name}",
+                    (10, 150),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
                     (0, 255, 0),

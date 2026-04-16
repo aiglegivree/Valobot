@@ -159,8 +159,7 @@ class CannyCorridorNavigator:
             threshold=self.vision_settings["hough_threshold"],
         )
 
-    @staticmethod
-    def classify_lines(lines):
+    def classify_lines(self, lines):
         horizontal_lines = []
         left_lines = []
         right_lines = []
@@ -169,11 +168,11 @@ class CannyCorridorNavigator:
             for line in lines:
                 rho, theta = line[0]
                 deg = math.degrees(theta)
-                if 85 <= deg <= 95:
+                if self.vision_settings["infront_angle_low"] <= deg <= self.vision_settings["infront_angle_high"]:
                     horizontal_lines.append((rho, theta))
-                elif 30 < deg < 80:
+                elif self.vision_settings["left_angle_low"] <= deg <= self.vision_settings["left_angle_high"]:
                     left_lines.append((rho, theta))
-                elif 100 < deg < 150:
+                elif self.vision_settings["right_angle_low"] <= deg <= self.vision_settings["right_angle_high"]:
                     right_lines.append((rho, theta))
 
         return horizontal_lines, left_lines, right_lines
