@@ -622,7 +622,13 @@ def main() -> None:
 
             frame = vision["frame"]
 
-            if state == "FORWARD":
+            if bool(vision["t_detected"]):
+                state = "FAIL"
+                command_left = 0.0
+                command_right = 0.0
+                aura_started = fail_stop(motors, leds, aura_started)
+
+            elif state == "FORWARD":
                 if leds is not None:
                     leds.turn_on_all()
                 aura_started = False
