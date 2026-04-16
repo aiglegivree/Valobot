@@ -22,6 +22,7 @@ from motors import MotorDriver  # noqa: E402
 
 from corridor_config import (  # noqa: E402
     AURA_FARM_DELAY,
+    BLIND_FORWARD_SPEED,
     BLUE_ALIGN_GAIN,
     BLUE_ALIGN_SIGN,
     CONTINUE_SEC,
@@ -447,6 +448,13 @@ def single_wall_search_wheels(visible_side: str) -> tuple[float, float]:
     return forward_wheels(0.0)
 
 
+def blind_forward_wheels() -> tuple[float, float]:
+    return (
+        clamp(BLIND_FORWARD_SPEED, -1.0, 1.0),
+        clamp(BLIND_FORWARD_SPEED, -1.0, 1.0),
+    )
+
+
 def fail_stop(motors: MotorDriver, leds: LED, aura_started: bool) -> bool:
     motors.stop()
     if not aura_started:
@@ -545,10 +553,8 @@ def main() -> None:
                             command_left, command_right = single_wall_search_wheels(visible_side)
                             motors.set_speeds(command_left, command_right)
                         else:
-                            state = "FAIL"
-                            command_left = 0.0
-                            command_right = 0.0
-                            aura_started = fail_stop(motors, leds, aura_started)
+                            command_left, command_right = blind_forward_wheels()
+                            motors.set_speeds(command_left, command_right)
                     else:
                         command_left, command_right = forward_wheels(correction)
                         motors.set_speeds(command_left, command_right)
