@@ -17,8 +17,8 @@ picam2.start()
 
 
 
-SPEED = 0.95
-delta = 0.78
+SPEED = 0.40
+delta = 1.2
 KEY_TIMEOUT = 0.15   # temps max sans input → stop
 
 
