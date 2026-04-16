@@ -4,12 +4,12 @@ from __future__ import annotations
 FORWARD_BASE_SPEED = 0.30
 FORWARD_LEFT_SCALE = 1.00
 FORWARD_RIGHT_SCALE = 1.00
-TURN_SPEED = 0.20
+TURN_SPEED = 0.22
 
 # Set these to -1 if the robot turns the opposite way from what the
 # controller asks for on your chassis.
-STEER_SIGN = -1.0
-TURN_SIGN = -1.0
+STEER_SIGN = 1.0
+TURN_SIGN = 1.0
 BLUE_ALIGN_SIGN = 1.0
 
 VANISHING_STEER_GAIN = 0.18
@@ -17,7 +17,7 @@ BLUE_ALIGN_GAIN = 0.22
 MAX_STEER_DELTA = 0.16
 STEER_DEADBAND_PX = 6
 
-MEDIAN_HISTORY_FRAMES = 3
+MEDIAN_HISTORY_FRAMES = 5
 CONTINUE_SEC = 1.0
 TURN_CANDIDATE_MISS_FRAMES = 2
 
