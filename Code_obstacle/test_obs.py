@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import cv2
+import json
 import numpy as np
 from pathlib import Path
 import sys
+import time
 
 
 WINDOW_NAME = "Obstacle Canny Test"
@@ -17,12 +19,11 @@ if str(CODE_V2_DIR) not in sys.path:
 from config import W, H, CAM_ID, USE_PICAMERA2  # noqa: E402
 
 
-DEFAULT_CANNY_LOW = 68
-DEFAULT_CANNY_HIGH = 135
+DEFAULT_CANNY_LOW = 75
+DEFAULT_CANNY_HIGH = 128
 DEFAULT_CONTOUR_MIN_LENGTH = 85
 DEFAULT_HOUGH_THRESHOLD = 40
-DEFAULT_HOUGH_MIN_LINE_LENGTH = 50
-DEFAULT_HOUGH_MAX_LINE_GAP = 20
+SETTINGS_PATH = Path(__file__).with_name("test_obs_settings.json")
 
 
 class Camera:
@@ -61,33 +62,46 @@ def _noop(_: int) -> None:
     pass
 
 
-def create_controls() -> None:
+def load_settings() -> dict[str, int]:
+    defaults = {
+        "canny_low": DEFAULT_CANNY_LOW,
+        "canny_high": DEFAULT_CANNY_HIGH,
+        "contour_min_length": DEFAULT_CONTOUR_MIN_LENGTH,
+        "hough_threshold": DEFAULT_HOUGH_THRESHOLD,
+    }
+    if not SETTINGS_PATH.exists():
+        return defaults
+
+    try:
+        loaded = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+
+    settings = defaults.copy()
+    for key in settings:
+        value = loaded.get(key)
+        if isinstance(value, int):
+            settings[key] = value
+    return settings
+
+
+def save_settings(settings: dict[str, int]) -> None:
+    SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+
+
+def create_controls(settings: dict[str, int]) -> None:
     cv2.namedWindow(CONTROL_WINDOW_NAME, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(CONTROL_WINDOW_NAME, 420, 260)
-    cv2.createTrackbar("Canny low", CONTROL_WINDOW_NAME, DEFAULT_CANNY_LOW, 255, _noop)
-    cv2.createTrackbar("Canny high", CONTROL_WINDOW_NAME, DEFAULT_CANNY_HIGH, 255, _noop)
+    cv2.resizeWindow(CONTROL_WINDOW_NAME, 420, 220)
+    cv2.createTrackbar("Canny low", CONTROL_WINDOW_NAME, settings["canny_low"], 255, _noop)
+    cv2.createTrackbar("Canny high", CONTROL_WINDOW_NAME, settings["canny_high"], 255, _noop)
     cv2.createTrackbar(
         "Contour min len",
         CONTROL_WINDOW_NAME,
-        DEFAULT_CONTOUR_MIN_LENGTH,
+        settings["contour_min_length"],
         500,
         _noop,
     )
-    cv2.createTrackbar("Hough thresh", CONTROL_WINDOW_NAME, DEFAULT_HOUGH_THRESHOLD, 300, _noop)
-    cv2.createTrackbar(
-        "Hough min len",
-        CONTROL_WINDOW_NAME,
-        DEFAULT_HOUGH_MIN_LINE_LENGTH,
-        500,
-        _noop,
-    )
-    cv2.createTrackbar(
-        "Hough max gap",
-        CONTROL_WINDOW_NAME,
-        DEFAULT_HOUGH_MAX_LINE_GAP,
-        200,
-        _noop,
-    )
+    cv2.createTrackbar("Hough thresh", CONTROL_WINDOW_NAME, settings["hough_threshold"], 300, _noop)
 
 
 def get_controls() -> dict[str, int]:
@@ -95,8 +109,6 @@ def get_controls() -> dict[str, int]:
     canny_high = cv2.getTrackbarPos("Canny high", CONTROL_WINDOW_NAME)
     contour_min_length = cv2.getTrackbarPos("Contour min len", CONTROL_WINDOW_NAME)
     hough_threshold = max(1, cv2.getTrackbarPos("Hough thresh", CONTROL_WINDOW_NAME))
-    hough_min_line_length = cv2.getTrackbarPos("Hough min len", CONTROL_WINDOW_NAME)
-    hough_max_line_gap = cv2.getTrackbarPos("Hough max gap", CONTROL_WINDOW_NAME)
 
     if canny_high < canny_low:
         canny_high = canny_low
@@ -107,8 +119,6 @@ def get_controls() -> dict[str, int]:
         "canny_high": canny_high,
         "contour_min_length": contour_min_length,
         "hough_threshold": hough_threshold,
-        "hough_min_line_length": hough_min_line_length,
-        "hough_max_line_gap": hough_max_line_gap,
     }
 
 
@@ -125,28 +135,29 @@ def detect_edges(frame: np.ndarray, canny_low: int, canny_high: int, contour_min
     return filtered
 
 
-def detect_hough_lines(
-    edge_map: np.ndarray,
-    hough_threshold: int,
-    hough_min_line_length: int,
-    hough_max_line_gap: int,
-) -> np.ndarray | None:
-    return cv2.HoughLinesP(
-        edge_map,
-        rho=1,
-        theta=np.pi / 180,
-        threshold=hough_threshold,
-        minLineLength=hough_min_line_length,
-        maxLineGap=hough_max_line_gap,
-    )
+def hough_line_endpoints(rho: float, theta: float, length: int = 1000) -> tuple[tuple[int, int], tuple[int, int]]:
+    a = np.cos(theta)
+    b = np.sin(theta)
+    x0 = a * rho
+    y0 = b * rho
+    x1 = int(x0 + length * (-b))
+    y1 = int(y0 + length * a)
+    x2 = int(x0 - length * (-b))
+    y2 = int(y0 - length * a)
+    return (x1, y1), (x2, y2)
+
+
+def detect_hough_lines(edge_map: np.ndarray, hough_threshold: int) -> np.ndarray | None:
+    return cv2.HoughLines(edge_map, rho=1, theta=np.pi / 180, threshold=hough_threshold)
 
 
 def draw_result(frame: np.ndarray, edge_map: np.ndarray, controls: dict[str, int], lines: np.ndarray | None) -> np.ndarray:
     overlay = frame.copy()
     if lines is not None:
         for line in lines:
-            x1, y1, x2, y2 = line[0]
-            cv2.line(overlay, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            rho, theta = line[0]
+            pt1, pt2 = hough_line_endpoints(rho, theta)
+            cv2.line(overlay, pt1, pt2, (0, 0, 255), 2)
 
     edge_vis = cv2.cvtColor(edge_map, cv2.COLOR_GRAY2BGR)
     combined = np.hstack((overlay, edge_vis))
@@ -171,10 +182,7 @@ def draw_result(frame: np.ndarray, edge_map: np.ndarray, controls: dict[str, int
     )
     cv2.putText(
         combined,
-        (
-            f"Hough thr/min/gap: {controls['hough_threshold']}/"
-            f"{controls['hough_min_line_length']}/{controls['hough_max_line_gap']}"
-        ),
+        f"Hough threshold: {controls['hough_threshold']}",
         (10, 54),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -196,7 +204,9 @@ def draw_result(frame: np.ndarray, edge_map: np.ndarray, controls: dict[str, int
 def main() -> None:
     cam = Camera()
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
-    create_controls()
+    settings = load_settings()
+    create_controls(settings)
+    save_message_until = 0.0
 
     try:
         while True:
@@ -214,13 +224,24 @@ def main() -> None:
             lines = detect_hough_lines(
                 edges,
                 controls["hough_threshold"],
-                controls["hough_min_line_length"],
-                controls["hough_max_line_gap"],
             )
             result = draw_result(frame, edges, controls, lines)
+            if time.monotonic() < save_message_until:
+                cv2.putText(
+                    result,
+                    f"Saved to {SETTINGS_PATH.name}",
+                    (10, 96),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.55,
+                    (0, 255, 0),
+                    2,
+                )
             cv2.imshow(WINDOW_NAME, result)
 
             key = cv2.waitKey(1) & 0xFF
+            if key == ord("s"):
+                save_settings(controls)
+                save_message_until = time.monotonic() + 1.5
             if key == 27 or key == ord("q"):
                 break
     finally:
