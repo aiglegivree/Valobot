@@ -23,6 +23,7 @@ from motors import MotorDriver  # noqa: E402
 from corridor_config import (  # noqa: E402
     AURA_FARM_DELAY,
     BLUE_ALIGN_GAIN,
+    BLUE_ALIGN_SIGN,
     CONTINUE_SEC,
     DASHED_GAP_PX,
     DASHED_SEGMENT_PX,
@@ -520,7 +521,7 @@ def main() -> None:
                         if blue_tilt is not None:
                             tilt_norm = float(blue_tilt) / max(H, 1.0)
                             correction = clamp(
-                                -STEER_SIGN * BLUE_ALIGN_GAIN * tilt_norm,
+                                BLUE_ALIGN_SIGN * BLUE_ALIGN_GAIN * tilt_norm,
                                 -MAX_STEER_DELTA,
                                 MAX_STEER_DELTA,
                             )

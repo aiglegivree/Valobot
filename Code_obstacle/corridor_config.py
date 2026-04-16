@@ -10,6 +10,7 @@ TURN_SPEED = 0.20
 # controller asks for on your chassis.
 STEER_SIGN = -1.0
 TURN_SIGN = -1.0
+BLUE_ALIGN_SIGN = 1.0
 
 VANISHING_STEER_GAIN = 0.18
 BLUE_ALIGN_GAIN = 0.22
