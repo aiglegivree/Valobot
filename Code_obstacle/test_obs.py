@@ -16,6 +16,7 @@ if str(CODE_V2_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_V2_DIR))
 
 from config import W, H, CAM_ID, USE_PICAMERA2  # noqa: E402
+from leds import LED  # noqa: E402
 from obstacle_vision_config import (  # noqa: E402
     CONFIG_PATH,
     load_obstacle_settings,
@@ -162,6 +163,14 @@ def detect_hough_lines(edge_map: np.ndarray, hough_threshold: int) -> np.ndarray
     return cv2.HoughLines(edge_map, rho=1, theta=np.pi / 180, threshold=hough_threshold)
 
 
+def median_line(lines: list[tuple[float, float]]) -> tuple[float, float] | None:
+    if not lines:
+        return None
+    rhos = np.array([line[0] for line in lines], dtype=np.float32)
+    thetas = np.array([line[1] for line in lines], dtype=np.float32)
+    return float(np.median(rhos)), float(np.median(thetas))
+
+
 def classify_lines(lines: np.ndarray | None, controls: dict[str, int]) -> dict[str, list[tuple[float, float]]]:
     categories: dict[str, list[tuple[float, float]]] = {
         "right": [],
@@ -183,11 +192,17 @@ def classify_lines(lines: np.ndarray | None, controls: dict[str, int]) -> dict[s
     return categories
 
 
+def category_medians(categories: dict[str, list[tuple[float, float]]]) -> dict[str, tuple[float, float] | None]:
+    return {name: median_line(lines) for name, lines in categories.items()}
+
+
 def draw_result(
     frame: np.ndarray,
     edge_map: np.ndarray,
     controls: dict[str, int],
     categories: dict[str, list[tuple[float, float]]],
+    medians: dict[str, tuple[float, float] | None],
+    leds_on: bool,
 ) -> np.ndarray:
     overlay = frame.copy()
     for name, color in [
@@ -195,9 +210,12 @@ def draw_result(
         ("left", (0, 255, 0)),
         ("infront", (255, 0, 0)),
     ]:
-        for rho, theta in categories[name]:
-            pt1, pt2 = hough_line_endpoints(rho, theta)
-            cv2.line(overlay, pt1, pt2, color, 2)
+        line = medians[name]
+        if line is None:
+            continue
+        rho, theta = line
+        pt1, pt2 = hough_line_endpoints(rho, theta)
+        cv2.line(overlay, pt1, pt2, color, 3)
 
     edge_vis = cv2.cvtColor(edge_map, cv2.COLOR_GRAY2BGR)
     combined = np.hstack((overlay, edge_vis))
@@ -231,8 +249,17 @@ def draw_result(
     )
     cv2.putText(
         combined,
-        f"Right {controls['right_angle_low']}-{controls['right_angle_high']}: {len(categories['right'])}",
+        f"LEDs: {'ON' if leds_on else 'OFF'}  Toggle: l  Save: s",
         (10, 72),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 255),
+        1,
+    )
+    cv2.putText(
+        combined,
+        f"Right {controls['right_angle_low']}-{controls['right_angle_high']}: {len(categories['right'])}",
+        (10, 90),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (0, 0, 255),
@@ -241,7 +268,7 @@ def draw_result(
     cv2.putText(
         combined,
         f"Left {controls['left_angle_low']}-{controls['left_angle_high']}: {len(categories['left'])}",
-        (10, 90),
+        (10, 108),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (0, 255, 0),
@@ -253,7 +280,7 @@ def draw_result(
             f"Infront {controls['infront_angle_low']}-"
             f"{controls['infront_angle_high']}: {len(categories['infront'])}"
         ),
-        (10, 108),
+        (10, 126),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (255, 0, 0),
@@ -265,7 +292,7 @@ def draw_result(
             f"Edges: {int(np.count_nonzero(edge_map))}  "
             f"Classified lines: {sum(len(items) for items in categories.values())}"
         ),
-        (10, 126),
+        (10, 144),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (0, 255, 255),
@@ -276,6 +303,8 @@ def draw_result(
 
 def main() -> None:
     cam = Camera()
+    leds = LED()
+    leds_on = False
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     settings = load_settings()
     create_controls(settings)
@@ -299,12 +328,13 @@ def main() -> None:
                 controls["hough_threshold"],
             )
             categories = classify_lines(lines, controls)
-            result = draw_result(frame, edges, controls, categories)
+            medians = category_medians(categories)
+            result = draw_result(frame, edges, controls, categories, medians, leds_on)
             if time.monotonic() < save_message_until:
                 cv2.putText(
                     result,
                     f"Saved to {CONFIG_PATH.name}",
-                    (10, 150),
+                    (10, 168),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.55,
                     (0, 255, 0),
@@ -316,9 +346,23 @@ def main() -> None:
             if key == ord("s"):
                 save_settings(controls)
                 save_message_until = time.monotonic() + 1.5
+            if key == ord("l"):
+                leds_on = not leds_on
+                if leds_on:
+                    leds.turn_on_all()
+                else:
+                    leds.turn_off_all()
             if key == 27 or key == ord("q"):
                 break
     finally:
+        try:
+            leds.turn_off_all()
+        except Exception:
+            pass
+        try:
+            leds.cleanup()
+        except Exception:
+            pass
         cam.release()
         cv2.destroyAllWindows()
 
