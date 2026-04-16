@@ -35,6 +35,9 @@ from corridor_config import (  # noqa: E402
     FORWARD_RIGHT_SCALE,
     MAX_STEER_DELTA,
     MEDIAN_HISTORY_FRAMES,
+    RECORDINGS_DIR,
+    RECORD_RUN_FPS,
+    RECORD_RUN_VIDEO,
     SHOW_DEBUG,
     SIDE_BLUE_INTERSECTION_GAIN,
     SIDE_BLUE_TARGET_FRAC,
@@ -507,6 +510,55 @@ def fail_stop(motors: MotorDriver, leds: LED, aura_started: bool) -> bool:
     return aura_started
 
 
+def build_recording_frame(debug_frame: np.ndarray, edge_frame: np.ndarray | None) -> np.ndarray:
+    if edge_frame is None:
+        edge_vis = np.zeros_like(debug_frame)
+    elif len(edge_frame.shape) == 2:
+        edge_vis = cv2.cvtColor(edge_frame, cv2.COLOR_GRAY2BGR)
+    else:
+        edge_vis = edge_frame
+
+    target_height = debug_frame.shape[0]
+    target_width = debug_frame.shape[1]
+    edge_resized = cv2.resize(edge_vis, (target_width, target_height), interpolation=cv2.INTER_NEAREST)
+
+    combined = np.hstack((debug_frame, edge_resized))
+    cv2.putText(combined, "Navigation", (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+    cv2.putText(
+        combined,
+        "Edges",
+        (target_width + 15, 25),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 255),
+        1,
+    )
+    return combined
+
+
+def create_run_video_writer(frame_size: tuple[int, int]) -> cv2.VideoWriter | None:
+    if not RECORD_RUN_VIDEO:
+        return None
+
+    recordings_dir = Path(__file__).resolve().parent / RECORDINGS_DIR
+    recordings_dir.mkdir(parents=True, exist_ok=True)
+
+    run_index = 1
+    while True:
+        output_path = recordings_dir / f"run_{run_index:03d}.mp4"
+        if not output_path.exists():
+            break
+        run_index += 1
+
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(str(output_path), fourcc, RECORD_RUN_FPS, frame_size)
+    if not writer.isOpened():
+        return None
+
+    print(f"Recording run video to: {output_path}")
+    return writer
+
+
 def setup_windows() -> None:
     display_width = W * WINDOW_SCALE
     display_height = H * WINDOW_SCALE
@@ -525,6 +577,7 @@ def main() -> None:
     navigator = CorridorNavigator()
     motors = MotorDriver()
     leds = LED() if USE_LEDS else None
+    video_writer: cv2.VideoWriter | None = None
 
     if SHOW_DEBUG:
         setup_windows()
@@ -657,6 +710,14 @@ def main() -> None:
                 aura_started = fail_stop(motors, leds, aura_started)
 
             debug = draw_debug(frame, vision, state, turn_phase, turn_direction, command_left, command_right)
+            recording_frame = build_recording_frame(debug, navigator.edges)
+
+            if RECORD_RUN_VIDEO:
+                if video_writer is None:
+                    frame_size = (recording_frame.shape[1], recording_frame.shape[0])
+                    video_writer = create_run_video_writer(frame_size)
+                if video_writer is not None:
+                    video_writer.write(recording_frame)
 
             if SHOW_DEBUG:
                 cv2.imshow(WINDOW_NAME, debug)
@@ -683,6 +744,9 @@ def main() -> None:
             navigator.release()
         except Exception:
             pass
+
+        if video_writer is not None:
+            video_writer.release()
 
         cv2.destroyAllWindows()
 
