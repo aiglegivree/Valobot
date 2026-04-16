@@ -1,0 +1,540 @@
+from __future__ import annotations
+
+from collections import deque
+import math
+from pathlib import Path
+import sys
+import time
+
+import cv2
+import numpy as np
+
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+CODE_V2_DIR = ROOT_DIR / "Code_v2"
+if str(CODE_V2_DIR) not in sys.path:
+    sys.path.insert(0, str(CODE_V2_DIR))
+
+from camera import Camera  # noqa: E402
+from config import W, H  # noqa: E402
+from leds import LED  # noqa: E402
+from motors import MotorDriver  # noqa: E402
+
+from corridor_config import (  # noqa: E402
+    AURA_FARM_DELAY,
+    BLUE_ALIGN_GAIN,
+    CONTINUE_SEC,
+    DASHED_GAP_PX,
+    DASHED_SEGMENT_PX,
+    DEFAULT_TURN_DIRECTION,
+    FORWARD_LEFT_SPEED,
+    FORWARD_RIGHT_SCALE,
+    MAX_STEER_DELTA,
+    MEDIAN_HISTORY_FRAMES,
+    SHOW_DEBUG,
+    STEER_DEADBAND_PX,
+    TURN_BLIND_SEC,
+    TURN_CANDIDATE_MISS_FRAMES,
+    TURN_DURATION_SEC,
+    TURN_HEIGHT_FRAC,
+    TURN_REACQUIRE_TOP_FRAC,
+    TURN_RETRY_BLIND_EXTRA_SEC,
+    TURN_RETRY_DURATION_MULTIPLIER,
+    TURN_SPEED,
+    VANISHING_STEER_GAIN,
+)
+from obstacle_vision_config import load_obstacle_settings  # noqa: E402
+
+
+WINDOW_NAME = "Corridor Navigation"
+EDGE_WINDOW_NAME = "Corridor Edges"
+
+RIGHT_COLOR = (0, 0, 255)
+LEFT_COLOR = (0, 255, 0)
+INFRONT_COLOR = (255, 0, 0)
+TARGET_COLOR = (255, 0, 255)
+MEMORY_COLOR = (255, 255, 255)
+
+
+def clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(high, value))
+
+
+def hough_line_endpoints(rho: float, theta: float, length: int = 1000) -> tuple[tuple[int, int], tuple[int, int]]:
+    a = math.cos(theta)
+    b = math.sin(theta)
+    x0 = a * rho
+    y0 = b * rho
+    x1 = int(x0 + length * (-b))
+    y1 = int(y0 + length * a)
+    x2 = int(x0 - length * (-b))
+    y2 = int(y0 - length * a)
+    return (x1, y1), (x2, y2)
+
+
+def hough_y_at_x(line: tuple[float, float], x: float) -> float | None:
+    rho, theta = line
+    a = math.cos(theta)
+    b = math.sin(theta)
+    if abs(b) < 1e-6:
+        return None
+    return float((rho - a * x) / b)
+
+
+def intersect_hough_lines(line1: tuple[float, float], line2: tuple[float, float]) -> tuple[float, float] | None:
+    rho1, theta1 = line1
+    rho2, theta2 = line2
+    a1 = math.cos(theta1)
+    b1 = math.sin(theta1)
+    a2 = math.cos(theta2)
+    b2 = math.sin(theta2)
+    A = np.array([[a1, b1], [a2, b2]], dtype=np.float32)
+    B = np.array([rho1, rho2], dtype=np.float32)
+    det = np.linalg.det(A)
+    if abs(det) < 1e-6:
+        return None
+    x, y = np.linalg.solve(A, B)
+    return float(x), float(y)
+
+
+def line_tilt_px(line: tuple[float, float], width: int) -> float | None:
+    y_left = hough_y_at_x(line, 0)
+    y_right = hough_y_at_x(line, width - 1)
+    if y_left is None or y_right is None:
+        return None
+    return float(y_right - y_left)
+
+
+def median_line(lines: list[tuple[float, float]]) -> tuple[float, float] | None:
+    if not lines:
+        return None
+    rhos = np.array([line[0] for line in lines], dtype=np.float32)
+    thetas = np.array([line[1] for line in lines], dtype=np.float32)
+    return float(np.median(rhos)), float(np.median(thetas))
+
+
+def stable_line_from_history(history: deque[tuple[float, float] | None]) -> tuple[float, float] | None:
+    valid = [line for line in history if line is not None]
+    return median_line(valid)
+
+
+def draw_dashed_line(
+    image: np.ndarray,
+    pt1: tuple[int, int],
+    pt2: tuple[int, int],
+    color: tuple[int, int, int],
+    thickness: int = 2,
+) -> None:
+    x1, y1 = pt1
+    x2, y2 = pt2
+    length = math.hypot(x2 - x1, y2 - y1)
+    if length < 1e-6:
+        return
+
+    dx = (x2 - x1) / length
+    dy = (y2 - y1) / length
+
+    offset = 0.0
+    while offset < length:
+        start_x = int(round(x1 + dx * offset))
+        start_y = int(round(y1 + dy * offset))
+        end_offset = min(offset + DASHED_SEGMENT_PX, length)
+        end_x = int(round(x1 + dx * end_offset))
+        end_y = int(round(y1 + dy * end_offset))
+        cv2.line(image, (start_x, start_y), (end_x, end_y), color, thickness)
+        offset += DASHED_SEGMENT_PX + DASHED_GAP_PX
+
+
+class CorridorNavigator:
+    def __init__(self):
+        self.cap = Camera()
+        self.vision_settings = load_obstacle_settings()
+        self.line_history = {
+            "left": deque(maxlen=MEDIAN_HISTORY_FRAMES),
+            "right": deque(maxlen=MEDIAN_HISTORY_FRAMES),
+            "infront": deque(maxlen=MEDIAN_HISTORY_FRAMES),
+        }
+        self.side_memory_line: dict[str, tuple[float, float] | None] = {
+            "left": None,
+            "right": None,
+        }
+        self.side_memory_time = {
+            "left": 0.0,
+            "right": 0.0,
+        }
+        self.side_miss_counts = {
+            "left": 0,
+            "right": 0,
+        }
+        self.side_seen_once = {
+            "left": False,
+            "right": False,
+        }
+        self.turn_candidate: str | None = None
+        self.frame: np.ndarray | None = None
+        self.edges: np.ndarray | None = None
+        self.current_lines: dict[str, tuple[float, float] | None] = {}
+        self.stable_lines: dict[str, tuple[float, float] | None] = {}
+
+    def release(self) -> None:
+        try:
+            self.cap.release()
+        except Exception:
+            pass
+
+    def reset_for_forward(self) -> None:
+        self.turn_candidate = None
+        self.side_miss_counts["left"] = 0
+        self.side_miss_counts["right"] = 0
+        self.side_seen_once["left"] = False
+        self.side_seen_once["right"] = False
+
+    def detect_edges(self, frame: np.ndarray) -> np.ndarray:
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        blur = cv2.GaussianBlur(gray, (5, 5), 0)
+        edge_map = cv2.Canny(
+            blur,
+            self.vision_settings["canny_low"],
+            self.vision_settings["canny_high"],
+        )
+
+        contours, _ = cv2.findContours(edge_map, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        filtered = np.zeros_like(edge_map)
+        for contour in contours:
+            if cv2.arcLength(contour, closed=False) >= float(self.vision_settings["contour_min_length"]):
+                cv2.drawContours(filtered, [contour], -1, 255, 1)
+        return filtered
+
+    def detect_hough_lines(self, edges: np.ndarray) -> np.ndarray | None:
+        return cv2.HoughLines(
+            edges,
+            rho=1,
+            theta=np.pi / 180,
+            threshold=self.vision_settings["hough_threshold"],
+        )
+
+    def classify_lines(self, lines: np.ndarray | None) -> dict[str, list[tuple[float, float]]]:
+        categories = {
+            "right": [],
+            "left": [],
+            "infront": [],
+        }
+        if lines is None:
+            return categories
+
+        for line in lines:
+            rho, theta = line[0]
+            angle_deg = math.degrees(theta)
+            if self.vision_settings["right_angle_low"] <= angle_deg <= self.vision_settings["right_angle_high"]:
+                categories["right"].append((rho, theta))
+            elif self.vision_settings["left_angle_low"] <= angle_deg <= self.vision_settings["left_angle_high"]:
+                categories["left"].append((rho, theta))
+            elif self.vision_settings["infront_angle_low"] <= angle_deg <= self.vision_settings["infront_angle_high"]:
+                categories["infront"].append((rho, theta))
+        return categories
+
+    def update_histories(self, current_lines: dict[str, tuple[float, float] | None]) -> dict[str, tuple[float, float] | None]:
+        stable_lines: dict[str, tuple[float, float] | None] = {}
+        for key, line in current_lines.items():
+            self.line_history[key].append(line)
+            stable_lines[key] = stable_line_from_history(self.line_history[key])
+        return stable_lines
+
+    def step(self, now: float) -> tuple[bool, dict[str, object] | None]:
+        ret, frame = self.cap.read()
+        if not ret or frame is None:
+            return False, None
+
+        self.frame = frame
+        self.edges = self.detect_edges(frame)
+        raw_lines = self.detect_hough_lines(self.edges)
+        categories = self.classify_lines(raw_lines)
+        current_lines = {key: median_line(values) for key, values in categories.items()}
+        stable_lines = self.update_histories(current_lines)
+
+        self.current_lines = current_lines
+        self.stable_lines = stable_lines
+
+        effective_lines: dict[str, tuple[float, float] | None] = {
+            "left": None,
+            "right": None,
+        }
+        dashed_side = {
+            "left": False,
+            "right": False,
+        }
+
+        for side in ("left", "right"):
+            current_line = current_lines[side]
+            stable_line = stable_lines[side]
+            if current_line is not None and stable_line is not None:
+                self.side_memory_line[side] = stable_line
+                self.side_memory_time[side] = now
+                self.side_miss_counts[side] = 0
+                self.side_seen_once[side] = True
+                effective_lines[side] = stable_line
+            else:
+                self.side_miss_counts[side] += 1
+                memory_line = self.side_memory_line[side]
+                if memory_line is not None and (now - self.side_memory_time[side]) <= CONTINUE_SEC:
+                    effective_lines[side] = memory_line
+                    dashed_side[side] = True
+
+        if self.turn_candidate is None:
+            if self.side_seen_once["left"] and self.side_miss_counts["left"] >= TURN_CANDIDATE_MISS_FRAMES and (
+                current_lines["right"] is not None or current_lines["infront"] is not None
+            ):
+                self.turn_candidate = "LEFT"
+            elif self.side_seen_once["right"] and self.side_miss_counts["right"] >= TURN_CANDIDATE_MISS_FRAMES and (
+                current_lines["left"] is not None or current_lines["infront"] is not None
+            ):
+                self.turn_candidate = "RIGHT"
+
+        vanishing_point = None
+        if effective_lines["left"] is not None and effective_lines["right"] is not None:
+            vanishing_point = intersect_hough_lines(effective_lines["left"], effective_lines["right"])
+
+        blue_line = stable_lines["infront"]
+        blue_y_center = hough_y_at_x(blue_line, W / 2.0) if blue_line is not None else None
+        blue_tilt = line_tilt_px(blue_line, W) if blue_line is not None else None
+        turn_trigger_y = H * (1.0 - TURN_HEIGHT_FRAC)
+        blue_top_limit = H * TURN_REACQUIRE_TOP_FRAC
+
+        result = {
+            "frame": frame,
+            "edges": self.edges,
+            "current_lines": current_lines,
+            "stable_lines": stable_lines,
+            "effective_lines": effective_lines,
+            "dashed_side": dashed_side,
+            "vanishing_point": vanishing_point,
+            "blue_line": blue_line,
+            "blue_y_center": blue_y_center,
+            "blue_tilt": blue_tilt,
+            "turn_trigger": blue_y_center is not None and blue_y_center >= turn_trigger_y,
+            "blue_top_visible": blue_y_center is not None and blue_y_center <= blue_top_limit,
+            "current_side_count": int(current_lines["left"] is not None) + int(current_lines["right"] is not None),
+            "turn_candidate": self.turn_candidate or DEFAULT_TURN_DIRECTION,
+        }
+        return True, result
+
+
+def draw_line(image: np.ndarray, line: tuple[float, float], color: tuple[int, int, int], dashed: bool = False) -> None:
+    pt1, pt2 = hough_line_endpoints(*line)
+    if dashed:
+        draw_dashed_line(image, pt1, pt2, color, 2)
+    else:
+        cv2.line(image, pt1, pt2, color, 2)
+
+
+def draw_debug(frame: np.ndarray, vision: dict[str, object], state: str, turn_phase: int, turn_direction: str | None) -> np.ndarray:
+    overlay = frame.copy()
+
+    stable_lines = vision["stable_lines"]
+    effective_lines = vision["effective_lines"]
+    dashed_side = vision["dashed_side"]
+
+    right_line = stable_lines["right"]
+    left_line = stable_lines["left"]
+    blue_line = stable_lines["infront"]
+
+    if right_line is not None:
+        draw_line(overlay, right_line, RIGHT_COLOR, dashed=bool(dashed_side["right"]))
+    elif effective_lines["right"] is not None:
+        draw_line(overlay, effective_lines["right"], MEMORY_COLOR, dashed=True)
+
+    if left_line is not None:
+        draw_line(overlay, left_line, LEFT_COLOR, dashed=bool(dashed_side["left"]))
+    elif effective_lines["left"] is not None:
+        draw_line(overlay, effective_lines["left"], MEMORY_COLOR, dashed=True)
+
+    if blue_line is not None:
+        draw_line(overlay, blue_line, INFRONT_COLOR, dashed=False)
+
+    if vision["vanishing_point"] is not None:
+        ix, iy = vision["vanishing_point"]
+        cv2.circle(overlay, (int(round(ix)), int(round(iy))), 5, TARGET_COLOR, -1)
+
+    blue_y_center = vision["blue_y_center"]
+    if blue_y_center is not None:
+        cv2.circle(overlay, (W // 2, int(round(blue_y_center))), 5, INFRONT_COLOR, -1)
+
+    turn_trigger_y = int(round(H * (1.0 - TURN_HEIGHT_FRAC)))
+    cv2.line(overlay, (0, turn_trigger_y), (W - 1, turn_trigger_y), INFRONT_COLOR, 1)
+
+    top_reacquire_y = int(round(H * TURN_REACQUIRE_TOP_FRAC))
+    cv2.line(overlay, (0, top_reacquire_y), (W - 1, top_reacquire_y), (255, 255, 0), 1)
+
+    cv2.putText(overlay, f"State: {state}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+    cv2.putText(
+        overlay,
+        f"Turn candidate: {vision['turn_candidate']}",
+        (10, 38),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        overlay,
+        f"Turn phase: {turn_phase} dir: {turn_direction}",
+        (10, 56),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        overlay,
+        (
+            f"Canny {load_obstacle_settings()['canny_low']}/{load_obstacle_settings()['canny_high']} "
+            f"H {load_obstacle_settings()['hough_threshold']}"
+        ),
+        (10, 74),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        overlay,
+        f"Sides now: {vision['current_side_count']}  blue_y: {vision['blue_y_center']}",
+        (10, 92),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+    )
+    return overlay
+
+
+def forward_wheels(correction: float) -> tuple[float, float]:
+    base_left = FORWARD_LEFT_SPEED
+    base_right = FORWARD_LEFT_SPEED * FORWARD_RIGHT_SCALE
+    left = clamp(base_left + correction, -1.0, 1.0)
+    right = clamp(base_right - correction, -1.0, 1.0)
+    return left, right
+
+
+def fail_stop(motors: MotorDriver, leds: LED, aura_started: bool) -> bool:
+    motors.stop()
+    if not aura_started:
+        leds.aura_farm_start()
+        return True
+    leds.aura_farm_step(delay=AURA_FARM_DELAY)
+    return aura_started
+
+
+def main() -> None:
+    navigator = CorridorNavigator()
+    motors = MotorDriver()
+    leds = LED()
+
+    state = "FORWARD"
+    turn_phase = 0
+    turn_direction = DEFAULT_TURN_DIRECTION
+    turn_direction_sign = 1
+    turn_started_at = 0.0
+    blind_until = 0.0
+    turn_deadline = 0.0
+    aura_started = False
+
+    try:
+        while True:
+            now = time.monotonic()
+            ret, vision = navigator.step(now)
+            if not ret or vision is None:
+                continue
+
+            frame = vision["frame"]
+
+            if state == "FORWARD":
+                leds.turn_on_all()
+                aura_started = False
+
+                if bool(vision["turn_trigger"]):
+                    state = "TURN"
+                    turn_phase = 1
+                    turn_direction = str(vision["turn_candidate"])
+                    turn_direction_sign = 1 if turn_direction == "RIGHT" else -1
+                    turn_started_at = now
+                    blind_until = now + TURN_BLIND_SEC
+                    turn_deadline = now + TURN_DURATION_SEC
+                    motors.set_speeds(turn_direction_sign * TURN_SPEED, -turn_direction_sign * TURN_SPEED)
+                else:
+                    correction = None
+                    if vision["vanishing_point"] is not None:
+                        error_pixels = float(vision["vanishing_point"][0]) - (W / 2.0)
+                        if abs(error_pixels) < STEER_DEADBAND_PX:
+                            error_pixels = 0.0
+                        error_norm = error_pixels / max(W / 2.0, 1.0)
+                        correction = clamp(VANISHING_STEER_GAIN * error_norm, -MAX_STEER_DELTA, MAX_STEER_DELTA)
+                    elif vision["blue_line"] is not None and int(vision["current_side_count"]) <= 1:
+                        blue_tilt = vision["blue_tilt"]
+                        if blue_tilt is not None:
+                            tilt_norm = float(blue_tilt) / max(H, 1.0)
+                            correction = clamp(-BLUE_ALIGN_GAIN * tilt_norm, -MAX_STEER_DELTA, MAX_STEER_DELTA)
+
+                    if correction is None:
+                        state = "FAIL"
+                        aura_started = fail_stop(motors, leds, aura_started)
+                    else:
+                        left_speed, right_speed = forward_wheels(correction)
+                        motors.set_speeds(left_speed, right_speed)
+
+            elif state == "TURN":
+                leds.turn_on_all()
+                aura_started = False
+                motors.set_speeds(turn_direction_sign * TURN_SPEED, -turn_direction_sign * TURN_SPEED)
+
+                if now >= blind_until and bool(vision["blue_top_visible"]):
+                    state = "FORWARD"
+                    navigator.reset_for_forward()
+                    motors.stop()
+                elif now >= turn_deadline:
+                    if turn_phase == 1:
+                        turn_phase = 2
+                        turn_direction = "LEFT" if turn_direction == "RIGHT" else "RIGHT"
+                        turn_direction_sign = 1 if turn_direction == "RIGHT" else -1
+                        turn_started_at = now
+                        blind_until = now + TURN_BLIND_SEC + TURN_RETRY_BLIND_EXTRA_SEC
+                        turn_deadline = now + (TURN_DURATION_SEC * TURN_RETRY_DURATION_MULTIPLIER)
+                    else:
+                        state = "FAIL"
+                        motors.stop()
+
+            else:
+                aura_started = fail_stop(motors, leds, aura_started)
+
+            debug = draw_debug(frame, vision, state, turn_phase, turn_direction)
+
+            if SHOW_DEBUG:
+                cv2.imshow(WINDOW_NAME, debug)
+                if navigator.edges is not None:
+                    cv2.imshow(EDGE_WINDOW_NAME, navigator.edges)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key == 27 or key == ord("q"):
+                    break
+
+    finally:
+        try:
+            motors.stop()
+        except Exception:
+            pass
+
+        try:
+            leds.aura_farm_stop()
+        except Exception:
+            pass
+
+        try:
+            navigator.release()
+        except Exception:
+            pass
+
+        cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    main()
