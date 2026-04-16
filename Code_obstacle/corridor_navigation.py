@@ -299,9 +299,9 @@ class CorridorNavigator:
 
         left_seen_now = current_lines["left"] is not None
         right_seen_now = current_lines["right"] is not None
-        if left_seen_now and not right_seen_now:
+        if left_seen_now:
             self.last_seen_side = "left"
-        elif right_seen_now and not left_seen_now:
+        elif right_seen_now:
             self.last_seen_side = "right"
 
         if self.turn_candidate is None:
