@@ -7,7 +7,7 @@ CONFIG_PATH = Path(__file__)
 
 DEFAULT_OBSTACLE_SETTINGS = {
     "canny_low": 75,
-    "canny_high": 128,
+    "canny_high": 90,
     "contour_min_length": 32,
     "hough_threshold": 86,
     "left_angle_low": 30,
