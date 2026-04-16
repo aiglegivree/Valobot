@@ -34,6 +34,7 @@ from corridor_config import (  # noqa: E402
     MAX_STEER_DELTA,
     MEDIAN_HISTORY_FRAMES,
     SHOW_DEBUG,
+    SINGLE_WALL_SEARCH_DELTA,
     STEER_DEADBAND_PX,
     STEER_SIGN,
     TURN_BLIND_SEC,
@@ -438,6 +439,14 @@ def forward_wheels(correction: float) -> tuple[float, float]:
     return left, right
 
 
+def single_wall_search_wheels(visible_side: str) -> tuple[float, float]:
+    if visible_side == "left":
+        return forward_wheels(-SINGLE_WALL_SEARCH_DELTA)
+    if visible_side == "right":
+        return forward_wheels(SINGLE_WALL_SEARCH_DELTA)
+    return forward_wheels(0.0)
+
+
 def fail_stop(motors: MotorDriver, leds: LED, aura_started: bool) -> bool:
     motors.stop()
     if not aura_started:
@@ -506,6 +515,7 @@ def main() -> None:
                     motors.set_speeds(command_left, command_right)
                 else:
                     correction = None
+                    visible_side = None
                     if vision["vanishing_point"] is not None:
                         error_pixels = float(vision["vanishing_point"][0]) - (W / 2.0)
                         if abs(error_pixels) < STEER_DEADBAND_PX:
@@ -525,12 +535,20 @@ def main() -> None:
                                 -MAX_STEER_DELTA,
                                 MAX_STEER_DELTA,
                             )
+                    elif vision["current_lines"]["left"] is not None and vision["blue_line"] is None:
+                        visible_side = "left"
+                    elif vision["current_lines"]["right"] is not None and vision["blue_line"] is None:
+                        visible_side = "right"
 
                     if correction is None:
-                        state = "FAIL"
-                        command_left = 0.0
-                        command_right = 0.0
-                        aura_started = fail_stop(motors, leds, aura_started)
+                        if visible_side is not None:
+                            command_left, command_right = single_wall_search_wheels(visible_side)
+                            motors.set_speeds(command_left, command_right)
+                        else:
+                            state = "FAIL"
+                            command_left = 0.0
+                            command_right = 0.0
+                            aura_started = fail_stop(motors, leds, aura_started)
                     else:
                         command_left, command_right = forward_wheels(correction)
                         motors.set_speeds(command_left, command_right)
