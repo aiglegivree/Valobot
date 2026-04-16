@@ -178,6 +178,10 @@ class CorridorNavigator:
             "left": False,
             "right": False,
         }
+        self.side_absent_frames = {
+            "left": 0,
+            "right": 0,
+        }
         self.turn_candidate: str | None = None
         self.frame: np.ndarray | None = None
         self.edges: np.ndarray | None = None
@@ -196,6 +200,8 @@ class CorridorNavigator:
         self.side_miss_counts["right"] = 0
         self.side_seen_once["left"] = False
         self.side_seen_once["right"] = False
+        self.side_absent_frames["left"] = 0
+        self.side_absent_frames["right"] = 0
 
     def detect_edges(self, frame: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -283,20 +289,22 @@ class CorridorNavigator:
                 effective_lines[side] = stable_line
             else:
                 self.side_miss_counts[side] += 1
+                self.side_absent_frames[side] += 1
                 memory_line = self.side_memory_line[side]
                 if memory_line is not None and (now - self.side_memory_time[side]) <= CONTINUE_SEC:
                     effective_lines[side] = memory_line
                     dashed_side[side] = True
 
         if self.turn_candidate is None:
-            if self.side_seen_once["left"] and self.side_miss_counts["left"] >= TURN_CANDIDATE_MISS_FRAMES and (
-                current_lines["right"] is not None or current_lines["infront"] is not None
-            ):
-                self.turn_candidate = "LEFT"
-            elif self.side_seen_once["right"] and self.side_miss_counts["right"] >= TURN_CANDIDATE_MISS_FRAMES and (
-                current_lines["left"] is not None or current_lines["infront"] is not None
-            ):
-                self.turn_candidate = "RIGHT"
+            left_missing_long = self.side_miss_counts["left"] >= TURN_CANDIDATE_MISS_FRAMES
+            right_missing_long = self.side_miss_counts["right"] >= TURN_CANDIDATE_MISS_FRAMES
+            if left_missing_long or right_missing_long:
+                if self.side_absent_frames["left"] > self.side_absent_frames["right"]:
+                    self.turn_candidate = "LEFT"
+                elif self.side_absent_frames["right"] > self.side_absent_frames["left"]:
+                    self.turn_candidate = "RIGHT"
+                else:
+                    self.turn_candidate = DEFAULT_TURN_DIRECTION
 
         vanishing_point = None
         if effective_lines["left"] is not None and effective_lines["right"] is not None:
