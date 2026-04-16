@@ -312,8 +312,6 @@ class CorridorNavigator:
                     self.turn_candidate = "RIGHT"
                 elif self.last_seen_side == "right":
                     self.turn_candidate = "LEFT"
-                else:
-                    self.turn_candidate = DEFAULT_TURN_DIRECTION
 
         vanishing_point = None
         if effective_lines["left"] is not None and effective_lines["right"] is not None:
@@ -351,6 +349,7 @@ class CorridorNavigator:
             "current_side_count": int(current_lines["left"] is not None) + int(current_lines["right"] is not None),
             "turn_candidate": self.turn_candidate,
             "turn_direction_if_needed": self.turn_candidate or DEFAULT_TURN_DIRECTION,
+            "last_seen_side": self.last_seen_side,
             "t_detected": t_detected,
         }
         return True, result
@@ -439,8 +438,17 @@ def draw_debug(
     )
     cv2.putText(
         overlay,
-        f"Turn phase: {turn_phase} dir: {turn_direction}",
+        f"Last seen wall: {vision['last_seen_side'] if vision['last_seen_side'] is not None else 'NONE'}",
         (10, 74),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        overlay,
+        f"Turn phase: {turn_phase} dir: {turn_direction}",
+        (10, 92),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (255, 255, 255),
@@ -452,15 +460,6 @@ def draw_debug(
             f"Canny {load_obstacle_settings()['canny_low']}/{load_obstacle_settings()['canny_high']} "
             f"H {load_obstacle_settings()['hough_threshold']}"
         ),
-        (10, 92),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (255, 255, 255),
-        1,
-    )
-    cv2.putText(
-        overlay,
-        f"Sides now: {vision['current_side_count']}  blue_y: {vision['blue_y_center']}",
         (10, 110),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -469,7 +468,7 @@ def draw_debug(
     )
     cv2.putText(
         overlay,
-        f"Cmd L/R: {command_left:.2f} / {command_right:.2f}",
+        f"Sides now: {vision['current_side_count']}  blue_y: {vision['blue_y_center']}",
         (10, 128),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -478,8 +477,17 @@ def draw_debug(
     )
     cv2.putText(
         overlay,
-        f"T detected: {'YES' if vision['t_detected'] else 'NO'}",
+        f"Cmd L/R: {command_left:.2f} / {command_right:.2f}",
         (10, 146),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        overlay,
+        f"T detected: {'YES' if vision['t_detected'] else 'NO'}",
+        (10, 164),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (0, 255, 0) if vision["t_detected"] else (0, 0, 255),
