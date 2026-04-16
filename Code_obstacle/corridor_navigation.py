@@ -180,12 +180,7 @@ class CorridorNavigator:
             "left": 0,
             "right": 0,
         }
-        self.side_seen_once = {
-            "left": False,
-            "right": False,
-        }
-        self.last_seen_side: str | None = None
-        self.turn_candidate: str | None = None
+        self.turn_direction = DEFAULT_TURN_DIRECTION
         self.frame: np.ndarray | None = None
         self.edges: np.ndarray | None = None
         self.current_lines: dict[str, tuple[float, float] | None] = {}
@@ -198,12 +193,9 @@ class CorridorNavigator:
             pass
 
     def reset_for_forward(self) -> None:
-        self.turn_candidate = None
         self.side_miss_counts["left"] = 0
         self.side_miss_counts["right"] = 0
-        self.side_seen_once["left"] = False
-        self.side_seen_once["right"] = False
-        self.last_seen_side = None
+        self.turn_direction = DEFAULT_TURN_DIRECTION
 
     def detect_edges(self, frame: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -288,7 +280,6 @@ class CorridorNavigator:
                 self.side_memory_line[side] = stable_line
                 self.side_memory_time[side] = now
                 self.side_miss_counts[side] = 0
-                self.side_seen_once[side] = True
                 effective_lines[side] = stable_line
             else:
                 self.side_miss_counts[side] += 1
@@ -299,19 +290,12 @@ class CorridorNavigator:
 
         left_seen_now = current_lines["left"] is not None
         right_seen_now = current_lines["right"] is not None
-        if left_seen_now:
-            self.last_seen_side = "left"
-        elif right_seen_now:
-            self.last_seen_side = "right"
-
-        if self.turn_candidate is None:
-            left_missing_long = self.side_miss_counts["left"] >= TURN_CANDIDATE_MISS_FRAMES
-            right_missing_long = self.side_miss_counts["right"] >= TURN_CANDIDATE_MISS_FRAMES
-            if left_missing_long or right_missing_long:
-                if self.last_seen_side == "left":
-                    self.turn_candidate = "RIGHT"
-                elif self.last_seen_side == "right":
-                    self.turn_candidate = "LEFT"
+        if left_seen_now and not right_seen_now:
+            self.turn_direction = "RIGHT"
+        elif right_seen_now and not left_seen_now:
+            self.turn_direction = "LEFT"
+        elif left_seen_now and right_seen_now:
+            self.turn_direction = "RIGHT"
 
         vanishing_point = None
         if effective_lines["left"] is not None and effective_lines["right"] is not None:
@@ -347,9 +331,7 @@ class CorridorNavigator:
             "turn_trigger": blue_y_center is not None and blue_y_center >= turn_trigger_y,
             "blue_top_visible": blue_y_center is not None and blue_y_center <= blue_top_limit,
             "current_side_count": int(current_lines["left"] is not None) + int(current_lines["right"] is not None),
-            "turn_candidate": self.turn_candidate,
-            "turn_direction_if_needed": self.turn_candidate or DEFAULT_TURN_DIRECTION,
-            "last_seen_side": self.last_seen_side,
+            "turn_direction": self.turn_direction,
             "t_detected": t_detected,
         }
         return True, result
@@ -420,7 +402,7 @@ def draw_debug(
     cv2.putText(overlay, f"State: {state}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     cv2.putText(
         overlay,
-        f"Turn candidate: {vision['turn_candidate'] if vision['turn_candidate'] is not None else 'NONE'}",
+        f"Turn direction var: {vision['turn_direction']}",
         (10, 38),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
@@ -429,26 +411,8 @@ def draw_debug(
     )
     cv2.putText(
         overlay,
-        f"Fallback turn: {vision['turn_direction_if_needed']}",
-        (10, 56),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (255, 255, 255),
-        1,
-    )
-    cv2.putText(
-        overlay,
-        f"Last seen wall: {vision['last_seen_side'] if vision['last_seen_side'] is not None else 'NONE'}",
-        (10, 74),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (255, 255, 255),
-        1,
-    )
-    cv2.putText(
-        overlay,
         f"Turn phase: {turn_phase} dir: {turn_direction}",
-        (10, 92),
+        (10, 56),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (255, 255, 255),
@@ -460,7 +424,7 @@ def draw_debug(
             f"Canny {load_obstacle_settings()['canny_low']}/{load_obstacle_settings()['canny_high']} "
             f"H {load_obstacle_settings()['hough_threshold']}"
         ),
-        (10, 110),
+        (10, 74),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (255, 255, 255),
@@ -469,7 +433,7 @@ def draw_debug(
     cv2.putText(
         overlay,
         f"Sides now: {vision['current_side_count']}  blue_y: {vision['blue_y_center']}",
-        (10, 128),
+        (10, 92),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (255, 255, 255),
@@ -478,7 +442,7 @@ def draw_debug(
     cv2.putText(
         overlay,
         f"Cmd L/R: {command_left:.2f} / {command_right:.2f}",
-        (10, 146),
+        (10, 110),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (255, 255, 255),
@@ -487,7 +451,7 @@ def draw_debug(
     cv2.putText(
         overlay,
         f"T detected: {'YES' if vision['t_detected'] else 'NO'}",
-        (10, 164),
+        (10, 128),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (0, 255, 0) if vision["t_detected"] else (0, 0, 255),
@@ -636,8 +600,7 @@ def main() -> None:
                 if bool(vision["turn_trigger"]):
                     state = "TURN"
                     turn_phase = 1
-                    turn_direction = str(vision["turn_direction_if_needed"])
-                    navigator.reset_for_forward()
+                    turn_direction = str(vision["turn_direction"])
                     turn_direction_sign = TURN_SIGN * (1 if turn_direction == "RIGHT" else -1)
                     turn_started_at = now
                     blind_until = now + TURN_BLIND_SEC
@@ -727,6 +690,7 @@ def main() -> None:
                         turn_deadline = now + (TURN_DURATION_SEC * TURN_RETRY_DURATION_MULTIPLIER)
                     else:
                         state = "FAIL"
+                        navigator.reset_for_forward()
                         command_left = 0.0
                         command_right = 0.0
                         motors.stop()
