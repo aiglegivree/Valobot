@@ -19,6 +19,7 @@ from camera import Camera  # noqa: E402
 from config import W, H  # noqa: E402
 from leds import LED  # noqa: E402
 from motors import MotorDriver  # noqa: E402
+from vision import detect_line  # noqa: E402
 
 from corridor_config import (  # noqa: E402
     AURA_FARM_DELAY,
@@ -35,6 +36,8 @@ from corridor_config import (  # noqa: E402
     MAX_STEER_DELTA,
     MEDIAN_HISTORY_FRAMES,
     SHOW_DEBUG,
+    SIDE_BLUE_INTERSECTION_GAIN,
+    SIDE_BLUE_TARGET_FRAC,
     SINGLE_WALL_SEARCH_DELTA,
     STEER_DEADBAND_PX,
     STEER_SIGN,
@@ -265,6 +268,7 @@ class CorridorNavigator:
         categories = self.classify_lines(raw_lines)
         current_lines = {key: median_line(values) for key, values in categories.items()}
         stable_lines = self.update_histories(current_lines)
+        t_detected = bool(detect_line(frame, angle_deg=20).t_detected)
 
         self.current_lines = current_lines
         self.stable_lines = stable_lines
@@ -327,10 +331,21 @@ class CorridorNavigator:
             "blue_line": blue_line,
             "blue_y_center": blue_y_center,
             "blue_tilt": blue_tilt,
+            "left_blue_intersection": (
+                intersect_hough_lines(stable_lines["left"], blue_line)
+                if stable_lines["left"] is not None and blue_line is not None
+                else None
+            ),
+            "right_blue_intersection": (
+                intersect_hough_lines(stable_lines["right"], blue_line)
+                if stable_lines["right"] is not None and blue_line is not None
+                else None
+            ),
             "turn_trigger": blue_y_center is not None and blue_y_center >= turn_trigger_y,
             "blue_top_visible": blue_y_center is not None and blue_y_center <= blue_top_limit,
             "current_side_count": int(current_lines["left"] is not None) + int(current_lines["right"] is not None),
             "turn_candidate": self.turn_candidate or DEFAULT_TURN_DIRECTION,
+            "t_detected": t_detected,
         }
         return True, result
 
@@ -378,6 +393,14 @@ def draw_debug(
     if vision["vanishing_point"] is not None:
         ix, iy = vision["vanishing_point"]
         cv2.circle(overlay, (int(round(ix)), int(round(iy))), 5, TARGET_COLOR, -1)
+
+    for key, color in [("left_blue_intersection", LEFT_COLOR), ("right_blue_intersection", RIGHT_COLOR)]:
+        point = vision[key]
+        if point is None:
+            continue
+        ix, iy = point
+        if 0 <= ix < W and 0 <= iy < H:
+            cv2.circle(overlay, (int(round(ix)), int(round(iy))), 5, color, -1)
 
     blue_y_center = vision["blue_y_center"]
     if blue_y_center is not None:
@@ -436,6 +459,15 @@ def draw_debug(
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        overlay,
+        f"T detected: {'YES' if vision['t_detected'] else 'NO'}",
+        (10, 128),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 0) if vision["t_detected"] else (0, 0, 255),
         1,
     )
     return overlay
@@ -547,14 +579,34 @@ def main() -> None:
                             MAX_STEER_DELTA,
                         )
                     elif vision["blue_line"] is not None and int(vision["current_side_count"]) <= 1:
-                        blue_tilt = vision["blue_tilt"]
-                        if blue_tilt is not None:
-                            tilt_norm = float(blue_tilt) / max(H, 1.0)
+                        side_intersection = None
+                        target_x = None
+                        if vision["current_lines"]["left"] is not None:
+                            side_intersection = vision["left_blue_intersection"]
+                            target_x = W * SIDE_BLUE_TARGET_FRAC
+                        elif vision["current_lines"]["right"] is not None:
+                            side_intersection = vision["right_blue_intersection"]
+                            target_x = W * (1.0 - SIDE_BLUE_TARGET_FRAC)
+
+                        if side_intersection is not None and target_x is not None:
+                            error_pixels = float(side_intersection[0]) - target_x
+                            if abs(error_pixels) < STEER_DEADBAND_PX:
+                                error_pixels = 0.0
+                            error_norm = error_pixels / max(W / 2.0, 1.0)
                             correction = clamp(
-                                BLUE_ALIGN_SIGN * BLUE_ALIGN_GAIN * tilt_norm,
+                                STEER_SIGN * SIDE_BLUE_INTERSECTION_GAIN * error_norm,
                                 -MAX_STEER_DELTA,
                                 MAX_STEER_DELTA,
                             )
+                        else:
+                            blue_tilt = vision["blue_tilt"]
+                            if blue_tilt is not None:
+                                tilt_norm = float(blue_tilt) / max(H, 1.0)
+                                correction = clamp(
+                                    BLUE_ALIGN_SIGN * BLUE_ALIGN_GAIN * tilt_norm,
+                                    -MAX_STEER_DELTA,
+                                    MAX_STEER_DELTA,
+                                )
                     elif vision["current_lines"]["left"] is not None and vision["blue_line"] is None:
                         visible_side = "left"
                     elif vision["current_lines"]["right"] is not None and vision["blue_line"] is None:
