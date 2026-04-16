@@ -349,7 +349,8 @@ class CorridorNavigator:
             "turn_trigger": blue_y_center is not None and blue_y_center >= turn_trigger_y,
             "blue_top_visible": blue_y_center is not None and blue_y_center <= blue_top_limit,
             "current_side_count": int(current_lines["left"] is not None) + int(current_lines["right"] is not None),
-            "turn_candidate": self.turn_candidate or DEFAULT_TURN_DIRECTION,
+            "turn_candidate": self.turn_candidate,
+            "turn_direction_if_needed": self.turn_candidate or DEFAULT_TURN_DIRECTION,
             "t_detected": t_detected,
         }
         return True, result
@@ -420,7 +421,7 @@ def draw_debug(
     cv2.putText(overlay, f"State: {state}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     cv2.putText(
         overlay,
-        f"Turn candidate: {vision['turn_candidate']}",
+        f"Turn candidate: {vision['turn_candidate'] if vision['turn_candidate'] is not None else 'NONE'}",
         (10, 38),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
@@ -429,8 +430,17 @@ def draw_debug(
     )
     cv2.putText(
         overlay,
-        f"Turn phase: {turn_phase} dir: {turn_direction}",
+        f"Fallback turn: {vision['turn_direction_if_needed']}",
         (10, 56),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        overlay,
+        f"Turn phase: {turn_phase} dir: {turn_direction}",
+        (10, 74),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (255, 255, 255),
@@ -442,15 +452,6 @@ def draw_debug(
             f"Canny {load_obstacle_settings()['canny_low']}/{load_obstacle_settings()['canny_high']} "
             f"H {load_obstacle_settings()['hough_threshold']}"
         ),
-        (10, 74),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.45,
-        (255, 255, 255),
-        1,
-    )
-    cv2.putText(
-        overlay,
-        f"Sides now: {vision['current_side_count']}  blue_y: {vision['blue_y_center']}",
         (10, 92),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -459,7 +460,7 @@ def draw_debug(
     )
     cv2.putText(
         overlay,
-        f"Cmd L/R: {command_left:.2f} / {command_right:.2f}",
+        f"Sides now: {vision['current_side_count']}  blue_y: {vision['blue_y_center']}",
         (10, 110),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
@@ -468,8 +469,17 @@ def draw_debug(
     )
     cv2.putText(
         overlay,
-        f"T detected: {'YES' if vision['t_detected'] else 'NO'}",
+        f"Cmd L/R: {command_left:.2f} / {command_right:.2f}",
         (10, 128),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+    )
+    cv2.putText(
+        overlay,
+        f"T detected: {'YES' if vision['t_detected'] else 'NO'}",
+        (10, 146),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.45,
         (0, 255, 0) if vision["t_detected"] else (0, 0, 255),
@@ -612,7 +622,7 @@ def main() -> None:
                 if bool(vision["turn_trigger"]):
                     state = "TURN"
                     turn_phase = 1
-                    turn_direction = str(vision["turn_candidate"])
+                    turn_direction = str(vision["turn_direction_if_needed"])
                     navigator.reset_for_forward()
                     turn_direction_sign = TURN_SIGN * (1 if turn_direction == "RIGHT" else -1)
                     turn_started_at = now
