@@ -613,6 +613,7 @@ def main() -> None:
                     state = "TURN"
                     turn_phase = 1
                     turn_direction = str(vision["turn_candidate"])
+                    navigator.reset_for_forward()
                     turn_direction_sign = TURN_SIGN * (1 if turn_direction == "RIGHT" else -1)
                     turn_started_at = now
                     blind_until = now + TURN_BLIND_SEC
