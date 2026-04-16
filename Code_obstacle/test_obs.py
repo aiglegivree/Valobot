@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import cv2
-import json
 import numpy as np
 from pathlib import Path
 import sys
@@ -17,13 +16,13 @@ if str(CODE_V2_DIR) not in sys.path:
     sys.path.insert(0, str(CODE_V2_DIR))
 
 from config import W, H, CAM_ID, USE_PICAMERA2  # noqa: E402
-
-
-DEFAULT_CANNY_LOW = 75
-DEFAULT_CANNY_HIGH = 128
-DEFAULT_CONTOUR_MIN_LENGTH = 85
-DEFAULT_HOUGH_THRESHOLD = 40
-SETTINGS_PATH = Path(__file__).with_name("test_obs_settings.json")
+from obstacle_vision_config import (  # noqa: E402
+    DEFAULT_CONTOUR_MIN_LENGTH,
+    DEFAULT_HOUGH_THRESHOLD,
+    SETTINGS_PATH,
+    load_obstacle_settings,
+    save_obstacle_settings,
+)
 
 
 class Camera:
@@ -63,30 +62,11 @@ def _noop(_: int) -> None:
 
 
 def load_settings() -> dict[str, int]:
-    defaults = {
-        "canny_low": DEFAULT_CANNY_LOW,
-        "canny_high": DEFAULT_CANNY_HIGH,
-        "contour_min_length": DEFAULT_CONTOUR_MIN_LENGTH,
-        "hough_threshold": DEFAULT_HOUGH_THRESHOLD,
-    }
-    if not SETTINGS_PATH.exists():
-        return defaults
-
-    try:
-        loaded = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return defaults
-
-    settings = defaults.copy()
-    for key in settings:
-        value = loaded.get(key)
-        if isinstance(value, int):
-            settings[key] = value
-    return settings
+    return load_obstacle_settings()
 
 
 def save_settings(settings: dict[str, int]) -> None:
-    SETTINGS_PATH.write_text(json.dumps(settings, indent=2), encoding="utf-8")
+    save_obstacle_settings(settings)
 
 
 def create_controls(settings: dict[str, int]) -> None:
