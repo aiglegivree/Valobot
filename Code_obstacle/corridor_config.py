@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+RECORD_RUN_VIDEO = True
+RECORD_RUN_FPS = 20.0
+RECORDINGS_DIR = "run_recordings"
 
 FORWARD_BASE_SPEED = 0.30
 FORWARD_LEFT_SCALE = 1.00
