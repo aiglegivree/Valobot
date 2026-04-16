@@ -51,6 +51,7 @@ from obstacle_vision_config import load_obstacle_settings  # noqa: E402
 
 WINDOW_NAME = "Corridor Navigation"
 EDGE_WINDOW_NAME = "Corridor Edges"
+WINDOW_SCALE = 2
 
 RIGHT_COLOR = (0, 0, 255)
 LEFT_COLOR = (0, 255, 0)
@@ -445,10 +446,27 @@ def fail_stop(motors: MotorDriver, leds: LED, aura_started: bool) -> bool:
     return aura_started
 
 
+def setup_windows() -> None:
+    display_width = W * WINDOW_SCALE
+    display_height = H * WINDOW_SCALE
+
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.namedWindow(EDGE_WINDOW_NAME, cv2.WINDOW_NORMAL)
+
+    cv2.resizeWindow(WINDOW_NAME, display_width, display_height)
+    cv2.resizeWindow(EDGE_WINDOW_NAME, display_width, display_height)
+
+    cv2.moveWindow(WINDOW_NAME, 40, 40)
+    cv2.moveWindow(EDGE_WINDOW_NAME, 60 + display_width, 40)
+
+
 def main() -> None:
     navigator = CorridorNavigator()
     motors = MotorDriver()
     leds = LED()
+
+    if SHOW_DEBUG:
+        setup_windows()
 
     state = "FORWARD"
     turn_phase = 0
