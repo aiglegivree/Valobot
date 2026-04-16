@@ -47,6 +47,7 @@ from corridor_config import (  # noqa: E402
     TURN_RETRY_DURATION_MULTIPLIER,
     TURN_SIGN,
     TURN_SPEED,
+    USE_LEDS,
     VANISHING_STEER_GAIN,
 )
 from obstacle_vision_config import load_obstacle_settings  # noqa: E402
@@ -457,6 +458,8 @@ def blind_forward_wheels() -> tuple[float, float]:
 
 def fail_stop(motors: MotorDriver, leds: LED, aura_started: bool) -> bool:
     motors.stop()
+    if not USE_LEDS:
+        return aura_started
     if not aura_started:
         leds.aura_farm_start()
         return True
@@ -481,7 +484,7 @@ def setup_windows() -> None:
 def main() -> None:
     navigator = CorridorNavigator()
     motors = MotorDriver()
-    leds = LED()
+    leds = LED() if USE_LEDS else None
 
     if SHOW_DEBUG:
         setup_windows()
@@ -507,7 +510,8 @@ def main() -> None:
             frame = vision["frame"]
 
             if state == "FORWARD":
-                leds.turn_on_all()
+                if leds is not None:
+                    leds.turn_on_all()
                 aura_started = False
 
                 if bool(vision["turn_trigger"]):
@@ -560,7 +564,8 @@ def main() -> None:
                         motors.set_speeds(command_left, command_right)
 
             elif state == "TURN":
-                leds.turn_on_all()
+                if leds is not None:
+                    leds.turn_on_all()
                 aura_started = False
                 command_left = turn_direction_sign * TURN_SPEED
                 command_right = -turn_direction_sign * TURN_SPEED
@@ -609,7 +614,8 @@ def main() -> None:
             pass
 
         try:
-            leds.aura_farm_stop()
+            if leds is not None:
+                leds.aura_farm_stop()
         except Exception:
             pass
 
