@@ -73,6 +73,7 @@ from corridor_config import (  # noqa: E402
 from fsm_config import (  # noqa: E402
     FLYWHEEL_SPINUP_TIME,
     HIT_AREA_RATIO_THRESHOLD,
+    MIN_SECOND_T_DELAY_SEC,
     PREFER_LINE_WHEN_VISIBLE,
     RECORDINGS_DIR,
     RECORD_RUN_FPS,
@@ -582,6 +583,7 @@ def main() -> None:
 
     fsm_state = STATE_LINE_FOLLOW
     aura_started = False
+    corridor_started_at = 0.0
 
     lock_frames = 0
     last_target_center = None
@@ -609,6 +611,7 @@ def main() -> None:
                 if line_res.t_detected:
                     motors.stop()
                     corridor_controller.reset()
+                    corridor_started_at = time.time()
                     fsm_state = STATE_CORRIDOR_FOLLOW
                 else:
                     left, right, _, _, _ = line_controller.update(line_res)
@@ -622,7 +625,8 @@ def main() -> None:
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
             elif fsm_state == STATE_CORRIDOR_FOLLOW:
-                if line_res.t_detected:
+                second_t_allowed = (time.time() - corridor_started_at) >= MIN_SECOND_T_DELAY_SEC
+                if line_res.t_detected and second_t_allowed:
                     motors.stop()
                     shooter.spin_flywheel(True)
                     time.sleep(FLYWHEEL_SPINUP_TIME)
@@ -642,6 +646,8 @@ def main() -> None:
                         fsm_state = STATE_AURA
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    remaining_t_delay = max(0.0, MIN_SECOND_T_DELAY_SEC - (time.time() - corridor_started_at))
+                    cv2.putText(main_vis, f"T2 delay: {remaining_t_delay:.1f}s", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
             elif fsm_state == STATE_SHOOTING:
                 if leds is not None:
