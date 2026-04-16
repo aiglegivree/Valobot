@@ -27,7 +27,8 @@ from corridor_config import (  # noqa: E402
     DASHED_GAP_PX,
     DASHED_SEGMENT_PX,
     DEFAULT_TURN_DIRECTION,
-    FORWARD_LEFT_SPEED,
+    FORWARD_BASE_SPEED,
+    FORWARD_LEFT_SCALE,
     FORWARD_RIGHT_SCALE,
     MAX_STEER_DELTA,
     MEDIAN_HISTORY_FRAMES,
@@ -329,7 +330,15 @@ def draw_line(image: np.ndarray, line: tuple[float, float], color: tuple[int, in
         cv2.line(image, pt1, pt2, color, 2)
 
 
-def draw_debug(frame: np.ndarray, vision: dict[str, object], state: str, turn_phase: int, turn_direction: str | None) -> np.ndarray:
+def draw_debug(
+    frame: np.ndarray,
+    vision: dict[str, object],
+    state: str,
+    turn_phase: int,
+    turn_direction: str | None,
+    command_left: float,
+    command_right: float,
+) -> np.ndarray:
     overlay = frame.copy()
 
     stable_lines = vision["stable_lines"]
@@ -407,12 +416,21 @@ def draw_debug(frame: np.ndarray, vision: dict[str, object], state: str, turn_ph
         (255, 255, 255),
         1,
     )
+    cv2.putText(
+        overlay,
+        f"Cmd L/R: {command_left:.2f} / {command_right:.2f}",
+        (10, 110),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (255, 255, 255),
+        1,
+    )
     return overlay
 
 
 def forward_wheels(correction: float) -> tuple[float, float]:
-    base_left = FORWARD_LEFT_SPEED
-    base_right = FORWARD_LEFT_SPEED * FORWARD_RIGHT_SCALE
+    base_left = FORWARD_BASE_SPEED * FORWARD_LEFT_SCALE
+    base_right = FORWARD_BASE_SPEED * FORWARD_RIGHT_SCALE
     left = clamp(base_left + correction, -1.0, 1.0)
     right = clamp(base_right - correction, -1.0, 1.0)
     return left, right
@@ -440,6 +458,8 @@ def main() -> None:
     blind_until = 0.0
     turn_deadline = 0.0
     aura_started = False
+    command_left = 0.0
+    command_right = 0.0
 
     try:
         while True:
@@ -462,7 +482,9 @@ def main() -> None:
                     turn_started_at = now
                     blind_until = now + TURN_BLIND_SEC
                     turn_deadline = now + TURN_DURATION_SEC
-                    motors.set_speeds(turn_direction_sign * TURN_SPEED, -turn_direction_sign * TURN_SPEED)
+                    command_left = turn_direction_sign * TURN_SPEED
+                    command_right = -turn_direction_sign * TURN_SPEED
+                    motors.set_speeds(command_left, command_right)
                 else:
                     correction = None
                     if vision["vanishing_point"] is not None:
@@ -487,19 +509,25 @@ def main() -> None:
 
                     if correction is None:
                         state = "FAIL"
+                        command_left = 0.0
+                        command_right = 0.0
                         aura_started = fail_stop(motors, leds, aura_started)
                     else:
-                        left_speed, right_speed = forward_wheels(correction)
-                        motors.set_speeds(left_speed, right_speed)
+                        command_left, command_right = forward_wheels(correction)
+                        motors.set_speeds(command_left, command_right)
 
             elif state == "TURN":
                 leds.turn_on_all()
                 aura_started = False
-                motors.set_speeds(turn_direction_sign * TURN_SPEED, -turn_direction_sign * TURN_SPEED)
+                command_left = turn_direction_sign * TURN_SPEED
+                command_right = -turn_direction_sign * TURN_SPEED
+                motors.set_speeds(command_left, command_right)
 
                 if now >= blind_until and bool(vision["blue_top_visible"]):
                     state = "FORWARD"
                     navigator.reset_for_forward()
+                    command_left = 0.0
+                    command_right = 0.0
                     motors.stop()
                 elif now >= turn_deadline:
                     if turn_phase == 1:
@@ -511,12 +539,16 @@ def main() -> None:
                         turn_deadline = now + (TURN_DURATION_SEC * TURN_RETRY_DURATION_MULTIPLIER)
                     else:
                         state = "FAIL"
+                        command_left = 0.0
+                        command_right = 0.0
                         motors.stop()
 
             else:
+                command_left = 0.0
+                command_right = 0.0
                 aura_started = fail_stop(motors, leds, aura_started)
 
-            debug = draw_debug(frame, vision, state, turn_phase, turn_direction)
+            debug = draw_debug(frame, vision, state, turn_phase, turn_direction, command_left, command_right)
 
             if SHOW_DEBUG:
                 cv2.imshow(WINDOW_NAME, debug)

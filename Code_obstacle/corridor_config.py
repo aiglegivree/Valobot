@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 
-FORWARD_LEFT_SPEED = 0.30
-FORWARD_RIGHT_SCALE = 1.20
+FORWARD_BASE_SPEED = 0.30
+FORWARD_LEFT_SCALE = 1.00
+FORWARD_RIGHT_SCALE = 1.00
 TURN_SPEED = 0.20
 
 # Set these to -1 if the robot turns the opposite way from what the
