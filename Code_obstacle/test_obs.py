@@ -18,8 +18,6 @@ if str(CODE_V2_DIR) not in sys.path:
 from config import W, H, CAM_ID, USE_PICAMERA2  # noqa: E402
 from obstacle_vision_config import (  # noqa: E402
     CONFIG_PATH,
-    DEFAULT_CONTOUR_MIN_LENGTH,
-    DEFAULT_HOUGH_THRESHOLD,
     load_obstacle_settings,
     save_obstacle_settings,
 )
