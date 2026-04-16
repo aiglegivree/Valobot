@@ -77,6 +77,7 @@ from fsm_config import (  # noqa: E402
     HIT_AREA_RATIO_THRESHOLD,
     MIN_SECOND_T_DELAY_SEC,
     PREFER_LINE_WHEN_VISIBLE,
+    SECOND_T_CONFIRM_FRAMES,
     RECORDINGS_DIR,
     RECORD_RUN_FPS,
     RECORD_RUN_VIDEO,
@@ -588,6 +589,7 @@ def main() -> None:
     aura_started = False
     corridor_started_at = 0.0
     second_t_armed = False
+    second_t_confirm_count = 0
     post_t_until = 0.0
 
     lock_frames = 0
@@ -616,6 +618,7 @@ def main() -> None:
                 if line_res.t_detected:
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
                     post_t_until = now + FIRST_T_STRAIGHT_SEC
+                    second_t_confirm_count = 0
                     fsm_state = STATE_POST_T_STRAIGHT
                 else:
                     left, right, _, _, _ = line_controller.update(line_res)
@@ -642,13 +645,17 @@ def main() -> None:
                     corridor_controller.reset()
                     corridor_started_at = time.time()
                     second_t_armed = False
+                    second_t_confirm_count = 0
                     fsm_state = STATE_CORRIDOR_FOLLOW
 
             elif fsm_state == STATE_CORRIDOR_FOLLOW:
                 if not line_res.t_detected:
                     second_t_armed = True
+                    second_t_confirm_count = 0
                 second_t_allowed = (time.time() - corridor_started_at) >= MIN_SECOND_T_DELAY_SEC
                 if line_res.t_detected and second_t_armed and second_t_allowed:
+                    second_t_confirm_count += 1
+                if second_t_confirm_count >= SECOND_T_CONFIRM_FRAMES:
                     motors.stop()
                     shooter.spin_flywheel(True)
                     time.sleep(FLYWHEEL_SPINUP_TIME)
@@ -671,6 +678,8 @@ def main() -> None:
                     remaining_t_delay = max(0.0, MIN_SECOND_T_DELAY_SEC - (time.time() - corridor_started_at))
                     cv2.putText(main_vis, f"T2 delay: {remaining_t_delay:.1f}s", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"T2 armed: {'YES' if second_t_armed else 'NO'}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"T seen this frame: {'YES' if line_res.t_detected else 'NO'}", (10, 217), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"T2 confirm: {second_t_confirm_count}/{SECOND_T_CONFIRM_FRAMES}", (10, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
             elif fsm_state == STATE_SHOOTING:
                 if leds is not None:
