@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 
 import cv2
@@ -26,6 +27,7 @@ from config import (
     ROI_START_FRAC,
     SHAPE_MORPH_MODE,
     SLICE_BOT_FRAC,
+    SLICE_POINT_HISTORY_FRAMES,
     SLICE_MID_FRAC,
     SLICE_TOP_FRAC,
     T_BOTTOM_SLICE_WHITE_RATIO,
@@ -67,6 +69,27 @@ class VisionResult:
     mask: np.ndarray
     connected_mask: np.ndarray
     shape_mask: np.ndarray
+
+
+class SlicePointHistory:
+    def __init__(self, maxlen: int):
+        self._history = {
+            "top": deque(maxlen=maxlen),
+            "mid": deque(maxlen=maxlen),
+            "bot": deque(maxlen=maxlen),
+            "bot_gated": deque(maxlen=maxlen),
+        }
+
+    def update(self, key: str, value: int | None) -> int | None:
+        history = self._history[key]
+        history.append(value)
+        valid = [sample for sample in history if sample is not None]
+        if not valid:
+            return None
+        return int(round(sum(valid) / len(valid)))
+
+
+SLICE_POINT_HISTORY = SlicePointHistory(SLICE_POINT_HISTORY_FRAMES)
 
 
 def remove_holes(mask: np.ndarray) -> np.ndarray:
@@ -314,16 +337,21 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     y_mid = int(SLICE_MID_FRAC * h_td)
     y_bot = int(SLICE_BOT_FRAC * h_td)
 
-    cx_top, _, _, _, width_top, _ = get_band_info(shared_mask, SLICE_TOP_FRAC, BAND_THICKNESS)
-    cx_mid, _, _, _, width_mid, _ = get_band_info(shared_mask, SLICE_MID_FRAC, BAND_THICKNESS)
-    cx_bot, _, _, _, width_bot, _ = get_band_info(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
-    cx_bot_gated, _, _, _, width_bot_gated, _ = get_band_info(
+    raw_cx_top, _, _, _, width_top, _ = get_band_info(shared_mask, SLICE_TOP_FRAC, BAND_THICKNESS)
+    raw_cx_mid, _, _, _, width_mid, _ = get_band_info(shared_mask, SLICE_MID_FRAC, BAND_THICKNESS)
+    raw_cx_bot, _, _, _, width_bot, _ = get_band_info(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+    raw_cx_bot_gated, _, _, _, width_bot_gated, _ = get_band_info(
         shared_mask,
         SLICE_BOT_FRAC,
         BAND_THICKNESS,
         x_center=cx_ref,
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
     )
+
+    cx_top = SLICE_POINT_HISTORY.update("top", raw_cx_top)
+    cx_mid = SLICE_POINT_HISTORY.update("mid", raw_cx_mid)
+    cx_bot = SLICE_POINT_HISTORY.update("bot", raw_cx_bot)
+    cx_bot_gated = SLICE_POINT_HISTORY.update("bot_gated", raw_cx_bot_gated)
     bottom_slice_full_white = is_band_full_white(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
 
     seen_bot = cx_bot_gated is not None
