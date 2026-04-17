@@ -95,10 +95,10 @@ RECORDINGS_DIR = "run_recordings"
 # ============================================================
 # SHOOTING
 # ============================================================
-BLUE_LOW = (100, 140, 60)
+BLUE_LOW = (100, 140, 22)
 BLUE_HIGH = (135, 255, 255)
 
-MIN_TARGET_AREA = 1200
+MIN_TARGET_AREA = 150
 CENTER_TOL = 18
 LOCK_FRAMES_REQUIRED = 5
 TARGET_MATCH_DIST_PX = 40
