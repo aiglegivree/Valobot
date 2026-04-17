@@ -563,6 +563,23 @@ def build_recording_frame(main_frame: np.ndarray, aux_frame: np.ndarray | None) 
     return combined
 
 
+def build_t_blue_debug(line_res, blue_mask: np.ndarray | None) -> np.ndarray:
+    t_vis = draw_mask_slices(line_res)
+
+    if blue_mask is None:
+        blue_vis = np.zeros((H, W, 3), dtype=np.uint8)
+    elif len(blue_mask.shape) == 2:
+        blue_vis = cv2.cvtColor(blue_mask, cv2.COLOR_GRAY2BGR)
+    else:
+        blue_vis = blue_mask.copy()
+
+    blue_vis = cv2.resize(blue_vis, (W, H), interpolation=cv2.INTER_NEAREST)
+    combined = np.hstack((t_vis, blue_vis))
+    cv2.putText(combined, "T mask (ROI only)", (15, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+    cv2.putText(combined, "Blue mask (full frame)", (W + 15, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+    return combined
+
+
 def create_run_video_writer(frame_size: tuple[int, int]) -> cv2.VideoWriter | None:
     if not RECORD_RUN_VIDEO:
         return None
@@ -673,13 +690,14 @@ def main() -> None:
                         cv2.circle(main_vis, (target["cx"], target["cy"]), 4, (0, 0, 255), -1)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                     cv2.putText(main_vis, "Blue detected: turning right to find T", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-                    aux_vis = blue_mask
+                    aux_vis = build_t_blue_debug(line_res, blue_mask)
                 else:
                     left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
                     motors.set_speeds(left, right)
                     if leds is not None:
                         leds.turn_on_all()
                     aura_started = False
+                    aux_vis = build_t_blue_debug(line_res, blue_mask)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -705,7 +723,7 @@ def main() -> None:
                 cv2.putText(main_vis, "Action: slow right turn to T", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"T seen this frame: {'YES' if line_res.t_detected else 'NO'}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                aux_vis = blue_mask
+                aux_vis = build_t_blue_debug(line_res, blue_mask)
 
                 if line_res.t_detected:
                     motors.stop()
