@@ -41,7 +41,20 @@ def steering_to_wheels(speed: float, steer: float):
 
 
 class Controller:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        base_speed: float = BASE_SPEED,
+        turn_speed: float = TURN_SPEED,
+        blind_speed: float = BLIND_SPEED,
+        search_speed: float = SEARCH_SPEED,
+        steer_gain: float = STEER_GAIN,
+    ):
+        self.base_speed = base_speed
+        self.turn_speed = turn_speed
+        self.blind_speed = blind_speed
+        self.search_speed = search_speed
+        self.steer_gain = steer_gain
         self.reset()
 
     def reset(self):
@@ -111,11 +124,11 @@ class Controller:
 
             steer_mag = abs(self.steer_cmd)
             if steer_mag > 0.7:
-                speed = TURN_SPEED
+                speed = self.turn_speed
             elif steer_mag > 0.35:
-                speed = 0.5 * (BASE_SPEED + TURN_SPEED)
+                speed = 0.5 * (self.base_speed + self.turn_speed)
             else:
-                speed = BASE_SPEED
+                speed = self.base_speed
         else:
             self.lost_count += 1
 
@@ -123,17 +136,19 @@ class Controller:
                 self.mode = "BLIND_TURN"
                 steer_target = self.last_turn_sign * BLIND_TURN_STEER
                 self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.45)
-                speed = BLIND_SPEED
+                speed = self.blind_speed
             elif self.lost_count <= SEARCH_FRAMES:
                 self.mode = "SEARCH"
                 steer_target = self.last_turn_sign * SEARCH_TURN_STEER
                 self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.25)
-                speed = SEARCH_SPEED
+                speed = self.search_speed
             else:
                 self.mode = "SEARCH"
                 steer_target = self.last_turn_sign * SEARCH_TURN_STEER
                 self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.18)
                 speed = 0.0
 
-        left, right = steering_to_wheels(speed, self.steer_cmd)
+        steer = clamp(self.steer_cmd, -1.0, 1.0)
+        left = clamp(speed + self.steer_gain * steer, -1.0, 1.0)
+        right = clamp(speed - self.steer_gain * steer, -1.0, 1.0)
         return left, right, speed, self.steer_cmd, self.mode

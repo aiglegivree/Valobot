@@ -617,7 +617,13 @@ def fail_stop(motors: MotorDriver, leds: LED | None, aura_started: bool) -> bool
 def main() -> None:
     cam = Camera()
     line_controller = Controller()
-    second_line_controller = Controller()
+    second_line_controller = Controller(
+        base_speed=0.25,
+        turn_speed=0.25,
+        blind_speed=0.20,
+        search_speed=0.20,
+        steer_gain=0.10,
+    )
     corridor_controller = CorridorController()
     motors = MotorDriver()
     leds = LED() if USE_LEDS else None
