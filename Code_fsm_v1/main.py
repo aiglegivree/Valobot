@@ -95,6 +95,8 @@ LEFT_COLOR = (0, 255, 0)
 INFRONT_COLOR = (255, 0, 0)
 TARGET_COLOR = (255, 0, 255)
 MEMORY_COLOR = (255, 255, 255)
+TURN_TRIGGER_GUIDE_COLOR = (0, 255, 255)
+TURN_REACQUIRE_GUIDE_COLOR = (255, 255, 0)
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -477,6 +479,8 @@ class CorridorController:
         stable_lines = vision["stable_lines"]
         effective_lines = vision["effective_lines"]
         dashed_side = vision["dashed_side"]
+        turn_trigger_y = int(round(H * (1.0 - TURN_HEIGHT_FRAC)))
+        turn_reacquire_y = int(round(H * TURN_REACQUIRE_TOP_FRAC))
 
         if stable_lines["right"] is not None:
             draw_line(overlay, stable_lines["right"], RIGHT_COLOR, dashed=bool(dashed_side["right"]))
@@ -502,6 +506,27 @@ class CorridorController:
             ix, iy = point
             if 0 <= ix < W and 0 <= iy < H:
                 cv2.circle(overlay, (int(round(ix)), int(round(iy))), 5, color, -1)
+
+        cv2.line(overlay, (0, turn_trigger_y), (W - 1, turn_trigger_y), TURN_TRIGGER_GUIDE_COLOR, 1)
+        cv2.line(overlay, (0, turn_reacquire_y), (W - 1, turn_reacquire_y), TURN_REACQUIRE_GUIDE_COLOR, 1)
+        cv2.putText(
+            overlay,
+            "Turn trigger line",
+            (10, max(12, turn_trigger_y - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            TURN_TRIGGER_GUIDE_COLOR,
+            1,
+        )
+        cv2.putText(
+            overlay,
+            "Turn end line",
+            (10, max(12, turn_reacquire_y - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.4,
+            TURN_REACQUIRE_GUIDE_COLOR,
+            1,
+        )
 
         cv2.putText(overlay, f"FSM mode: {MODE_CORRIDOR}", (10, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         cv2.putText(overlay, f"Corridor state: {self.state}", (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
