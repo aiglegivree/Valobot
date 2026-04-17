@@ -26,9 +26,9 @@ SLICE_MID_FRAC = 0.50
 SLICE_BOT_FRAC = 0.95
 
 # steering weights
-W_TOP = 0.10
+W_TOP = 0.15
 W_MID = 0.25
-W_BOT = 0.65
+W_BOT = 0.60
 
 # bottom gating
 BOTTOM_SLICE_MAX_DIST = 100
