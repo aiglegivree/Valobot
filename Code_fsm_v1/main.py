@@ -61,13 +61,12 @@ from corridor_config import (  # noqa: E402
     VANISHING_STEER_GAIN,
 )
 from fsm_config import (  # noqa: E402
+    BLUE_TO_T_RIGHT_TURN_SPEED,
     FLYWHEEL_SPINUP_TIME,
     FIRST_T_STRAIGHT_SEC,
     FIRST_T_STRAIGHT_SPEED,
     HIT_AREA_RATIO_THRESHOLD,
-    MIN_SECOND_T_DELAY_SEC,
     PREFER_LINE_WHEN_VISIBLE,
-    SECOND_T_CONFIRM_FRAMES,
     RECORDINGS_DIR,
     RECORD_RUN_FPS,
     RECORD_RUN_VIDEO,
@@ -84,6 +83,7 @@ AUX_WINDOW = "FSM Aux"
 STATE_LINE_FOLLOW = "LINE_FOLLOW"
 STATE_POST_T_STRAIGHT = "POST_T_STRAIGHT"
 STATE_CORRIDOR_FOLLOW = "CORRIDOR_FOLLOW"
+STATE_BLUE_TO_T = "BLUE_TO_T"
 STATE_SHOOTING = "SHOOTING"
 STATE_AURA = "AURA"
 
@@ -606,9 +606,6 @@ def main() -> None:
 
     fsm_state = STATE_LINE_FOLLOW
     aura_started = False
-    corridor_started_at = 0.0
-    second_t_armed = False
-    second_t_confirm_count = 0
     post_t_until = 0.0
 
     lock_frames = 0
@@ -638,7 +635,6 @@ def main() -> None:
                 if line_mode == "T_STOP":
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
                     post_t_until = now + FIRST_T_STRAIGHT_SEC
-                    second_t_confirm_count = 0
                     fsm_state = STATE_POST_T_STRAIGHT
                 else:
                     motors.set_speeds(left, right)
@@ -663,19 +659,55 @@ def main() -> None:
                 if now >= post_t_until:
                     motors.stop()
                     corridor_controller.reset()
-                    corridor_started_at = time.time()
-                    second_t_armed = False
-                    second_t_confirm_count = 0
                     fsm_state = STATE_CORRIDOR_FOLLOW
 
             elif fsm_state == STATE_CORRIDOR_FOLLOW:
-                if not line_res.t_detected:
-                    second_t_armed = True
-                    second_t_confirm_count = 0
-                second_t_allowed = (time.time() - corridor_started_at) >= MIN_SECOND_T_DELAY_SEC
-                if line_res.t_detected and second_t_armed and second_t_allowed:
-                    second_t_confirm_count += 1
-                if second_t_confirm_count >= SECOND_T_CONFIRM_FRAMES:
+                blue_mask, blue_targets = detect_blue_targets(frame)
+                if blue_targets:
+                    motors.stop()
+                    fsm_state = STATE_BLUE_TO_T
+                    main_vis = frame.copy()
+                    for target in blue_targets:
+                        x, y, w, h = target["bbox"]
+                        cv2.rectangle(main_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                        cv2.circle(main_vis, (target["cx"], target["cy"]), 4, (0, 0, 255), -1)
+                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                    cv2.putText(main_vis, "Blue detected: turning right to find T", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                    aux_vis = blue_mask
+                else:
+                    left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
+                    motors.set_speeds(left, right)
+                    if leds is not None:
+                        leds.turn_on_all()
+                    aura_started = False
+                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"T seen this frame: {'YES' if line_res.t_detected else 'NO'}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+
+            elif fsm_state == STATE_BLUE_TO_T:
+                blue_mask, blue_targets = detect_blue_targets(frame)
+                right_turn_sign = TURN_SIGN * 1.0
+                motors.set_speeds(
+                    right_turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
+                    -right_turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
+                )
+                if leds is not None:
+                    leds.turn_on_all()
+                aura_started = False
+
+                main_vis = frame.copy()
+                for target in blue_targets:
+                    x, y, w, h = target["bbox"]
+                    cv2.rectangle(main_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.circle(main_vis, (target["cx"], target["cy"]), 4, (0, 0, 255), -1)
+                cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, "Action: slow right turn to T", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"T seen this frame: {'YES' if line_res.t_detected else 'NO'}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                aux_vis = blue_mask
+
+                if line_res.t_detected:
                     motors.stop()
                     shooter.spin_flywheel(True)
                     time.sleep(FLYWHEEL_SPINUP_TIME)
@@ -685,21 +717,6 @@ def main() -> None:
                     pending_shot = False
                     pending_target_before_shot = None
                     confirm_delay_frames = 0
-                else:
-                    left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
-                    motors.set_speeds(left, right)
-                    if leds is not None:
-                        leds.turn_on_all()
-                    aura_started = False
-                    if corridor_state == "FAIL":
-                        fsm_state = STATE_AURA
-                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                    cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                    remaining_t_delay = max(0.0, MIN_SECOND_T_DELAY_SEC - (time.time() - corridor_started_at))
-                    cv2.putText(main_vis, f"T2 delay: {remaining_t_delay:.1f}s", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                    cv2.putText(main_vis, f"T2 armed: {'YES' if second_t_armed else 'NO'}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                    cv2.putText(main_vis, f"T seen this frame: {'YES' if line_res.t_detected else 'NO'}", (10, 217), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                    cv2.putText(main_vis, f"T2 confirm: {second_t_confirm_count}/{SECOND_T_CONFIRM_FRAMES}", (10, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
             elif fsm_state == STATE_SHOOTING:
                 if leds is not None:
