@@ -565,6 +565,7 @@ def build_recording_frame(main_frame: np.ndarray, aux_frame: np.ndarray | None) 
 
 def build_t_blue_debug(line_res, blue_mask: np.ndarray | None) -> np.ndarray:
     t_vis = draw_mask_slices(line_res)
+    t_vis = cv2.resize(t_vis, (W, H), interpolation=cv2.INTER_NEAREST)
 
     if blue_mask is None:
         blue_vis = np.zeros((H, W, 3), dtype=np.uint8)
