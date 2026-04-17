@@ -25,8 +25,6 @@ from config import (
     MORPH_CLOSE_IT,
     ROI_START_FRAC,
     SHAPE_MORPH_MODE,
-    SHARP_TURN_CORNERS,
-    SHARP_TURN_MAX_ANGLE_DEG,
     SLICE_BOT_FRAC,
     SLICE_MID_FRAC,
     SLICE_TOP_FRAC,
@@ -61,7 +59,6 @@ class VisionResult:
     width_mid: int
     width_bot: int
     bottom_slice_full_white: bool
-    sharp_turn_detected: bool
     t_detected: bool
     corner_count: int
     corners: list[tuple[int, int]]
@@ -369,14 +366,12 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     err_bot = float(cx_bot_use - cx_ref)
     steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
-    corners, corner_angles, _ = extract_corners_from_connected_mask(shared_mask)
+    corners, _, _ = extract_corners_from_connected_mask(shared_mask)
     corner_count = len(corners)
     left_side_corners, right_side_corners, bottom_pair, t_left_bar_x, t_right_bar_x = count_t_side_corners(corners)
-    sharp_turn_angle_ok = bool(corner_angles) and max(corner_angles) <= SHARP_TURN_MAX_ANGLE_DEG
 
     shape_detection_allowed = seen_bot and width_bot_gated > 0
     if shape_detection_allowed:
-        sharp_turn_detected = corner_count == SHARP_TURN_CORNERS and sharp_turn_angle_ok
         t_detected = (
             corner_count >= T_CORNERS
             and len(bottom_pair) == 2
@@ -385,7 +380,6 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         )
         shape_connected_mask = shared_mask
     else:
-        sharp_turn_detected = False
         t_detected = False
         corner_count = 0
         corners = []
@@ -412,7 +406,6 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         width_mid=width_mid,
         width_bot=width_bot,
         bottom_slice_full_white=bottom_slice_full_white,
-        sharp_turn_detected=sharp_turn_detected,
         t_detected=t_detected,
         corner_count=corner_count,
         corners=corners,
@@ -463,17 +456,8 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
     cv2.putText(out, f"Corners: {vision_result.corner_count}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
     cv2.putText(
         out,
-        f"Sharp turn: {'YES' if vision_result.sharp_turn_detected else 'NO'}",
-        (10, 55),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.325,
-        (0, 255, 0) if vision_result.sharp_turn_detected else (0, 0, 255),
-        1,
-    )
-    cv2.putText(
-        out,
         f"T: {'YES' if vision_result.t_detected else 'NO'}",
-        (10, 85),
+        (10, 55),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.325,
         (0, 255, 0) if vision_result.t_detected else (0, 0, 255),
@@ -482,7 +466,7 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
     cv2.putText(
         out,
         f"Steer error: {vision_result.steer_error:.2f}",
-        (10, 115),
+        (10, 85),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.3,
         (0, 255, 0),
@@ -526,8 +510,6 @@ def draw_mask_slices(vision_result: VisionResult):
             cv2.circle(vis, (x, y), 4, (255, 0, 255), -1)
 
     cv2.putText(vis, f"Corners: {vision_result.corner_count}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1)
-    if vision_result.sharp_turn_detected:
-        cv2.putText(vis, "SHARP TURN", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 0), 1)
     if vision_result.t_detected:
-        cv2.putText(vis, "T DETECTED", (10, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 0, 255), 1)
+        cv2.putText(vis, "T DETECTED", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 0, 255), 1)
     return vis

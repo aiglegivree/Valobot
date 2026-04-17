@@ -49,8 +49,6 @@ CORNER_PADDING = 5
 CORNER_APPROX_EPSILON_FRAC = 0.01
 CORNER_MIN_CONTOUR_AREA = 1500
 CORNER_MAX_ANGLE_DEG = 160.0
-SHARP_TURN_MAX_ANGLE_DEG = 120.0
-SHARP_TURN_CORNERS = 6
 T_CORNERS = 8
 
 # ============================================================
@@ -64,7 +62,6 @@ HARD_TURN_THRESH = 90.0
 T_CONFIRM_FRAMES = 1
 T_LINE_FRAMES = 30
 T_BOTTOM_SLICE_WHITE_RATIO = 0.60
-SHARP_TURN_HOLD_S = 1.0
 T_SIDE_MIN_X_OFFSET = 12
 
 # ============================================================
@@ -81,7 +78,6 @@ SEARCH_TURN_STEER = 0.60
 # ============================================================
 BASE_SPEED = 0.40
 TURN_SPEED = 0.25
-SHARP_TURN_INNER_SPEED = 0.00
 BLIND_SPEED = 0.20
 SEARCH_SPEED = 0.20
 

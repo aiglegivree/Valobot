@@ -10,8 +10,6 @@ from config import (
     SEARCH_FRAMES,
     SEARCH_SPEED,
     SEARCH_TURN_STEER,
-    SHARP_TURN_HOLD_S,
-    SHARP_TURN_INNER_SPEED,
     STEER_DEADZONE,
     STEER_GAIN,
     STEER_SMOOTH_ALPHA,
@@ -42,16 +40,6 @@ def steering_to_wheels(speed: float, steer: float):
     return clamp(left, -1.0, 1.0), clamp(right, -1.0, 1.0)
 
 
-def sharp_turn_wheels(turn_cmd: float, speed: float):
-    turn_cmd = clamp(turn_cmd, -1.0, 1.0)
-    speed = clamp(speed, 0.0, 1.0)
-    inner_speed = clamp(SHARP_TURN_INNER_SPEED, 0.0, 1.0)
-
-    if turn_cmd >= 0:
-        return speed, inner_speed
-    return inner_speed, speed
-
-
 class Controller:
     def __init__(self):
         self.mode = "TRACK"
@@ -62,7 +50,6 @@ class Controller:
         self.t_confirmed = False
         self.t_line_count = 0
         self.t_stop_latched = False
-        self.sharp_turn_hold_until = 0.0
 
     def _update_turn_sign(self, err_px: float):
         if err_px > STEER_DEADZONE:
@@ -89,8 +76,6 @@ class Controller:
         return self.last_turn_sign * SEARCH_TURN_STEER
 
     def update(self, vision_result):
-        now = time.monotonic()
-
         if not self.t_confirmed:
             if getattr(vision_result, "t_detected", False):
                 self.t_count += 1
@@ -113,25 +98,6 @@ class Controller:
             self.mode = "T_STOP"
             self.steer_cmd = 0.0
             return 0.0, 0.0, 0.0, self.steer_cmd, self.mode
-
-        sharp_turn_active = getattr(vision_result, "sharp_turn_detected", False)
-        if sharp_turn_active:
-            self.sharp_turn_hold_until = now + SHARP_TURN_HOLD_S
-
-        if sharp_turn_active or now < self.sharp_turn_hold_until:
-            self.mode = "SHARP_TURN"
-            self.lost_count = 0
-
-            if getattr(vision_result, "any_seen", False):
-                steer_target = 1.6 * self._line_visible_steer_target(vision_result)
-            else:
-                steer_target = self.last_turn_sign * BLIND_TURN_STEER
-
-            steer_target = clamp(steer_target, -1.0, 1.0)
-            self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.6)
-            speed = TURN_SPEED
-            left, right = sharp_turn_wheels(self.steer_cmd, speed)
-            return left, right, speed, self.steer_cmd, self.mode
 
         if getattr(vision_result, "any_seen", False):
             self.mode = "TRACK"
