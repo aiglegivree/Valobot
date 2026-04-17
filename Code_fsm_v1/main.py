@@ -3,20 +3,10 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 import math
-import sys
 import time
 
 import cv2
 import numpy as np
-
-
-ROOT_DIR = Path(__file__).resolve().parent.parent
-CODE_V2_DIR = ROOT_DIR / "Code_v2"
-CODE_OBSTACLE_DIR = ROOT_DIR / "Code_obstacle"
-if str(CODE_V2_DIR) not in sys.path:
-    sys.path.insert(0, str(CODE_V2_DIR))
-if str(CODE_OBSTACLE_DIR) not in sys.path:
-    sys.path.insert(0, str(CODE_OBSTACLE_DIR))
 
 from camera import Camera  # noqa: E402
 from config import (  # noqa: E402
