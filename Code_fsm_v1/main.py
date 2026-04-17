@@ -605,13 +605,13 @@ def main() -> None:
             aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
 
             if fsm_state == STATE_LINE_FOLLOW:
-                if line_res.t_detected:
+                left, right, _, _, line_mode = line_controller.update(line_res)
+                if line_mode == "T_STOP":
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
                     post_t_until = now + FIRST_T_STRAIGHT_SEC
                     second_t_confirm_count = 0
                     fsm_state = STATE_POST_T_STRAIGHT
                 else:
-                    left, right, _, _, _ = line_controller.update(line_res)
                     motors.set_speeds(left, right)
                     if leds is not None:
                         leds.turn_on_all()
@@ -620,6 +620,7 @@ def main() -> None:
                     aux_vis = draw_mask_slices(line_res)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Line mode: {line_mode}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
             elif fsm_state == STATE_POST_T_STRAIGHT:
                 motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
