@@ -84,6 +84,7 @@ STATE_LINE_FOLLOW = "LINE_FOLLOW"
 STATE_POST_T_STRAIGHT = "POST_T_STRAIGHT"
 STATE_CORRIDOR_FOLLOW = "CORRIDOR_FOLLOW"
 STATE_BLUE_TO_T = "BLUE_TO_T"
+STATE_LINE_TO_SECOND_T = "LINE_TO_SECOND_T"
 STATE_SHOOTING = "SHOOTING"
 STATE_AURA = "AURA"
 
@@ -616,6 +617,7 @@ def fail_stop(motors: MotorDriver, leds: LED | None, aura_started: bool) -> bool
 def main() -> None:
     cam = Camera()
     line_controller = Controller()
+    second_line_controller = Controller()
     corridor_controller = CorridorController()
     motors = MotorDriver()
     leds = LED() if USE_LEDS else None
@@ -723,10 +725,18 @@ def main() -> None:
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, "Action: slow right turn to T", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-                cv2.putText(main_vis, f"T seen this frame: {'YES' if line_res.t_detected else 'NO'}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Line seen this frame: {'YES' if line_res.any_seen else 'NO'}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 aux_vis = build_t_blue_debug(line_res, blue_mask)
 
-                if line_res.t_detected:
+                if line_res.any_seen:
+                    motors.stop()
+                    second_line_controller.reset()
+                    fsm_state = STATE_LINE_TO_SECOND_T
+
+            elif fsm_state == STATE_LINE_TO_SECOND_T:
+                blue_mask, blue_targets = detect_blue_targets(frame)
+                left, right, _, _, line_mode = second_line_controller.update(line_res)
+                if line_mode == "T_STOP":
                     motors.stop()
                     shooter.spin_flywheel(True)
                     time.sleep(FLYWHEEL_SPINUP_TIME)
@@ -736,6 +746,17 @@ def main() -> None:
                     pending_shot = False
                     pending_target_before_shot = None
                     confirm_delay_frames = 0
+                else:
+                    motors.set_speeds(left, right)
+                    if leds is not None:
+                        leds.turn_on_all()
+                    aura_started = False
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
+                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Line mode: {line_mode}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    aux_vis = build_t_blue_debug(line_res, blue_mask)
 
             elif fsm_state == STATE_SHOOTING:
                 if leds is not None:

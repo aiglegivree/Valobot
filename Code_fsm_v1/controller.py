@@ -42,6 +42,9 @@ def steering_to_wheels(speed: float, steer: float):
 
 class Controller:
     def __init__(self):
+        self.reset()
+
+    def reset(self):
         self.mode = "TRACK"
         self.steer_cmd = 0.0
         self.last_turn_sign = 1
