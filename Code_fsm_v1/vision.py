@@ -403,7 +403,6 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     shape_detection_allowed = seen_bot and width_bot_gated > 0
     if shape_detection_allowed:
         t_detected = (
-            bottom_slice_full_white and
             corner_count >= T_CORNERS
             and len(bottom_pair) == 2
             and left_side_corners >= 2
