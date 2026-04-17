@@ -443,6 +443,7 @@ class CorridorController:
 
             if now >= self.blind_until and bool(vision["blue_top_visible"]):
                 self.state = "FORWARD"
+                self.turn_phase = 0
                 self.command_left = 0.0
                 self.command_right = 0.0
                 self.vision.reset_for_forward()
@@ -456,10 +457,13 @@ class CorridorController:
                     self.blind_until = now + TURN_BLIND_SEC + TURN_RETRY_BLIND_EXTRA_SEC
                     self.turn_deadline = now + (TURN_DURATION_SEC * TURN_RETRY_DURATION_MULTIPLIER)
                 else:
-                    self.state = "FAIL"
-                    self.command_left = 0.0
-                    self.command_right = 0.0
-                    self.vision.reset_for_forward()
+                    self.turn_phase = 2
+                    self.turn_direction = "LEFT" if self.turn_direction == "RIGHT" else "RIGHT"
+                    turn_sign = TURN_SIGN * (1 if self.turn_direction == "RIGHT" else -1)
+                    self.command_left = turn_sign * TURN_SPEED
+                    self.command_right = -turn_sign * TURN_SPEED
+                    self.blind_until = now + TURN_BLIND_SEC + TURN_RETRY_BLIND_EXTRA_SEC
+                    self.turn_deadline = now + (TURN_DURATION_SEC * TURN_RETRY_DURATION_MULTIPLIER)
         else:
             self.command_left = 0.0
             self.command_right = 0.0
