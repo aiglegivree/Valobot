@@ -14,8 +14,8 @@ ROI_START_FRAC = 0.50
 GAUSS_KSIZE = 7
 
 KERNEL_SIZE = 15
-MORPH_CLOSE_IT = 4
-SHAPE_MORPH_MODE = "remove_holes"
+MORPH_CLOSE_IT = 3
+SHAPE_MORPH_MODE = 'remove_holes'
 
 BAND_THICKNESS = 3
 SLICE_POINT_HISTORY_FRAMES = 5
@@ -41,7 +41,7 @@ BLACK_V_LOW = 0
 
 BLACK_H_HIGH = 180
 BLACK_S_HIGH = 255
-BLACK_V_HIGH = 140
+BLACK_V_HIGH = 160
 
 # ============================================================
 # CORNER SHAPE DETECTION
