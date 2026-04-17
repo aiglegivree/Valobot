@@ -82,10 +82,12 @@ class SlicePointHistory:
 
     def update(self, key: str, value: int | None) -> int | None:
         history = self._history[key]
-        history.append(value)
-        valid = [sample for sample in history if sample is not None]
-        if not valid:
+        if value is None:
+            history.clear()
             return None
+
+        history.append(value)
+        valid = list(history)
         return int(round(sum(valid) / len(valid)))
 
 
