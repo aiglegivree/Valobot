@@ -672,6 +672,7 @@ def main() -> None:
 
     lock_frames = 0
     last_target_center = None
+    locked_target_ref = None
     pending_shot = False
     pending_target_before_shot = None
     confirm_delay_frames = 0
@@ -810,6 +811,7 @@ def main() -> None:
                     fsm_state = STATE_SHOOTING
                     lock_frames = 0
                     last_target_center = None
+                    locked_target_ref = None
                     pending_shot = False
                     pending_target_before_shot = None
                     confirm_delay_frames = 0
@@ -842,12 +844,34 @@ def main() -> None:
                         pending_target_before_shot = None
                         lock_frames = 0
                         last_target_center = None
+                        locked_target_ref = None
                 else:
-                    target = pick_target(targets, last_target_center)
+                    target = None
+                    if locked_target_ref is not None:
+                        target, dist = match_target_by_position(
+                            targets,
+                            locked_target_ref["cx"],
+                            locked_target_ref["cy"],
+                            TARGET_MATCH_DIST_PX,
+                        )
+                        if target is None or dist > TARGET_MATCH_DIST_PX:
+                            target = None
+                            locked_target_ref = None
+
+                    if target is None:
+                        target = pick_target(targets, last_target_center)
+                        if target is not None:
+                            locked_target_ref = {
+                                "cx": target["cx"],
+                                "cy": target["cy"],
+                                "area": target["area"],
+                            }
+
                     if target is None:
                         motors.set_speeds(0, 0)
                         lock_frames = 0
                         last_target_center = None
+                        locked_target_ref = None
                     else:
                         last_target_center = (target["cx"], target["cy"])
                         locked, _ = aim_to_target(motors, target)
