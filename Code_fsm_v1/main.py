@@ -852,11 +852,17 @@ def main() -> None:
                             targets,
                             locked_target_ref["cx"],
                             locked_target_ref["cy"],
-                            TARGET_MATCH_DIST_PX,
+                            TARGET_MATCH_DIST_PX * 3,
                         )
-                        if target is None or dist > TARGET_MATCH_DIST_PX:
+                        if target is None or dist > TARGET_MATCH_DIST_PX * 3:
                             target = None
                             locked_target_ref = None
+                        else:
+                            locked_target_ref = {
+                                "cx": target["cx"],
+                                "cy": target["cy"],
+                                "area": target["area"],
+                            }
 
                     if target is None:
                         target = pick_target(targets, last_target_center)
