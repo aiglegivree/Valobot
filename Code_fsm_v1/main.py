@@ -844,12 +844,20 @@ def main() -> None:
                             hit_confirmed = True
                         if hit_confirmed:
                             targets_hit += 1
+                            last_target_center = None
+                            locked_target_ref = None
+                            locked_target_miss_count = 0
+                        elif matched is not None:
+                            last_target_center = (matched["cx"], matched["cy"])
+                            locked_target_ref = {
+                                "cx": matched["cx"],
+                                "cy": matched["cy"],
+                                "area": matched["area"],
+                            }
+                            locked_target_miss_count = 0
                         pending_shot = False
                         pending_target_before_shot = None
                         lock_frames = 0
-                        last_target_center = None
-                        locked_target_ref = None
-                        locked_target_miss_count = 0
                 else:
                     target = None
                     if locked_target_ref is not None:

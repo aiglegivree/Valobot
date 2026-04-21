@@ -166,7 +166,7 @@ def aim_to_target(motors: MotorDriver, target):
         motors.set_speeds(0, 0)
         return True, err
 
-    turn_speed = 0.22
+    turn_speed = 0.30
     if err > 0:
         motors.set_speeds(turn_speed, -turn_speed)
     else:
