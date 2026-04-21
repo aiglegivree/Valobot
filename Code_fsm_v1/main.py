@@ -72,6 +72,8 @@ from fsm_config import (  # noqa: E402
     RECORD_RUN_VIDEO,
     RETURN_T_IGNORE_SECONDS,
     SHOW_DEBUG,
+    T_LIM_SPEED,
+    T_LIM_TIME,
     WINDOW_SCALE,
 )
 from obstacle_vision_config import load_obstacle_settings  # noqa: E402
@@ -85,6 +87,7 @@ STATE_POST_T_STRAIGHT = "POST_T_STRAIGHT"
 STATE_CORRIDOR_FOLLOW = "CORRIDOR_FOLLOW"
 STATE_BLUE_TO_T = "BLUE_TO_T"
 STATE_LINE_TO_SECOND_T = "LINE_TO_SECOND_T"
+STATE_POST_SECOND_T_STRAIGHT = "POST_SECOND_T_STRAIGHT"
 STATE_SHOOTING = "SHOOTING"
 STATE_AURA = "AURA"
 
@@ -633,6 +636,7 @@ def main() -> None:
     fsm_state = STATE_LINE_FOLLOW
     aura_started = False
     post_t_until = 0.0
+    post_second_t_until = 0.0
 
     lock_frames = 0
     last_target_center = None
@@ -743,15 +747,9 @@ def main() -> None:
                 blue_mask, blue_targets = detect_blue_targets(frame)
                 left, right, _, _, line_mode = second_line_controller.update(line_res)
                 if line_mode == "T_STOP":
-                    motors.stop()
-                    shooter.spin_flywheel(True)
-                    time.sleep(FLYWHEEL_SPINUP_TIME)
-                    fsm_state = STATE_SHOOTING
-                    lock_frames = 0
-                    last_target_center = None
-                    pending_shot = False
-                    pending_target_before_shot = None
-                    confirm_delay_frames = 0
+                    motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
+                    post_second_t_until = now + T_LIM_TIME
+                    fsm_state = STATE_POST_SECOND_T_STRAIGHT
                 else:
                     motors.set_speeds(left, right)
                     if leds is not None:
@@ -763,6 +761,26 @@ def main() -> None:
                     cv2.putText(main_vis, f"Line mode: {line_mode}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     aux_vis = build_t_blue_debug(line_res, blue_mask)
+
+            elif fsm_state == STATE_POST_SECOND_T_STRAIGHT:
+                motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
+                if leds is not None:
+                    leds.turn_on_all()
+                main_vis = frame.copy()
+                remaining = max(0.0, post_second_t_until - now)
+                cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Straight before shooting: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                aux_vis = build_t_blue_debug(line_res, None)
+                if now >= post_second_t_until:
+                    motors.stop()
+                    shooter.spin_flywheel(True)
+                    time.sleep(FLYWHEEL_SPINUP_TIME)
+                    fsm_state = STATE_SHOOTING
+                    lock_frames = 0
+                    last_target_center = None
+                    pending_shot = False
+                    pending_target_before_shot = None
+                    confirm_delay_frames = 0
 
             elif fsm_state == STATE_SHOOTING:
                 if leds is not None:
