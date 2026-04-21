@@ -69,7 +69,6 @@ class Shooter:
         fire_angle = ANGLE_FIRE_START + self.shots_fired * ANGLE_INCREMENT
         self.set_servo_angle(fire_angle)
         time.sleep(0.15)
-        self.set_servo_angle(ANGLE_LOADED)
 
         self.shots_fired += 1
         self.last_shot_time = time.time()
