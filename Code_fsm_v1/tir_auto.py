@@ -86,6 +86,10 @@ class Shooter:
         except Exception:
             pass
         try:
+            self.set_servo_angle(ANGLE_LOADED)
+        except Exception:
+            pass
+        try:
             self.pwm.stop()
         except Exception:
             pass
