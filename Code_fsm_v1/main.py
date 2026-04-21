@@ -17,6 +17,7 @@ from config import (  # noqa: E402
     POST_SHOT_CONFIRM_FRAMES,
     POST_SHOT_SETTLE_TIME,
     TARGET_MATCH_DIST_PX,
+    TARGET_LOCK_MISS_FRAMES,
     CENTER_TOL,
     W,
     H,
@@ -674,6 +675,7 @@ def main() -> None:
     lock_frames = 0
     last_target_center = None
     locked_target_ref = None
+    locked_target_miss_count = 0
     pending_shot = False
     pending_target_before_shot = None
     confirm_delay_frames = 0
@@ -813,6 +815,7 @@ def main() -> None:
                     lock_frames = 0
                     last_target_center = None
                     locked_target_ref = None
+                    locked_target_miss_count = 0
                     pending_shot = False
                     pending_target_before_shot = None
                     confirm_delay_frames = 0
@@ -846,6 +849,7 @@ def main() -> None:
                         lock_frames = 0
                         last_target_center = None
                         locked_target_ref = None
+                        locked_target_miss_count = 0
                 else:
                     target = None
                     if locked_target_ref is not None:
@@ -857,8 +861,12 @@ def main() -> None:
                         )
                         if target is None or dist > TARGET_MATCH_DIST_PX * 3:
                             target = None
-                            locked_target_ref = None
+                            locked_target_miss_count += 1
+                            if locked_target_miss_count >= TARGET_LOCK_MISS_FRAMES:
+                                locked_target_ref = None
+                                locked_target_miss_count = 0
                         else:
+                            locked_target_miss_count = 0
                             locked_target_ref = {
                                 "cx": target["cx"],
                                 "cy": target["cy"],
@@ -866,19 +874,25 @@ def main() -> None:
                             }
 
                     if target is None:
-                        target = pick_target(targets, last_target_center)
-                        if target is not None:
-                            locked_target_ref = {
-                                "cx": target["cx"],
-                                "cy": target["cy"],
-                                "area": target["area"],
-                            }
+                        if locked_target_ref is not None:
+                            motors.set_speeds(0, 0)
+                            lock_frames = 0
+                        else:
+                            target = pick_target(targets, last_target_center)
+                            if target is not None:
+                                locked_target_ref = {
+                                    "cx": target["cx"],
+                                    "cy": target["cy"],
+                                    "area": target["area"],
+                                }
+                                locked_target_miss_count = 0
 
                     if target is None:
-                        motors.set_speeds(0, 0)
-                        lock_frames = 0
-                        last_target_center = None
-                        locked_target_ref = None
+                        if locked_target_ref is None:
+                            motors.set_speeds(0, 0)
+                            lock_frames = 0
+                            last_target_center = None
+                            locked_target_miss_count = 0
                     else:
                         last_target_center = (target["cx"], target["cy"])
                         locked, _ = aim_to_target(motors, target)
