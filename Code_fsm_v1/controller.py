@@ -61,6 +61,7 @@ class Controller:
         self.mode = "TRACK"
         self.steer_cmd = 0.0
         self.last_turn_sign = 1
+        self.last_green_turn_sign = 1
         self.lost_count = 0
         self.t_count = 0
         self.t_confirmed = False
@@ -73,7 +74,19 @@ class Controller:
         elif err_px < -STEER_DEADZONE:
             self.last_turn_sign = -1
 
+    def _update_green_turn_sign(self, vision_result) -> None:
+        if not getattr(vision_result, "seen_top", False):
+            return
+
+        err_px = vision_result.err_top
+        if err_px > STEER_DEADZONE:
+            self.last_green_turn_sign = +1
+        elif err_px < -STEER_DEADZONE:
+            self.last_green_turn_sign = -1
+
     def _line_visible_steer_target(self, vision_result) -> float:
+        self._update_green_turn_sign(vision_result)
+
         if vision_result.seen_bot:
             err_px = vision_result.err_bot
             self._update_turn_sign(err_px)
@@ -134,7 +147,7 @@ class Controller:
 
             if self.lost_count <= BLIND_TURN_FRAMES:
                 self.mode = "BLIND_TURN"
-                steer_target = self.last_turn_sign * BLIND_TURN_STEER
+                steer_target = self.last_green_turn_sign * BLIND_TURN_STEER
                 self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.45)
                 speed = self.blind_speed
             elif self.lost_count <= SEARCH_FRAMES:
