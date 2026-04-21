@@ -44,6 +44,8 @@ from corridor_config import (  # noqa: E402
     FORWARD_RIGHT_SCALE,
     MAX_STEER_DELTA,
     MEDIAN_HISTORY_FRAMES,
+    NO_LINE_SEARCH_TURN_SEC,
+    NO_LINE_SEARCH_TURN_SPEED,
     SIDE_BLUE_INTERSECTION_GAIN,
     SIDE_BLUE_TARGET_FRAC,
     SINGLE_WALL_SEARCH_DELTA,
@@ -345,6 +347,8 @@ class CorridorController:
         self.command_right = 0.0
         self.blind_until = 0.0
         self.turn_deadline = 0.0
+        self.search_turn_direction = "RIGHT"
+        self.search_turn_until = 0.0
 
     def reset(self) -> None:
         self.state = "FORWARD"
@@ -354,6 +358,8 @@ class CorridorController:
         self.command_right = 0.0
         self.blind_until = 0.0
         self.turn_deadline = 0.0
+        self.search_turn_direction = "RIGHT"
+        self.search_turn_until = 0.0
         self.vision.reset_for_forward()
 
     def forward_wheels(self, correction: float) -> tuple[float, float]:
@@ -367,6 +373,11 @@ class CorridorController:
         speed = clamp(BLIND_FORWARD_SPEED, -1.0, 1.0)
         return speed, speed
 
+    def no_line_search_wheels(self) -> tuple[float, float]:
+        turn_sign = TURN_SIGN * (1 if self.search_turn_direction == "RIGHT" else -1)
+        speed = clamp(NO_LINE_SEARCH_TURN_SPEED, 0.0, 1.0)
+        return turn_sign * speed, -turn_sign * speed
+
     def single_wall_search_wheels(self, visible_side: str) -> tuple[float, float]:
         if visible_side == "left":
             return self.forward_wheels(-SINGLE_WALL_SEARCH_DELTA)
@@ -376,6 +387,11 @@ class CorridorController:
 
     def update(self, frame: np.ndarray, now: float) -> tuple[float, float, np.ndarray, np.ndarray, str]:
         vision = self.vision.process(frame, now)
+        current_any_line = (
+            vision["current_lines"]["left"] is not None
+            or vision["current_lines"]["right"] is not None
+            or vision["current_lines"]["infront"] is not None
+        )
 
         if self.state == "FORWARD":
             if bool(vision["turn_trigger"]):
@@ -388,6 +404,11 @@ class CorridorController:
                 self.command_right = -turn_sign * TURN_SPEED
                 self.blind_until = now + TURN_BLIND_SEC
                 self.turn_deadline = now + TURN_DURATION_SEC
+            elif not current_any_line:
+                self.state = "SEARCH_LINES"
+                self.search_turn_direction = "RIGHT"
+                self.search_turn_until = now + NO_LINE_SEARCH_TURN_SEC
+                self.command_left, self.command_right = self.no_line_search_wheels()
             else:
                 correction = None
                 visible_side = None
@@ -470,6 +491,17 @@ class CorridorController:
                     self.command_right = -turn_sign * TURN_SPEED
                     self.blind_until = now + TURN_BLIND_SEC + TURN_RETRY_BLIND_EXTRA_SEC
                     self.turn_deadline = now + (TURN_DURATION_SEC * TURN_RETRY_DURATION_MULTIPLIER)
+        elif self.state == "SEARCH_LINES":
+            if current_any_line:
+                self.state = "FORWARD"
+                self.command_left = 0.0
+                self.command_right = 0.0
+                self.search_turn_until = 0.0
+            else:
+                if now >= self.search_turn_until:
+                    self.search_turn_direction = "LEFT" if self.search_turn_direction == "RIGHT" else "RIGHT"
+                    self.search_turn_until = now + NO_LINE_SEARCH_TURN_SEC
+                self.command_left, self.command_right = self.no_line_search_wheels()
         else:
             self.command_left = 0.0
             self.command_right = 0.0
