@@ -17,6 +17,7 @@ from config import (  # noqa: E402
     POST_SHOT_CONFIRM_FRAMES,
     POST_SHOT_SETTLE_TIME,
     TARGET_MATCH_DIST_PX,
+    CENTER_TOL,
     W,
     H,
 )
@@ -908,6 +909,8 @@ def main() -> None:
                     cv2.rectangle(main_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
                     cv2.circle(main_vis, (t["cx"], t["cy"]), 4, (0, 0, 255), -1)
                 cv2.line(main_vis, (W // 2, 0), (W // 2, H), (255, 255, 255), 1)
+                cv2.line(main_vis, (W // 2 - CENTER_TOL, 0), (W // 2 - CENTER_TOL, H), (0, 255, 255), 1)
+                cv2.line(main_vis, (W // 2 + CENTER_TOL, 0), (W // 2 + CENTER_TOL, H), (0, 255, 255), 1)
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"HITS: {targets_hit}/{NOMBRE_DE_CIBLES}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
