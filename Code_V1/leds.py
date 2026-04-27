@@ -64,3 +64,7 @@ class LED:
 
     def cleanup(self):
         GPIO.cleanup()
+        
+led = LED() 
+while True :
+	led.turn_on_all()
