@@ -700,11 +700,20 @@ def main() -> None:
 
             if fsm_state == STATE_LINE_FOLLOW:
                 left, right, _, _, line_mode = line_controller.update(line_res)
-                if line_res.t_detected:
+                if line_mode == "T_STOP":
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
                     post_t_until = now + FIRST_T_STRAIGHT_SEC
-                    line_controller.reset()
                     fsm_state = STATE_POST_T_STRAIGHT
+                elif line_res.t_detected:
+                    motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
+                    if leds is not None:
+                        leds.turn_on_all()
+                    aura_started = False
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
+                    aux_vis = draw_mask_slices(line_res)
+                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, "Line mode: T_CONFIRM_STRAIGHT", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                 else:
                     motors.set_speeds(left, right)
                     if leds is not None:
@@ -785,11 +794,21 @@ def main() -> None:
             elif fsm_state == STATE_LINE_TO_SECOND_T:
                 blue_mask, blue_targets = detect_blue_targets(frame)
                 left, right, _, _, line_mode = second_line_controller.update(line_res)
-                if line_res.t_detected:
+                if line_mode == "T_STOP":
                     motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
                     post_second_t_until = now + T_LIM_TIME
-                    second_line_controller.reset()
                     fsm_state = STATE_POST_SECOND_T_STRAIGHT
+                elif line_res.t_detected:
+                    motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
+                    if leds is not None:
+                        leds.turn_on_all()
+                    aura_started = False
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
+                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, "Line mode: T_CONFIRM_STRAIGHT", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    aux_vis = build_t_blue_debug(line_res, blue_mask)
                 else:
                     motors.set_speeds(left, right)
                     if leds is not None:
