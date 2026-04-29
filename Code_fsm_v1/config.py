@@ -77,8 +77,8 @@ SEARCH_TURN_STEER = 0.60
 # ============================================================
 # SPEED
 # ============================================================
-BASE_SPEED = 0.40
-LOW_SPEED = 0.20
+BASE_SPEED = 0.50
+LOW_SPEED = 0.15
 TURN_SPEED = 0.30
 BLIND_SPEED = 0.25
 SEARCH_SPEED = 0.20
