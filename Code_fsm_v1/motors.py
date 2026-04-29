@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import RPi.GPIO as GPIO
 
+from fsm_config import DRIVE_SPEED_FACTOR
+
 # Right motor
 RIGHT_EN = 13
 RIGHT_IN1 = 14
@@ -51,8 +53,8 @@ class MotorDriver:
         pwm.ChangeDutyCycle(duty)
 
     def set_speeds(self, left: float, right: float):
-        left *= LEFT_TRIM
-        right *= RIGHT_TRIM
+        left *= LEFT_TRIM * DRIVE_SPEED_FACTOR
+        right *= RIGHT_TRIM * DRIVE_SPEED_FACTOR
         self._set_one(self.pwm_left, LEFT_IN1, LEFT_IN2, left)
         self._set_one(self.pwm_right, RIGHT_IN1, RIGHT_IN2, right)
 
