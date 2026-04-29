@@ -99,7 +99,11 @@ class Shooter:
             pass
 
 
-def detect_blue_targets(frame: np.ndarray):
+def detect_blue_targets(
+    frame: np.ndarray,
+    min_ratio: float | None = None,
+    max_ratio: float | None = None,
+):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     mask = cv2.inRange(hsv, BLUE_LOW, BLUE_HIGH)
 
@@ -116,6 +120,15 @@ def detect_blue_targets(frame: np.ndarray):
             continue
 
         x, y, w, h = cv2.boundingRect(contour)
+        if w <= 0 or h <= 0:
+            continue
+
+        ratio = min(w, h) / max(w, h)
+        if min_ratio is not None and ratio < min_ratio:
+            continue
+        if max_ratio is not None and ratio > max_ratio:
+            continue
+
         targets.append(
             {
                 "contour": contour,
@@ -123,6 +136,7 @@ def detect_blue_targets(frame: np.ndarray):
                 "bbox": (x, y, w, h),
                 "cx": int(x + w // 2),
                 "cy": int(y + h // 2),
+                "ratio": float(ratio),
             }
         )
 

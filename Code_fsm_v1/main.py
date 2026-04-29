@@ -16,6 +16,8 @@ from config import (  # noqa: E402
     NOMBRE_DE_CIBLES,
     POST_SHOT_CONFIRM_FRAMES,
     POST_SHOT_SETTLE_TIME,
+    SHOOTING_TARGET_MAX_RATIO,
+    SHOOTING_TARGET_MIN_RATIO,
     TARGET_MATCH_DIST_PX,
     TARGET_LOCK_MISS_FRAMES,
     CENTER_TOL,
@@ -823,7 +825,11 @@ def main() -> None:
             elif fsm_state == STATE_SHOOTING:
                 if leds is not None:
                     leds.turn_on_all()
-                blue_mask, targets = detect_blue_targets(frame)
+                blue_mask, targets = detect_blue_targets(
+                    frame,
+                    min_ratio=SHOOTING_TARGET_MIN_RATIO,
+                    max_ratio=SHOOTING_TARGET_MAX_RATIO,
+                )
 
                 if pending_shot:
                     if confirm_delay_frames > 0:
