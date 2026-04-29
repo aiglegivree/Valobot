@@ -7,6 +7,7 @@ from config import (
     BLIND_SPEED,
     BLIND_TURN_FRAMES,
     BLIND_TURN_STEER,
+    LOW_SPEED,
     SEARCH_FRAMES,
     SEARCH_SPEED,
     SEARCH_TURN_STEER,
@@ -15,6 +16,8 @@ from config import (
     STEER_SMOOTH_ALPHA,
     T_CONFIRM_FRAMES,
     T_LINE_FRAMES,
+    TOP_SLICE_LOW_WIDTH_FRAMES,
+    TOP_SLICE_LOW_WIDTH_THRESHOLD,
     TURN_SPEED,
     W,
 )
@@ -45,12 +48,14 @@ class Controller:
         self,
         *,
         base_speed: float = BASE_SPEED,
+        low_speed: float = LOW_SPEED,
         turn_speed: float = TURN_SPEED,
         blind_speed: float = BLIND_SPEED,
         search_speed: float = SEARCH_SPEED,
         steer_gain: float = STEER_GAIN,
     ):
         self.base_speed = base_speed
+        self.low_speed = low_speed
         self.turn_speed = turn_speed
         self.blind_speed = blind_speed
         self.search_speed = search_speed
@@ -67,6 +72,15 @@ class Controller:
         self.t_confirmed = False
         self.t_line_count = 0
         self.t_stop_latched = False
+        self.top_low_width_count = 0
+
+    def _top_slice_requests_low_speed(self, vision_result) -> bool:
+        width_top = int(getattr(vision_result, "width_top", 0) or 0)
+        if 0 < width_top < TOP_SLICE_LOW_WIDTH_THRESHOLD:
+            self.top_low_width_count += 1
+        else:
+            self.top_low_width_count = 0
+        return self.top_low_width_count >= TOP_SLICE_LOW_WIDTH_FRAMES
 
     def _update_turn_sign(self, err_px: float):
         if err_px > STEER_DEADZONE:
@@ -134,6 +148,7 @@ class Controller:
 
             steer_target = self._line_visible_steer_target(vision_result)
             self.steer_cmd = smooth(self.steer_cmd, steer_target, STEER_SMOOTH_ALPHA)
+            use_low_speed = self._top_slice_requests_low_speed(vision_result)
 
             steer_mag = abs(self.steer_cmd)
             if steer_mag > 0.7:
@@ -142,8 +157,12 @@ class Controller:
                 speed = 0.5 * (self.base_speed + self.turn_speed)
             else:
                 speed = self.base_speed
+
+            if use_low_speed:
+                speed = min(speed, self.low_speed)
         else:
             self.lost_count += 1
+            self.top_low_width_count = 0
 
             if self.lost_count <= BLIND_TURN_FRAMES:
                 self.mode = "BLIND_TURN"
