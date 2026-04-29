@@ -473,23 +473,27 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
         bar_x = max(0, min(w_roi - 1, bar_x))
         cv2.line(out, (bar_x, roi_start), (bar_x, roi_start + h_roi - 1), (255, 0, 255), 2)
 
-    def draw_one(y: int, cx: int | None, width: int, color: tuple[int, int, int], name: str):
+    def draw_one(y: int, cx: int | None, color: tuple[int, int, int], name: str):
         cv2.line(out, (0, roi_start + y), (w_roi - 1, roi_start + y), color, 1)
         if cx is not None:
             cv2.circle(out, (cx, roi_start + y), 5, color, -1)
-        cv2.putText(
-            out,
-            f"{name}: cx={cx} w={width}",
-            (10, roi_start + y - 8),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.25,
-            color,
-            1,
-        )
+        cv2.putText(out, f"{name}: {cx}", (10, roi_start + y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.25, color, 1)
 
-    draw_one(vision_result.y_top, vision_result.cx_top, vision_result.width_top, (0, 255, 0), "TOP")
-    draw_one(vision_result.y_mid, vision_result.cx_mid, vision_result.width_mid, (0, 200, 255), "MID")
-    draw_one(vision_result.y_bot, vision_result.cx_bot, vision_result.width_bot, (0, 0, 255), "BOT")
+    draw_one(vision_result.y_top, vision_result.cx_top, (0, 255, 0), "TOP")
+    draw_one(vision_result.y_mid, vision_result.cx_mid, (0, 200, 255), "MID")
+    draw_one(vision_result.y_bot, vision_result.cx_bot, (0, 0, 255), "BOT")
+
+    width_lines = [
+        (f"TOP W: {vision_result.width_top}", (0, 255, 0)),
+        (f"MID W: {vision_result.width_mid}", (0, 200, 255)),
+        (f"BOT W: {vision_result.width_bot}", (0, 0, 255)),
+    ]
+    width_x = max(10, w_roi - 120)
+    width_y = 22
+    for index, (label, color) in enumerate(width_lines):
+        y = width_y + index * 22
+        cv2.putText(out, label, (width_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 3)
+        cv2.putText(out, label, (width_x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
 
     cv2.putText(out, f"Corners: {vision_result.corner_count}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
     cv2.putText(
