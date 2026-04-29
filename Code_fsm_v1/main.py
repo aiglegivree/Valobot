@@ -700,9 +700,10 @@ def main() -> None:
 
             if fsm_state == STATE_LINE_FOLLOW:
                 left, right, _, _, line_mode = line_controller.update(line_res)
-                if line_mode == "T_STOP":
+                if line_res.t_detected:
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
                     post_t_until = now + FIRST_T_STRAIGHT_SEC
+                    line_controller.reset()
                     fsm_state = STATE_POST_T_STRAIGHT
                 else:
                     motors.set_speeds(left, right)
@@ -784,9 +785,10 @@ def main() -> None:
             elif fsm_state == STATE_LINE_TO_SECOND_T:
                 blue_mask, blue_targets = detect_blue_targets(frame)
                 left, right, _, _, line_mode = second_line_controller.update(line_res)
-                if line_mode == "T_STOP":
+                if line_res.t_detected:
                     motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
                     post_second_t_until = now + T_LIM_TIME
+                    second_line_controller.reset()
                     fsm_state = STATE_POST_SECOND_T_STRAIGHT
                 else:
                     motors.set_speeds(left, right)
