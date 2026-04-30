@@ -16,6 +16,7 @@ from config import (
     CENTER_TOL,
     MAG_CAPACITY,
     MIN_TARGET_AREA,
+    MIN_TARGET_WIDTH,
     MIN_TIME_BETWEEN_SHOTS,
     MOTEUR_PIN,
     POST_SHOT_CONFIRM_FRAMES,
@@ -121,6 +122,8 @@ def detect_blue_targets(
 
         x, y, w, h = cv2.boundingRect(contour)
         if w <= 0 or h <= 0:
+            continue
+        if w < MIN_TARGET_WIDTH:
             continue
 
         ratio = min(w, h) / max(w, h)
