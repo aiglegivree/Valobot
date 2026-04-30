@@ -72,6 +72,7 @@ class Controller:
         self.t_stop_latched = False
         self.top_low_width_count = 0
         self.low_speed_latched = False
+        self.low_speed_just_latched = False
 
     def _top_slice_requests_low_speed(self, vision_result) -> bool:
         width_top = int(getattr(vision_result, "width_top", 0) or 0)
@@ -123,6 +124,8 @@ class Controller:
         return speed
 
     def update(self, vision_result):
+        self.low_speed_just_latched = False
+
         if getattr(vision_result, "t_detected", False):
             self.low_speed_latched = False
 
@@ -156,6 +159,8 @@ class Controller:
             steer_target = self._line_visible_steer_target(vision_result)
             self.steer_cmd = smooth(self.steer_cmd, steer_target, STEER_SMOOTH_ALPHA)
             use_low_speed = self._top_slice_requests_low_speed(vision_result)
+            if use_low_speed and not self.low_speed_latched:
+                self.low_speed_just_latched = True
             if use_low_speed:
                 self.low_speed_latched = True
 
