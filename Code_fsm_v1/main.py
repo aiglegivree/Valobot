@@ -64,6 +64,7 @@ from corridor_config import (  # noqa: E402
     VANISHING_STEER_GAIN,
 )
 from fsm_config import (  # noqa: E402
+    BLUE_DETECT_CONFIRM_FRAMES,
     BLUE_TO_T_RIGHT_TURN_SPEED,
     FLYWHEEL_SPINUP_TIME,
     FIRST_T_STRAIGHT_SEC,
@@ -715,6 +716,7 @@ def main() -> None:
     pending_target_before_shot = None
     confirm_delay_frames = 0
     targets_hit = 0
+    blue_detect_frames = 0
 
     if SHOW_DEBUG:
         setup_windows()
@@ -778,17 +780,30 @@ def main() -> None:
             elif fsm_state == STATE_CORRIDOR_FOLLOW:
                 blue_mask, blue_targets = detect_blue_targets(frame)
                 if blue_targets:
-                    motors.stop()
-                    fsm_state = STATE_BLUE_TO_T
-                    main_vis = frame.copy()
-                    for target in blue_targets:
-                        x, y, w, h = target["bbox"]
-                        cv2.rectangle(main_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                        cv2.circle(main_vis, (target["cx"], target["cy"]), 4, (0, 0, 255), -1)
-                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-                    cv2.putText(main_vis, "Blue detected: turning right to find T", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
-                    aux_vis = build_t_blue_debug(line_res, blue_mask)
+                    blue_detect_frames += 1
+                    if blue_detect_frames >= BLUE_DETECT_CONFIRM_FRAMES:
+                        motors.stop()
+                        fsm_state = STATE_BLUE_TO_T
+                        main_vis = frame.copy()
+                        for target in blue_targets:
+                            x, y, w, h = target["bbox"]
+                            cv2.rectangle(main_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                            cv2.circle(main_vis, (target["cx"], target["cy"]), 4, (0, 0, 255), -1)
+                        cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                        cv2.putText(main_vis, "Blue detected: turning right to find T", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                        aux_vis = build_t_blue_debug(line_res, blue_mask)
+                    else:
+                        left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
+                        motors.set_speeds(left, right)
+                        set_leds_for_corridor(leds)
+                        aura_started = False
+                        aux_vis = build_t_blue_debug(line_res, blue_mask)
+                        cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                        cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                        cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                        cv2.putText(main_vis, f"Blue confirm: {blue_detect_frames}/{BLUE_DETECT_CONFIRM_FRAMES}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                 else:
+                    blue_detect_frames = 0
                     left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
                     motors.set_speeds(left, right)
                     set_leds_for_corridor(leds)
@@ -797,7 +812,7 @@ def main() -> None:
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                    cv2.putText(main_vis, f"T seen this frame: {'YES' if line_res.t_detected else 'NO'}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Blue confirm: {blue_detect_frames}/{BLUE_DETECT_CONFIRM_FRAMES}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
             elif fsm_state == STATE_BLUE_TO_T:
                 blue_mask, blue_targets = detect_blue_targets(frame)
