@@ -111,6 +111,16 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
+def draw_low_speed_debug(image: np.ndarray, controller, origin: tuple[int, int] = (10, 95)) -> None:
+    if not controller.low_speed_latched:
+        return
+
+    x, y = origin
+    label = "LOW SPEED SWITCHED ON" if controller.low_speed_just_latched else "LOW SPEED LATCHED"
+    cv2.rectangle(image, (x - 4, y - 18), (x + 210, y + 8), (0, 0, 0), -1)
+    cv2.putText(image, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
+
+
 def hough_line_endpoints(rho: float, theta: float, length: int = 1000) -> tuple[tuple[int, int], tuple[int, int]]:
     a = math.cos(theta)
     b = math.sin(theta)
@@ -712,6 +722,9 @@ def main() -> None:
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, "Line mode: T_CONFIRM_STRAIGHT", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    if line_controller.low_speed_latched:
+                        low_speed_text = "Low speed: SWITCHED ON" if line_controller.low_speed_just_latched else "Low speed: LATCHED"
+                        cv2.putText(main_vis, low_speed_text, (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
                 else:
                     motors.set_speeds(left, right)
                     if leds is not None:
@@ -722,6 +735,9 @@ def main() -> None:
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Line mode: {line_mode}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    if line_controller.low_speed_latched:
+                        low_speed_text = "Low speed: SWITCHED ON" if line_controller.low_speed_just_latched else "Low speed: LATCHED"
+                        cv2.putText(main_vis, low_speed_text, (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
 
             elif fsm_state == STATE_POST_T_STRAIGHT:
                 motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
@@ -806,6 +822,9 @@ def main() -> None:
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, "Line mode: T_CONFIRM_STRAIGHT", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    if second_line_controller.low_speed_latched:
+                        low_speed_text = "Low speed: SWITCHED ON" if second_line_controller.low_speed_just_latched else "Low speed: LATCHED"
+                        cv2.putText(main_vis, low_speed_text, (10, 217), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
                     aux_vis = build_t_blue_debug(line_res, blue_mask)
                 else:
                     motors.set_speeds(left, right)
@@ -817,6 +836,9 @@ def main() -> None:
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Line mode: {line_mode}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    if second_line_controller.low_speed_latched:
+                        low_speed_text = "Low speed: SWITCHED ON" if second_line_controller.low_speed_just_latched else "Low speed: LATCHED"
+                        cv2.putText(main_vis, low_speed_text, (10, 217), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 200, 255), 1)
                     aux_vis = build_t_blue_debug(line_res, blue_mask)
 
             elif fsm_state == STATE_POST_SECOND_T_STRAIGHT:
