@@ -6,7 +6,16 @@ import cv2
 import numpy as np
 
 from camera import Camera
-from config import BLUE_HIGH, BLUE_LOW, MIN_TARGET_AREA, MIN_TARGET_WIDTH
+from config import (
+    BLUE_HIGH_CORRIDOR,
+    BLUE_HIGH_SHOOTING,
+    BLUE_LOW_CORRIDOR,
+    BLUE_LOW_SHOOTING,
+    MIN_TARGET_AREA_CORRIDOR,
+    MIN_TARGET_AREA_SHOOTING,
+    MIN_TARGET_WIDTH_CORRIDOR,
+    MIN_TARGET_WIDTH_SHOOTING,
+)
 from leds import LED
 
 
@@ -15,6 +24,8 @@ WINDOW_CAMERA = "Blue Camera"
 WINDOW_MASK = "Blue Mask"
 WINDOW_DEBUG = "Blue Debug"
 CONFIG_PATH = Path(__file__).with_name("config.py")
+PROFILE_CORRIDOR = "CORRIDOR"
+PROFILE_SHOOTING = "SHOOTING"
 
 
 def nothing(_):
@@ -25,14 +36,41 @@ def create_trackbars():
     cv2.namedWindow(WINDOW_CONTROLS, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_CONTROLS, 460, 380)
 
-    cv2.createTrackbar("H low", WINDOW_CONTROLS, BLUE_LOW[0], 180, nothing)
-    cv2.createTrackbar("S low", WINDOW_CONTROLS, BLUE_LOW[1], 255, nothing)
-    cv2.createTrackbar("V low", WINDOW_CONTROLS, BLUE_LOW[2], 255, nothing)
-    cv2.createTrackbar("H high", WINDOW_CONTROLS, BLUE_HIGH[0], 180, nothing)
-    cv2.createTrackbar("S high", WINDOW_CONTROLS, BLUE_HIGH[1], 255, nothing)
-    cv2.createTrackbar("V high", WINDOW_CONTROLS, BLUE_HIGH[2], 255, nothing)
-    cv2.createTrackbar("Min area", WINDOW_CONTROLS, min(MIN_TARGET_AREA, 10000), 10000, nothing)
-    cv2.createTrackbar("Min width", WINDOW_CONTROLS, min(MIN_TARGET_WIDTH, 320), 320, nothing)
+    cv2.createTrackbar("H low", WINDOW_CONTROLS, 0, 180, nothing)
+    cv2.createTrackbar("S low", WINDOW_CONTROLS, 0, 255, nothing)
+    cv2.createTrackbar("V low", WINDOW_CONTROLS, 0, 255, nothing)
+    cv2.createTrackbar("H high", WINDOW_CONTROLS, 0, 180, nothing)
+    cv2.createTrackbar("S high", WINDOW_CONTROLS, 0, 255, nothing)
+    cv2.createTrackbar("V high", WINDOW_CONTROLS, 0, 255, nothing)
+    cv2.createTrackbar("Min area", WINDOW_CONTROLS, 0, 10000, nothing)
+    cv2.createTrackbar("Min width", WINDOW_CONTROLS, 0, 320, nothing)
+
+
+def get_profile_settings(profile_name: str) -> dict[str, object]:
+    if profile_name == PROFILE_CORRIDOR:
+        return {
+            "blue_low": BLUE_LOW_CORRIDOR,
+            "blue_high": BLUE_HIGH_CORRIDOR,
+            "min_area": MIN_TARGET_AREA_CORRIDOR,
+            "min_width": MIN_TARGET_WIDTH_CORRIDOR,
+        }
+    return {
+        "blue_low": BLUE_LOW_SHOOTING,
+        "blue_high": BLUE_HIGH_SHOOTING,
+        "min_area": MIN_TARGET_AREA_SHOOTING,
+        "min_width": MIN_TARGET_WIDTH_SHOOTING,
+    }
+
+
+def set_trackbar_values(values: dict[str, object]) -> None:
+    cv2.setTrackbarPos("H low", WINDOW_CONTROLS, int(values["blue_low"][0]))
+    cv2.setTrackbarPos("S low", WINDOW_CONTROLS, int(values["blue_low"][1]))
+    cv2.setTrackbarPos("V low", WINDOW_CONTROLS, int(values["blue_low"][2]))
+    cv2.setTrackbarPos("H high", WINDOW_CONTROLS, int(values["blue_high"][0]))
+    cv2.setTrackbarPos("S high", WINDOW_CONTROLS, int(values["blue_high"][1]))
+    cv2.setTrackbarPos("V high", WINDOW_CONTROLS, int(values["blue_high"][2]))
+    cv2.setTrackbarPos("Min area", WINDOW_CONTROLS, min(int(values["min_area"]), 10000))
+    cv2.setTrackbarPos("Min width", WINDOW_CONTROLS, min(int(values["min_width"]), 320))
 
 
 def get_values() -> dict[str, object]:
@@ -107,14 +145,22 @@ def replace_config_value(text: str, key: str, value: str) -> str:
     raise ValueError(f"Key {key} not found in config.py")
 
 
-def save_values_to_config(values: dict[str, object]):
+def save_values_to_config(values: dict[str, object], profile_name: str):
     text = CONFIG_PATH.read_text(encoding="utf-8")
-    updates = {
-        "BLUE_LOW": repr(tuple(int(v) for v in values["blue_low"])),
-        "BLUE_HIGH": repr(tuple(int(v) for v in values["blue_high"])),
-        "MIN_TARGET_AREA": str(int(values["min_area"])),
-        "MIN_TARGET_WIDTH": str(int(values["min_width"])),
-    }
+    if profile_name == PROFILE_CORRIDOR:
+        updates = {
+            "BLUE_LOW_CORRIDOR": repr(tuple(int(v) for v in values["blue_low"])),
+            "BLUE_HIGH_CORRIDOR": repr(tuple(int(v) for v in values["blue_high"])),
+            "MIN_TARGET_AREA_CORRIDOR": str(int(values["min_area"])),
+            "MIN_TARGET_WIDTH_CORRIDOR": str(int(values["min_width"])),
+        }
+    else:
+        updates = {
+            "BLUE_LOW_SHOOTING": repr(tuple(int(v) for v in values["blue_low"])),
+            "BLUE_HIGH_SHOOTING": repr(tuple(int(v) for v in values["blue_high"])),
+            "MIN_TARGET_AREA_SHOOTING": str(int(values["min_area"])),
+            "MIN_TARGET_WIDTH_SHOOTING": str(int(values["min_width"])),
+        }
 
     for key, value in updates.items():
         text = replace_config_value(text, key, value)
@@ -129,6 +175,8 @@ def main():
     cam = Camera()
 
     create_trackbars()
+    active_profile = PROFILE_SHOOTING
+    set_trackbar_values(get_profile_settings(active_profile))
     cv2.namedWindow(WINDOW_CAMERA, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_MASK, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_DEBUG, cv2.WINDOW_NORMAL)
@@ -150,11 +198,12 @@ def main():
                 cv2.circle(debug_view, (target["cx"], target["cy"]), 4, (0, 0, 255), -1)
 
             cv2.putText(debug_view, f"Targets: {len(targets)}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(debug_view, f"BLUE_LOW: {values['blue_low']}", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(debug_view, f"BLUE_HIGH: {values['blue_high']}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(debug_view, f"MIN_TARGET_AREA: {values['min_area']}", (10, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(debug_view, f"MIN_TARGET_WIDTH: {values['min_width']}", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(debug_view, f"LEDs: {'ON' if leds_on else 'OFF'} | l toggle | s save config", (10, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_view, f"PROFILE: {active_profile}", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+            cv2.putText(debug_view, f"BLUE_LOW: {values['blue_low']}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_view, f"BLUE_HIGH: {values['blue_high']}", (10, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_view, f"MIN_TARGET_AREA: {values['min_area']}", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_view, f"MIN_TARGET_WIDTH: {values['min_width']}", (10, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_view, "p switch profile | l toggle leds | s save config", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
             cv2.imshow(WINDOW_CAMERA, camera_view)
             cv2.imshow(WINDOW_MASK, mask)
@@ -169,9 +218,12 @@ def main():
                     leds.turn_on_all()
                 else:
                     leds.turn_off_all()
+            if key == ord("p"):
+                active_profile = PROFILE_CORRIDOR if active_profile == PROFILE_SHOOTING else PROFILE_SHOOTING
+                set_trackbar_values(get_profile_settings(active_profile))
             if key == ord("s"):
-                save_values_to_config(values)
-                print("Saved blue tuner settings to Code_fsm_v1/config.py")
+                save_values_to_config(values, active_profile)
+                print(f"Saved {active_profile.lower()} blue tuner settings to Code_fsm_v1/config.py")
 
     finally:
         try:
