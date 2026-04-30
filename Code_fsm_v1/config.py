@@ -78,7 +78,7 @@ SEARCH_TURN_STEER = 0.60
 # SPEED
 # ============================================================
 BASE_SPEED = 0.50
-LOW_SPEED = 0.22
+LOW_SPEED = 0.25
 LOW_SPEED_HOLD_SEC = 4.0
 TURN_SPEED = 0.30
 BLIND_SPEED = 0.30
@@ -99,15 +99,15 @@ RECORDINGS_DIR = "run_recordings"
 # ============================================================
 # BLUE TARGETS
 # ============================================================
-BLUE_LOW_CORRIDOR = (101, 217, 22)
-BLUE_HIGH_CORRIDOR = (135, 255, 255)
-MIN_TARGET_AREA_CORRIDOR = 150
-MIN_TARGET_WIDTH_CORRIDOR = 12
+BLUE_LOW_CORRIDOR = (81, 130, 17)
+BLUE_HIGH_CORRIDOR = (114, 255, 255)
+MIN_TARGET_AREA_CORRIDOR = 643
+MIN_TARGET_WIDTH_CORRIDOR = 7
 
-BLUE_LOW_SHOOTING = (101, 217, 22)
+BLUE_LOW_SHOOTING = (101, 208, 22)
 BLUE_HIGH_SHOOTING = (135, 255, 255)
 MIN_TARGET_AREA_SHOOTING = 150
-MIN_TARGET_WIDTH_SHOOTING = 12
+MIN_TARGET_WIDTH_SHOOTING = 25
 
 # Backward-compatible aliases. Keep these mapped to the shooting profile.
 BLUE_LOW = BLUE_LOW_SHOOTING
