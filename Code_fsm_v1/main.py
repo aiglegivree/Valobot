@@ -61,7 +61,6 @@ from corridor_config import (  # noqa: E402
     TURN_RETRY_DURATION_MULTIPLIER,
     TURN_SIGN,
     TURN_SPEED,
-    USE_LEDS,
     VANISHING_STEER_GAIN,
 )
 from fsm_config import (  # noqa: E402
@@ -78,6 +77,9 @@ from fsm_config import (  # noqa: E402
     SHOW_DEBUG,
     T_LIM_SPEED,
     T_LIM_TIME,
+    USE_CORRIDOR_LEDS,
+    USE_LEDS,
+    USE_SHOOTING_LEDS,
     WINDOW_SCALE,
 )
 from obstacle_vision_config import load_obstacle_settings  # noqa: E402
@@ -119,6 +121,29 @@ def draw_low_speed_debug(image: np.ndarray, controller, origin: tuple[int, int] 
     label = "LOW SPEED SWITCHED ON" if controller.low_speed_just_latched else "LOW SPEED ACTIVE"
     cv2.rectangle(image, (x - 4, y - 18), (x + 210, y + 8), (0, 0, 0), -1)
     cv2.putText(image, label, (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 255), 2)
+
+
+def set_leds_for_line(leds: LED | None) -> None:
+    if leds is not None:
+        leds.turn_on_all()
+
+
+def set_leds_for_corridor(leds: LED | None) -> None:
+    if leds is None:
+        return
+    if USE_CORRIDOR_LEDS:
+        leds.turn_on_all()
+    else:
+        leds.turn_off_all()
+
+
+def set_leds_for_shooting(leds: LED | None) -> None:
+    if leds is None:
+        return
+    if USE_SHOOTING_LEDS:
+        leds.turn_on_all()
+    else:
+        leds.turn_off_all()
 
 
 def hough_line_endpoints(rho: float, theta: float, length: int = 1000) -> tuple[tuple[int, int], tuple[int, int]]:
@@ -714,8 +739,7 @@ def main() -> None:
                     fsm_state = STATE_POST_T_STRAIGHT
                 elif line_res.t_detected:
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
-                    if leds is not None:
-                        leds.turn_on_all()
+                    set_leds_for_line(leds)
                     aura_started = False
                     main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
                     aux_vis = draw_mask_slices(line_res)
@@ -727,8 +751,7 @@ def main() -> None:
                         print("LOW SPEED SWITCHED ON")
                 else:
                     motors.set_speeds(left, right)
-                    if leds is not None:
-                        leds.turn_on_all()
+                    set_leds_for_line(leds)
                     aura_started = False
                     main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
                     aux_vis = draw_mask_slices(line_res)
@@ -741,8 +764,7 @@ def main() -> None:
 
             elif fsm_state == STATE_POST_T_STRAIGHT:
                 motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
-                if leds is not None:
-                    leds.turn_on_all()
+                set_leds_for_line(leds)
                 main_vis = frame.copy()
                 remaining = max(0.0, post_t_until - now)
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
@@ -769,8 +791,7 @@ def main() -> None:
                 else:
                     left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
                     motors.set_speeds(left, right)
-                    if leds is not None:
-                        leds.turn_on_all()
+                    set_leds_for_corridor(leds)
                     aura_started = False
                     aux_vis = build_t_blue_debug(line_res, blue_mask)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -785,8 +806,7 @@ def main() -> None:
                     right_turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
                     -right_turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
                 )
-                if leds is not None:
-                    leds.turn_on_all()
+                set_leds_for_corridor(leds)
                 aura_started = False
 
                 main_vis = frame.copy()
@@ -814,8 +834,7 @@ def main() -> None:
                     fsm_state = STATE_POST_SECOND_T_STRAIGHT
                 elif line_res.t_detected:
                     motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
-                    if leds is not None:
-                        leds.turn_on_all()
+                    set_leds_for_line(leds)
                     aura_started = False
                     main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -828,8 +847,7 @@ def main() -> None:
                     aux_vis = build_t_blue_debug(line_res, blue_mask)
                 else:
                     motors.set_speeds(left, right)
-                    if leds is not None:
-                        leds.turn_on_all()
+                    set_leds_for_line(leds)
                     aura_started = False
                     main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -843,8 +861,7 @@ def main() -> None:
 
             elif fsm_state == STATE_POST_SECOND_T_STRAIGHT:
                 motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
-                if leds is not None:
-                    leds.turn_on_all()
+                set_leds_for_line(leds)
                 main_vis = frame.copy()
                 remaining = max(0.0, post_second_t_until - now)
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
@@ -864,8 +881,7 @@ def main() -> None:
                     confirm_delay_frames = 0
 
             elif fsm_state == STATE_SHOOTING:
-                if leds is not None:
-                    leds.turn_on_all()
+                set_leds_for_shooting(leds)
                 blue_mask, targets = detect_blue_targets(frame)
 
                 if pending_shot:
