@@ -30,7 +30,7 @@ from tir_auto import (  # noqa: E402
     aim_to_target,
     detect_blue_targets,
     match_target_by_position,
-    pick_target,
+    pick_target_by_shot_order,
 )
 from vision import detect_line, draw_debug_slices, draw_mask_slices  # noqa: E402
 
@@ -960,7 +960,7 @@ def main() -> None:
                             motors.set_speeds(0, 0)
                             lock_frames = 0
                         else:
-                            target = pick_target(targets, last_target_center)
+                            target = pick_target_by_shot_order(targets, targets_hit)
                             if target is not None:
                                 locked_target_ref = {
                                     "cx": target["cx"],

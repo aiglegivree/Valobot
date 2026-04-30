@@ -180,6 +180,20 @@ def pick_target(targets, last_target_center=None):
     return targets[0]
 
 
+def pick_target_by_shot_order(targets, confirmed_hits: int):
+    if not targets:
+        return None
+
+    if confirmed_hits <= 0:
+        return max(targets, key=lambda target: target["cx"])
+
+    if confirmed_hits == 1:
+        return min(targets, key=lambda target: target["cx"])
+
+    targets_by_x = sorted(targets, key=lambda target: target["cx"])
+    return targets_by_x[len(targets_by_x) // 2]
+
+
 def aim_to_target(motors: MotorDriver, target):
     err = target["cx"] - (W // 2)
 
