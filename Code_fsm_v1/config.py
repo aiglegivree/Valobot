@@ -55,7 +55,7 @@ T_CORNERS = 8
 # ============================================================
 # CONTROL
 # ============================================================
-STEER_SMOOTH_ALPHA = 0.35
+STEER_SMOOTH_ALPHA = 0.45
 STEER_DEADZONE = 2.5
 
 HARD_TURN_THRESH = 90.0
@@ -78,13 +78,13 @@ SEARCH_TURN_STEER = 0.60
 # SPEED
 # ============================================================
 BASE_SPEED = 0.50
-LOW_SPEED = 0.20
+LOW_SPEED = 0.22
 LOW_SPEED_HOLD_SEC = 4.0
 TURN_SPEED = 0.30
 BLIND_SPEED = 0.30
 SEARCH_SPEED = 0.30
 
-STEER_GAIN = 0.13
+STEER_GAIN = 0.14
 TOP_SLICE_LOW_WIDTH_THRESHOLD = 30
 TOP_SLICE_LOW_WIDTH_FRAMES = 4
 
@@ -99,7 +99,7 @@ RECORDINGS_DIR = "run_recordings"
 # ============================================================
 # SHOOTING
 # ============================================================
-BLUE_LOW = (101, 198, 22)
+BLUE_LOW = (101, 217, 22)
 BLUE_HIGH = (135, 255, 255)
 
 MIN_TARGET_AREA = 150
