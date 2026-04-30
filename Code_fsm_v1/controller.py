@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import time
+
 from config import (
     BASE_SPEED,
     BLIND_SPEED,
     BLIND_TURN_FRAMES,
     BLIND_TURN_STEER,
     LOW_SPEED,
+    LOW_SPEED_HOLD_SEC,
     SEARCH_FRAMES,
     SEARCH_SPEED,
     SEARCH_TURN_STEER,
@@ -73,6 +76,7 @@ class Controller:
         self.top_low_width_count = 0
         self.low_speed_latched = False
         self.low_speed_just_latched = False
+        self.low_speed_hold_until = 0.0
 
     def _top_slice_requests_low_speed(self, vision_result) -> bool:
         width_top = int(getattr(vision_result, "width_top", 0) or 0)
@@ -118,16 +122,9 @@ class Controller:
 
         return self.last_turn_sign * SEARCH_TURN_STEER
 
-    def _apply_speed_limit(self, speed: float) -> float:
-        if self.low_speed_latched:
-            return min(speed, self.low_speed)
-        return speed
-
     def update(self, vision_result):
         self.low_speed_just_latched = False
-
-        if getattr(vision_result, "t_detected", False):
-            self.low_speed_latched = False
+        now = time.monotonic()
 
         if not self.t_confirmed:
             if getattr(vision_result, "t_detected", False):
@@ -158,11 +155,13 @@ class Controller:
 
             steer_target = self._line_visible_steer_target(vision_result)
             self.steer_cmd = smooth(self.steer_cmd, steer_target, STEER_SMOOTH_ALPHA)
-            use_low_speed = self._top_slice_requests_low_speed(vision_result)
+            request_low_speed = self._top_slice_requests_low_speed(vision_result)
+            if request_low_speed:
+                self.low_speed_hold_until = now + LOW_SPEED_HOLD_SEC
+            use_low_speed = now <= self.low_speed_hold_until
             if use_low_speed and not self.low_speed_latched:
                 self.low_speed_just_latched = True
-            if use_low_speed:
-                self.low_speed_latched = True
+            self.low_speed_latched = use_low_speed
 
             steer_mag = abs(self.steer_cmd)
             if steer_mag > 0.7:
@@ -172,10 +171,13 @@ class Controller:
             else:
                 speed = self.base_speed
 
-            speed = self._apply_speed_limit(speed)
+            if use_low_speed:
+                speed = min(speed, self.low_speed)
         else:
             self.lost_count += 1
             self.top_low_width_count = 0
+            use_low_speed = now <= self.low_speed_hold_until
+            self.low_speed_latched = use_low_speed
 
             if self.lost_count <= BLIND_TURN_FRAMES:
                 self.mode = "BLIND_TURN"
@@ -193,7 +195,8 @@ class Controller:
                 self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.18)
                 speed = 0.0
 
-            speed = self._apply_speed_limit(speed)
+            if use_low_speed:
+                speed = min(speed, self.low_speed)
 
         steer = clamp(self.steer_cmd, -1.0, 1.0)
         left = clamp(speed + self.steer_gain * steer, -1.0, 1.0)
