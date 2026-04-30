@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
+import atexit
 import math
+import signal
 import time
 
 import cv2
@@ -707,6 +709,16 @@ def main() -> None:
     shooter = Shooter()
     video_writer: cv2.VideoWriter | None = None
 
+    def _reload_ammo_on_exit(*_args) -> None:
+        try:
+            shooter.cleanup()
+        except Exception:
+            pass
+
+    atexit.register(_reload_ammo_on_exit)
+    signal.signal(signal.SIGINT, _reload_ammo_on_exit)
+    signal.signal(signal.SIGTERM, _reload_ammo_on_exit)
+
     fsm_state = STATE_LINE_FOLLOW
     aura_started = False
     post_t_until = 0.0
@@ -1069,6 +1081,10 @@ def main() -> None:
             pass
         try:
             shooter.cleanup()
+        except Exception:
+            pass
+        try:
+            atexit.unregister(_reload_ammo_on_exit)
         except Exception:
             pass
         try:

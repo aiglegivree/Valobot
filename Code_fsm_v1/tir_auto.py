@@ -44,7 +44,7 @@ class Shooter:
         self.shots_fired = 0
         self.last_shot_time = 0.0
 
-        self.set_servo_angle(ANGLE_LOADED)
+        self.reload()
         GPIO.output(MOTEUR_PIN, GPIO.LOW)
 
     def set_servo_angle(self, angle: float):
@@ -55,6 +55,9 @@ class Shooter:
 
     def spin_flywheel(self, on: bool):
         GPIO.output(MOTEUR_PIN, GPIO.HIGH if on else GPIO.LOW)
+
+    def reload(self):
+        self.set_servo_angle(ANGLE_LOADED)
 
     def can_shoot(self) -> bool:
         if self.shots_fired >= MAG_CAPACITY:
@@ -87,7 +90,7 @@ class Shooter:
         except Exception:
             pass
         try:
-            self.set_servo_angle(ANGLE_LOADED)
+            self.reload()
         except Exception:
             pass
         try:
