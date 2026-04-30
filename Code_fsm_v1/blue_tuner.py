@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 from camera import Camera
-from config import BLUE_HIGH, BLUE_LOW, MIN_TARGET_AREA
+from config import BLUE_HIGH, BLUE_LOW, MIN_TARGET_AREA, MIN_TARGET_WIDTH
 from leds import LED
 
 
@@ -32,6 +32,7 @@ def create_trackbars():
     cv2.createTrackbar("S high", WINDOW_CONTROLS, BLUE_HIGH[1], 255, nothing)
     cv2.createTrackbar("V high", WINDOW_CONTROLS, BLUE_HIGH[2], 255, nothing)
     cv2.createTrackbar("Min area", WINDOW_CONTROLS, min(MIN_TARGET_AREA, 10000), 10000, nothing)
+    cv2.createTrackbar("Min width", WINDOW_CONTROLS, min(MIN_TARGET_WIDTH, 320), 320, nothing)
 
 
 def get_values() -> dict[str, object]:
@@ -42,6 +43,7 @@ def get_values() -> dict[str, object]:
     s_high = cv2.getTrackbarPos("S high", WINDOW_CONTROLS)
     v_high = cv2.getTrackbarPos("V high", WINDOW_CONTROLS)
     min_area = cv2.getTrackbarPos("Min area", WINDOW_CONTROLS)
+    min_width = cv2.getTrackbarPos("Min width", WINDOW_CONTROLS)
 
     if h_high < h_low:
         h_high = h_low
@@ -54,6 +56,7 @@ def get_values() -> dict[str, object]:
         "blue_low": (h_low, s_low, v_low),
         "blue_high": (h_high, s_high, v_high),
         "min_area": min_area,
+        "min_width": min_width,
     }
 
 
@@ -77,6 +80,8 @@ def detect_blue_targets(frame: np.ndarray, values: dict[str, object]):
             continue
 
         x, y, w, h = cv2.boundingRect(contour)
+        if w < int(values["min_width"]):
+            continue
         targets.append(
             {
                 "area": float(area),
@@ -108,6 +113,7 @@ def save_values_to_config(values: dict[str, object]):
         "BLUE_LOW": repr(tuple(int(v) for v in values["blue_low"])),
         "BLUE_HIGH": repr(tuple(int(v) for v in values["blue_high"])),
         "MIN_TARGET_AREA": str(int(values["min_area"])),
+        "MIN_TARGET_WIDTH": str(int(values["min_width"])),
     }
 
     for key, value in updates.items():
@@ -147,7 +153,8 @@ def main():
             cv2.putText(debug_view, f"BLUE_LOW: {values['blue_low']}", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             cv2.putText(debug_view, f"BLUE_HIGH: {values['blue_high']}", (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
             cv2.putText(debug_view, f"MIN_TARGET_AREA: {values['min_area']}", (10, 105), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
-            cv2.putText(debug_view, f"LEDs: {'ON' if leds_on else 'OFF'} | l toggle | s save config", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_view, f"MIN_TARGET_WIDTH: {values['min_width']}", (10, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            cv2.putText(debug_view, f"LEDs: {'ON' if leds_on else 'OFF'} | l toggle | s save config", (10, 155), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
 
             cv2.imshow(WINDOW_CAMERA, camera_view)
             cv2.imshow(WINDOW_MASK, mask)
