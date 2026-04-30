@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import time
+
 import RPi.GPIO as GPIO
 
-from fsm_config import DRIVE_SPEED_FACTOR
+from fsm_config import DRIVE_ACCEL_LIMIT_PER_SEC, DRIVE_SPEED_FACTOR
 
 # Right motor
 RIGHT_EN = 13
@@ -34,7 +36,21 @@ class MotorDriver:
         self.pwm_right.start(0)
         self.pwm_left.start(0)
 
+        self.last_left_cmd = 0.0
+        self.last_right_cmd = 0.0
+        self.last_update_time = time.monotonic()
+
         self.stop()
+
+    def _limit_accel(self, current: float, target: float, max_step: float) -> float:
+        if max_step <= 0.0:
+            return target
+        delta = target - current
+        if delta > max_step:
+            return current + max_step
+        if delta < -max_step:
+            return current - max_step
+        return target
 
     def _set_one(self, pwm, in1, in2, value: float):
         value = max(-1.0, min(1.0, value))
@@ -53,14 +69,29 @@ class MotorDriver:
         pwm.ChangeDutyCycle(duty)
 
     def set_speeds(self, left: float, right: float):
-        left *= LEFT_TRIM * DRIVE_SPEED_FACTOR
-        right *= RIGHT_TRIM * DRIVE_SPEED_FACTOR
-        self._set_one(self.pwm_left, LEFT_IN1, LEFT_IN2, left)
-        self._set_one(self.pwm_right, RIGHT_IN1, RIGHT_IN2, right)
+        left_target = max(-1.0, min(1.0, left * LEFT_TRIM * DRIVE_SPEED_FACTOR))
+        right_target = max(-1.0, min(1.0, right * RIGHT_TRIM * DRIVE_SPEED_FACTOR))
+
+        now = time.monotonic()
+        dt = max(0.0, now - self.last_update_time)
+        max_step = DRIVE_ACCEL_LIMIT_PER_SEC * dt
+
+        left_limited = self._limit_accel(self.last_left_cmd, left_target, max_step)
+        right_limited = self._limit_accel(self.last_right_cmd, right_target, max_step)
+
+        self._set_one(self.pwm_left, LEFT_IN1, LEFT_IN2, left_limited)
+        self._set_one(self.pwm_right, RIGHT_IN1, RIGHT_IN2, right_limited)
+
+        self.last_left_cmd = left_limited
+        self.last_right_cmd = right_limited
+        self.last_update_time = now
 
     def stop(self):
         self._set_one(self.pwm_left, LEFT_IN1, LEFT_IN2, 0.0)
         self._set_one(self.pwm_right, RIGHT_IN1, RIGHT_IN2, 0.0)
+        self.last_left_cmd = 0.0
+        self.last_right_cmd = 0.0
+        self.last_update_time = time.monotonic()
 
     def cleanup(self):
         self.stop()
