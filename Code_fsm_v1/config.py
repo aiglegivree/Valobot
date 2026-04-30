@@ -99,8 +99,8 @@ RECORDINGS_DIR = "run_recordings"
 # ============================================================
 # BLUE TARGETS
 # ============================================================
-BLUE_LOW_CORRIDOR = (81, 130, 17)
-BLUE_HIGH_CORRIDOR = (114, 255, 255)
+BLUE_LOW_CORRIDOR = (81, 130, 32)
+BLUE_HIGH_CORRIDOR = (114, 255, 99)
 MIN_TARGET_AREA_CORRIDOR = 643
 MIN_TARGET_WIDTH_CORRIDOR = 7
 
