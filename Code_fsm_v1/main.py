@@ -865,6 +865,7 @@ def main() -> None:
 
                 if line_res.any_seen:
                     motors.stop()
+                    set_leds_for_line(leds)
                     second_line_controller.reset()
                     fsm_state = STATE_LINE_TO_SECOND_T
 
