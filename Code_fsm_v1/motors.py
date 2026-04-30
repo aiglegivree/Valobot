@@ -43,6 +43,12 @@ class MotorDriver:
         self.stop()
 
     def _limit_accel(self, current: float, target: float, max_step: float) -> float:
+        if target == 0.0:
+            return 0.0
+        if current != 0.0 and (current > 0.0) != (target > 0.0):
+            return 0.0
+        if abs(target) <= abs(current):
+            return target
         if max_step <= 0.0:
             return target
         delta = target - current
