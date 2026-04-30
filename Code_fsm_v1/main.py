@@ -11,8 +11,12 @@ import numpy as np
 from camera import Camera  # noqa: E402
 from config import (  # noqa: E402
     BAND_THICKNESS,
+    BLUE_HIGH_CORRIDOR,
+    BLUE_LOW_CORRIDOR,
     LOCK_FRAMES_REQUIRED,
     MAG_CAPACITY,
+    MIN_TARGET_AREA_CORRIDOR,
+    MIN_TARGET_WIDTH_CORRIDOR,
     NOMBRE_DE_CIBLES,
     POST_SHOT_CONFIRM_FRAMES,
     POST_SHOT_SETTLE_TIME,
@@ -778,7 +782,13 @@ def main() -> None:
                     fsm_state = STATE_CORRIDOR_FOLLOW
 
             elif fsm_state == STATE_CORRIDOR_FOLLOW:
-                blue_mask, blue_targets = detect_blue_targets(frame)
+                blue_mask, blue_targets = detect_blue_targets(
+                    frame,
+                    blue_low=BLUE_LOW_CORRIDOR,
+                    blue_high=BLUE_HIGH_CORRIDOR,
+                    min_target_area=MIN_TARGET_AREA_CORRIDOR,
+                    min_target_width=MIN_TARGET_WIDTH_CORRIDOR,
+                )
                 if blue_targets:
                     blue_detect_frames += 1
                     if blue_detect_frames >= BLUE_DETECT_CONFIRM_FRAMES:
@@ -815,7 +825,13 @@ def main() -> None:
                     cv2.putText(main_vis, f"Blue confirm: {blue_detect_frames}/{BLUE_DETECT_CONFIRM_FRAMES}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
             elif fsm_state == STATE_BLUE_TO_T:
-                blue_mask, blue_targets = detect_blue_targets(frame)
+                blue_mask, blue_targets = detect_blue_targets(
+                    frame,
+                    blue_low=BLUE_LOW_CORRIDOR,
+                    blue_high=BLUE_HIGH_CORRIDOR,
+                    min_target_area=MIN_TARGET_AREA_CORRIDOR,
+                    min_target_width=MIN_TARGET_WIDTH_CORRIDOR,
+                )
                 right_turn_sign = TURN_SIGN * 1.0
                 motors.set_speeds(
                     right_turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
@@ -841,7 +857,13 @@ def main() -> None:
                     fsm_state = STATE_LINE_TO_SECOND_T
 
             elif fsm_state == STATE_LINE_TO_SECOND_T:
-                blue_mask, blue_targets = detect_blue_targets(frame)
+                blue_mask, blue_targets = detect_blue_targets(
+                    frame,
+                    blue_low=BLUE_LOW_CORRIDOR,
+                    blue_high=BLUE_HIGH_CORRIDOR,
+                    min_target_area=MIN_TARGET_AREA_CORRIDOR,
+                    min_target_width=MIN_TARGET_WIDTH_CORRIDOR,
+                )
                 left, right, _, _, line_mode = second_line_controller.update(line_res)
                 if line_mode == "T_STOP":
                     motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)

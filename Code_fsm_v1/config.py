@@ -97,13 +97,27 @@ RECORD_RUN_FPS = 20.0
 RECORDINGS_DIR = "run_recordings"
 
 # ============================================================
+# BLUE TARGETS
+# ============================================================
+BLUE_LOW_CORRIDOR = (101, 217, 22)
+BLUE_HIGH_CORRIDOR = (135, 255, 255)
+MIN_TARGET_AREA_CORRIDOR = 150
+MIN_TARGET_WIDTH_CORRIDOR = 12
+
+BLUE_LOW_SHOOTING = (101, 217, 22)
+BLUE_HIGH_SHOOTING = (135, 255, 255)
+MIN_TARGET_AREA_SHOOTING = 150
+MIN_TARGET_WIDTH_SHOOTING = 12
+
+# Backward-compatible aliases. Keep these mapped to the shooting profile.
+BLUE_LOW = BLUE_LOW_SHOOTING
+BLUE_HIGH = BLUE_HIGH_SHOOTING
+MIN_TARGET_AREA = MIN_TARGET_AREA_SHOOTING
+MIN_TARGET_WIDTH = MIN_TARGET_WIDTH_SHOOTING
+
+# ============================================================
 # SHOOTING
 # ============================================================
-BLUE_LOW = (101, 217, 22)
-BLUE_HIGH = (135, 255, 255)
-
-MIN_TARGET_AREA = 150
-MIN_TARGET_WIDTH = 12
 CENTER_TOL = 18
 LOCK_FRAMES_REQUIRED = 5
 TARGET_MATCH_DIST_PX = 40

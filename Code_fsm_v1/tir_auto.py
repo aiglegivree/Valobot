@@ -11,12 +11,12 @@ from config import (
     ANGLE_FIRE_START,
     ANGLE_INCREMENT,
     ANGLE_LOADED,
-    BLUE_HIGH,
-    BLUE_LOW,
+    BLUE_HIGH_SHOOTING,
+    BLUE_LOW_SHOOTING,
     CENTER_TOL,
     MAG_CAPACITY,
-    MIN_TARGET_AREA,
-    MIN_TARGET_WIDTH,
+    MIN_TARGET_AREA_SHOOTING,
+    MIN_TARGET_WIDTH_SHOOTING,
     MIN_TIME_BETWEEN_SHOTS,
     MOTEUR_PIN,
     POST_SHOT_CONFIRM_FRAMES,
@@ -102,11 +102,16 @@ class Shooter:
 
 def detect_blue_targets(
     frame: np.ndarray,
+    *,
+    blue_low: tuple[int, int, int] = BLUE_LOW_SHOOTING,
+    blue_high: tuple[int, int, int] = BLUE_HIGH_SHOOTING,
+    min_target_area: int = MIN_TARGET_AREA_SHOOTING,
+    min_target_width: int = MIN_TARGET_WIDTH_SHOOTING,
     min_ratio: float | None = None,
     max_ratio: float | None = None,
 ):
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    mask = cv2.inRange(hsv, BLUE_LOW, BLUE_HIGH)
+    mask = cv2.inRange(hsv, blue_low, blue_high)
 
     kernel = np.ones((5, 5), np.uint8)
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
@@ -117,13 +122,13 @@ def detect_blue_targets(
     targets = []
     for contour in contours:
         area = cv2.contourArea(contour)
-        if area < MIN_TARGET_AREA:
+        if area < min_target_area:
             continue
 
         x, y, w, h = cv2.boundingRect(contour)
         if w <= 0 or h <= 0:
             continue
-        if w < MIN_TARGET_WIDTH:
+        if w < min_target_width:
             continue
 
         ratio = min(w, h) / max(w, h)
