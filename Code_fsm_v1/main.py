@@ -931,9 +931,9 @@ def main() -> None:
                 aux_vis = build_t_blue_debug(line_res, None)
                 if now >= post_second_t_until:
                     motors.stop()
+                    music_player.play("tir.wav")
                     shooter.spin_flywheel(True)
                     time.sleep(FLYWHEEL_SPINUP_TIME)
-                    music_player.play("tir.wav")
                     fsm_state = STATE_SHOOTING
                     lock_frames = 0
                     last_target_center = None
