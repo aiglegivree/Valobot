@@ -30,6 +30,7 @@ from config import (  # noqa: E402
 )
 from controller import Controller  # noqa: E402
 from leds import LED  # noqa: E402
+from music import MusicPlayer  # noqa: E402
 from motors import MotorDriver  # noqa: E402
 from tir_auto import (  # noqa: E402
     Shooter,
@@ -86,6 +87,10 @@ from fsm_config import (  # noqa: E402
     T_LIM_TIME,
     USE_CORRIDOR_LEDS,
     USE_LEDS,
+    USE_MUSIC,
+    MUSIC_BACKEND,
+    MUSIC_DEBUG,
+    MUSIC_SINK,
     USE_SHOOTING_LEDS,
     WINDOW_SCALE,
 )
@@ -706,6 +711,12 @@ def main() -> None:
     corridor_controller = CorridorController()
     motors = MotorDriver()
     leds = LED() if USE_LEDS else None
+    music_player = MusicPlayer(
+        enabled=USE_MUSIC,
+        backend=MUSIC_BACKEND,
+        sink=MUSIC_SINK,
+        debug=MUSIC_DEBUG,
+    )
     shooter = Shooter()
     video_writer: cv2.VideoWriter | None = None
 
@@ -791,6 +802,7 @@ def main() -> None:
                 if now >= post_t_until:
                     motors.stop()
                     corridor_controller.reset()
+                    music_player.play("couloir.wav")
                     fsm_state = STATE_CORRIDOR_FOLLOW
 
             elif fsm_state == STATE_CORRIDOR_FOLLOW:
@@ -921,6 +933,7 @@ def main() -> None:
                     motors.stop()
                     shooter.spin_flywheel(True)
                     time.sleep(FLYWHEEL_SPINUP_TIME)
+                    music_player.play("tir.wav")
                     fsm_state = STATE_SHOOTING
                     lock_frames = 0
                     last_target_center = None
@@ -1078,6 +1091,10 @@ def main() -> None:
         try:
             if leds is not None:
                 leds.aura_farm_stop()
+        except Exception:
+            pass
+        try:
+            music_player.stop()
         except Exception:
             pass
         try:
