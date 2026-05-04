@@ -80,6 +80,9 @@ from fsm_config import (  # noqa: E402
     FIRST_T_STRAIGHT_SEC,
     FIRST_T_STRAIGHT_SPEED,
     HIT_AREA_RATIO_THRESHOLD,
+    POST_SHOOT_DRIVE_SEC,
+    POST_SHOOT_DRIVE_SPEED,
+    POST_SHOOT_STEER_DELTA,
     PREFER_LINE_WHEN_VISIBLE,
     RECORDINGS_DIR,
     RECORD_RUN_FPS,
@@ -110,6 +113,7 @@ STATE_BLUE_TO_T = "BLUE_TO_T"
 STATE_LINE_TO_SECOND_T = "LINE_TO_SECOND_T"
 STATE_POST_SECOND_T_STRAIGHT = "POST_SECOND_T_STRAIGHT"
 STATE_SHOOTING = "SHOOTING"
+STATE_POST_SHOOT_DRIVE = "POST_SHOOT_DRIVE"
 STATE_AURA = "AURA"
 
 MODE_LINE = "LINE"
@@ -779,6 +783,7 @@ def main() -> None:
     aura_started = False
     post_t_until = 0.0
     post_second_t_until = 0.0
+    post_shoot_until = 0.0
 
     lock_frames = 0
     last_target_center = None
@@ -789,6 +794,7 @@ def main() -> None:
     confirm_delay_frames = 0
     targets_hit = 0
     blue_detect_frames = 0
+    post_shoot_turn_sign = 1
 
     if SHOW_DEBUG:
         setup_windows()
@@ -936,6 +942,7 @@ def main() -> None:
                     min_target_width=MIN_TARGET_WIDTH_CORRIDOR,
                 )
                 left, right, _, _, line_mode = second_line_controller.update(line_res)
+                post_shoot_turn_sign = second_line_controller.last_turn_sign
                 if second_line_controller.t_confirmed:
                     motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
                     post_second_t_until = now + T_LIM_TIME
@@ -1091,7 +1098,8 @@ def main() -> None:
                     motors.set_speeds(0, 0)
                     shooter.spin_flywheel(False)
                     time.sleep(0.2)
-                    fsm_state = STATE_AURA
+                    post_shoot_until = now + POST_SHOOT_DRIVE_SEC
+                    fsm_state = STATE_POST_SHOOT_DRIVE
 
                 main_vis = frame.copy()
                 for t in targets:
@@ -1106,6 +1114,22 @@ def main() -> None:
                 cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"PENDING: {pending_shot}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 aux_vis = blue_mask
+
+            elif fsm_state == STATE_POST_SHOOT_DRIVE:
+                left = clamp(POST_SHOOT_DRIVE_SPEED + (POST_SHOOT_STEER_DELTA * post_shoot_turn_sign), -1.0, 1.0)
+                right = clamp(POST_SHOOT_DRIVE_SPEED - (POST_SHOOT_STEER_DELTA * post_shoot_turn_sign), -1.0, 1.0)
+                motors.set_speeds(left, right)
+                set_leds_for_line(leds)
+                main_vis = frame.copy()
+                remaining = max(0.0, post_shoot_until - now)
+                direction_label = "RIGHT" if post_shoot_turn_sign > 0 else "LEFT"
+                cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Drive after shooting: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Remembered line direction: {direction_label}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
+                if now >= post_shoot_until:
+                    motors.stop()
+                    fsm_state = STATE_AURA
 
             elif fsm_state == STATE_AURA:
                 aura_started = fail_stop(motors, leds, aura_started)
