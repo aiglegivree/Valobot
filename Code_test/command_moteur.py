@@ -15,8 +15,8 @@ from motors import MotorDriver
 picam2 = Picamera2()
 picam2.start()
 
-SPEED = 0.40
-DELTA = 1.2
+SPEED = 0.70
+DELTA = 1.0
 KEY_TIMEOUT = 0.15
 TURN_DURATION = 0.50
 

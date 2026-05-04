@@ -99,9 +99,9 @@ RECORDINGS_DIR = "run_recordings"
 # ============================================================
 # BLUE TARGETS
 # ============================================================
-BLUE_LOW_CORRIDOR = (81, 130, 32)
+BLUE_LOW_CORRIDOR = (81, 130, 22)
 BLUE_HIGH_CORRIDOR = (114, 255, 99)
-MIN_TARGET_AREA_CORRIDOR = 400
+MIN_TARGET_AREA_CORRIDOR = 450
 MIN_TARGET_WIDTH_CORRIDOR = 7
 
 BLUE_LOW_SHOOTING = (101, 208, 22)
@@ -118,7 +118,7 @@ MIN_TARGET_WIDTH = MIN_TARGET_WIDTH_SHOOTING
 # ============================================================
 # SHOOTING
 # ============================================================
-CENTER_TOL = 10
+CENTER_TOL = 8
 LOCK_FRAMES_REQUIRED = 5
 TARGET_MATCH_DIST_PX = 40
 TARGET_LOCK_MISS_FRAMES = 10
@@ -133,8 +133,8 @@ ANGLE_LOADED = 21
 ANGLE_FIRE_START = 10
 ANGLE_INCREMENT = 23
 
-MAG_CAPACITY = 7
+MAG_CAPACITY = 3
 MIN_TIME_BETWEEN_SHOTS = 0.8
 POST_SHOT_SETTLE_TIME = 0.2
 POST_SHOT_CONFIRM_FRAMES = 4
-NOMBRE_DE_CIBLES = 3
+NOMBRE_DE_CIBLES = 2

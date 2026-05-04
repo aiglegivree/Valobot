@@ -66,5 +66,14 @@ class LED:
         GPIO.cleanup()
         
 led = LED() 
+
 while True :
 	led.turn_on_all()
+
+
+"""
+led.aura_farm_start()
+while True :
+	led.aura_farm_step()
+	time.sleep(0.02)
+	"""
