@@ -390,7 +390,6 @@ class CorridorController:
     def __init__(self):
         self.vision = CorridorVision()
         self.state = "FORWARD"
-        self.search_lines_latched = False
         self.turn_phase = 0
         self.turn_direction = DEFAULT_TURN_DIRECTION
         self.command_left = 0.0
@@ -402,7 +401,6 @@ class CorridorController:
 
     def reset(self) -> None:
         self.state = "FORWARD"
-        self.search_lines_latched = False
         self.turn_phase = 0
         self.turn_direction = DEFAULT_TURN_DIRECTION
         self.command_left = 0.0
@@ -457,7 +455,6 @@ class CorridorController:
                 self.turn_deadline = now + TURN_DURATION_SEC
             elif not current_any_line:
                 self.state = "SEARCH_LINES"
-                self.search_lines_latched = True
                 self.search_turn_direction = "RIGHT"
                 self.search_turn_until = now + NO_LINE_SEARCH_TURN_SEC
                 self.command_left, self.command_right = self.no_line_search_wheels()
@@ -544,10 +541,16 @@ class CorridorController:
                     self.blind_until = now + TURN_BLIND_SEC + TURN_RETRY_BLIND_EXTRA_SEC
                     self.turn_deadline = now + (TURN_DURATION_SEC * TURN_RETRY_DURATION_MULTIPLIER)
         elif self.state == "SEARCH_LINES":
-            if now >= self.search_turn_until:
-                self.search_turn_direction = "LEFT" if self.search_turn_direction == "RIGHT" else "RIGHT"
-                self.search_turn_until = now + NO_LINE_SEARCH_TURN_SEC
-            self.command_left, self.command_right = self.no_line_search_wheels()
+            if current_any_line:
+                self.state = "FORWARD"
+                self.command_left = 0.0
+                self.command_right = 0.0
+                self.search_turn_until = 0.0
+            else:
+                if now >= self.search_turn_until:
+                    self.search_turn_direction = "LEFT" if self.search_turn_direction == "RIGHT" else "RIGHT"
+                    self.search_turn_until = now + NO_LINE_SEARCH_TURN_SEC
+                self.command_left, self.command_right = self.no_line_search_wheels()
         else:
             self.command_left = 0.0
             self.command_right = 0.0
@@ -825,39 +828,6 @@ def main() -> None:
                         aux_vis = build_t_blue_debug(line_res, blue_mask)
                     else:
                         left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
-                        if corridor_controller.search_lines_latched and line_res.any_seen:
-                            motors.stop()
-                            set_leds_for_line(leds)
-                            second_line_controller.reset()
-                            fsm_state = STATE_LINE_TO_SECOND_T
-                            main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
-                            aux_vis = build_t_blue_debug(line_res, blue_mask)
-                            cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                            cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                            cv2.putText(main_vis, "Line reacquired after corridor search", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                        else:
-                            motors.set_speeds(left, right)
-                            set_leds_for_corridor(leds)
-                            aura_started = False
-                            aux_vis = build_t_blue_debug(line_res, blue_mask)
-                            cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                            cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                            cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                            cv2.putText(main_vis, f"Blue confirm: {blue_detect_frames}/{BLUE_DETECT_CONFIRM_FRAMES}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                else:
-                    blue_detect_frames = 0
-                    left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
-                    if corridor_controller.search_lines_latched and line_res.any_seen:
-                        motors.stop()
-                        set_leds_for_line(leds)
-                        second_line_controller.reset()
-                        fsm_state = STATE_LINE_TO_SECOND_T
-                        main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
-                        aux_vis = build_t_blue_debug(line_res, blue_mask)
-                        cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                        cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                        cv2.putText(main_vis, "Line reacquired after corridor search", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
-                    else:
                         motors.set_speeds(left, right)
                         set_leds_for_corridor(leds)
                         aura_started = False
@@ -866,6 +836,17 @@ def main() -> None:
                         cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                         cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                         cv2.putText(main_vis, f"Blue confirm: {blue_detect_frames}/{BLUE_DETECT_CONFIRM_FRAMES}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                else:
+                    blue_detect_frames = 0
+                    left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(frame, now)
+                    motors.set_speeds(left, right)
+                    set_leds_for_corridor(leds)
+                    aura_started = False
+                    aux_vis = build_t_blue_debug(line_res, blue_mask)
+                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Nav mode: {MODE_CORRIDOR}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
+                    cv2.putText(main_vis, f"Blue confirm: {blue_detect_frames}/{BLUE_DETECT_CONFIRM_FRAMES}", (10, 199), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
 
             elif fsm_state == STATE_BLUE_TO_T:
                 blue_mask, blue_targets = detect_blue_targets(
