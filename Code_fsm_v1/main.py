@@ -862,7 +862,8 @@ def main() -> None:
                     cv2.rectangle(main_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
                     cv2.circle(main_vis, (target["cx"], target["cy"]), 4, (0, 0, 255), -1)
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-                cv2.putText(main_vis, "Action: right turn while blue is visible", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                action_label = "Action: right turn while blue is visible" if blue_targets else "Action: left turn until blue or line is found"
+                cv2.putText(main_vis, action_label, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Blue targets: {len(blue_targets)}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Line seen this frame: {'YES' if line_res.any_seen else 'NO'}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
                 aux_vis = build_t_blue_debug(line_res, blue_mask)
@@ -872,16 +873,11 @@ def main() -> None:
                     set_leds_for_line(leds)
                     second_line_controller.reset()
                     fsm_state = STATE_LINE_TO_SECOND_T
-                elif not blue_targets:
-                    motors.stop()
-                    set_leds_for_line(leds)
-                    second_line_controller.reset()
-                    fsm_state = STATE_LINE_TO_SECOND_T
                 else:
-                    right_turn_sign = TURN_SIGN * 1.0
+                    turn_sign = TURN_SIGN * (1.0 if blue_targets else -1.0)
                     motors.set_speeds(
-                        right_turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
-                        -right_turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
+                        turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
+                        -turn_sign * BLUE_TO_T_RIGHT_TURN_SPEED,
                     )
                     set_leds_for_corridor(leds)
                     aura_started = False
