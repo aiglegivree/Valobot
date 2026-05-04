@@ -891,7 +891,7 @@ def main() -> None:
                     min_target_width=MIN_TARGET_WIDTH_CORRIDOR,
                 )
                 left, right, _, _, line_mode = second_line_controller.update(line_res)
-                if line_mode == "T_STOP":
+                if second_line_controller.t_confirmed:
                     motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
                     post_second_t_until = now + T_LIM_TIME
                     fsm_state = STATE_POST_SECOND_T_STRAIGHT
