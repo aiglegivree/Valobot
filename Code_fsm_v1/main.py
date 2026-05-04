@@ -52,6 +52,7 @@ from corridor_config import (  # noqa: E402
     FORWARD_LEFT_SCALE,
     FORWARD_RIGHT_SCALE,
     HORIZONTAL_LINE_HEIGHT_JUMP_PX,
+    LINE_CHANGING_RIGHT_TURN_SEC,
     LINE_CHANGING_WARNING_SEC,
     MAX_STEER_DELTA,
     MEDIAN_HISTORY_FRAMES,
@@ -413,6 +414,7 @@ class CorridorController:
         self.turn_deadline = 0.0
         self.search_turn_direction = "RIGHT"
         self.search_turn_until = 0.0
+        self.line_change_turn_until = 0.0
 
     def reset(self) -> None:
         self.state = "FORWARD"
@@ -424,6 +426,7 @@ class CorridorController:
         self.turn_deadline = 0.0
         self.search_turn_direction = "RIGHT"
         self.search_turn_until = 0.0
+        self.line_change_turn_until = 0.0
         self.vision.reset_for_forward()
 
     def forward_wheels(self, correction: float) -> tuple[float, float]:
@@ -451,6 +454,16 @@ class CorridorController:
 
     def update(self, frame: np.ndarray, now: float) -> tuple[float, float, np.ndarray, np.ndarray, str]:
         vision = self.vision.process(frame, now)
+        _, blue_targets = detect_blue_targets(
+            frame,
+            blue_low=BLUE_LOW_CORRIDOR,
+            blue_high=BLUE_HIGH_CORRIDOR,
+            min_target_area=MIN_TARGET_AREA_CORRIDOR,
+            min_target_width=MIN_TARGET_WIDTH_CORRIDOR,
+        )
+        blue_targets_seen = bool(blue_targets)
+        if blue_targets_seen:
+            self.line_change_turn_until = 0.0
         current_any_line = (
             vision["current_lines"]["left"] is not None
             or vision["current_lines"]["right"] is not None
@@ -458,7 +471,14 @@ class CorridorController:
         )
 
         if self.state == "FORWARD":
-            if bool(vision["turn_trigger"]):
+            if bool(vision["line_changing_detected"]) and not blue_targets_seen:
+                self.line_change_turn_until = now + LINE_CHANGING_RIGHT_TURN_SEC
+
+            if self.line_change_turn_until > now and not blue_targets_seen:
+                turn_sign = TURN_SIGN * 1
+                self.command_left = turn_sign * TURN_SPEED
+                self.command_right = -turn_sign * TURN_SPEED
+            elif bool(vision["turn_trigger"]):
                 self.state = "TURN"
                 self.turn_phase = 1
                 self.turn_direction = str(vision["turn_direction"])
