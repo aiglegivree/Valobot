@@ -15,6 +15,7 @@ from config import (
     BLUE_LOW_SHOOTING,
     CENTER_TOL,
     MAG_CAPACITY,
+    MIN_AIM_TURN_SPEED,
     MIN_TARGET_AREA_SHOOTING,
     MIN_TARGET_WIDTH_SHOOTING,
     MIN_TIME_BETWEEN_SHOTS,
@@ -211,7 +212,7 @@ def aim_to_target(motors: MotorDriver, target):
 
     max_err = max(W / 2.0, 1.0)
     err_ratio = min(abs(err) / max_err, 1.0)
-    turn_speed = 0.25 + (TURN_SPEED - 0.25) * err_ratio
+    turn_speed = MIN_AIM_TURN_SPEED + (TURN_SPEED - MIN_AIM_TURN_SPEED) * err_ratio
     if err > 0:
         motors.set_speeds(turn_speed, -turn_speed)
     else:
