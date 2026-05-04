@@ -51,6 +51,8 @@ from corridor_config import (  # noqa: E402
     FORWARD_BASE_SPEED,
     FORWARD_LEFT_SCALE,
     FORWARD_RIGHT_SCALE,
+    HORIZONTAL_LINE_HEIGHT_JUMP_PX,
+    LINE_CHANGING_WARNING_SEC,
     MAX_STEER_DELTA,
     MEDIAN_HISTORY_FRAMES,
     NO_LINE_SEARCH_TURN_SEC,
@@ -269,6 +271,8 @@ class CorridorVision:
             "right": 0.0,
         }
         self.turn_direction = DEFAULT_TURN_DIRECTION
+        self.last_blue_y_center: float | None = None
+        self.line_changing_warning_until = 0.0
 
     def reset_for_forward(self) -> None:
         self.turn_direction = DEFAULT_TURN_DIRECTION
@@ -354,6 +358,15 @@ class CorridorVision:
         blue_line = stable_lines["infront"]
         blue_y_center = hough_y_at_x(blue_line, W / 2.0) if blue_line is not None else None
         blue_tilt = line_tilt_px(blue_line, W) if blue_line is not None else None
+        line_changing_detected = False
+        if blue_y_center is not None and self.last_blue_y_center is not None:
+            if abs(float(blue_y_center) - self.last_blue_y_center) >= HORIZONTAL_LINE_HEIGHT_JUMP_PX:
+                self.line_changing_warning_until = now + LINE_CHANGING_WARNING_SEC
+                line_changing_detected = True
+        if blue_y_center is not None:
+            self.last_blue_y_center = float(blue_y_center)
+        else:
+            self.last_blue_y_center = None
 
         return {
             "edges": edges,
@@ -383,6 +396,8 @@ class CorridorVision:
             ),
             "current_side_count": int(current_lines["left"] is not None) + int(current_lines["right"] is not None),
             "turn_direction": self.turn_direction,
+            "line_changing_detected": line_changing_detected,
+            "line_changing_warning_active": now < self.line_changing_warning_until,
         }
 
 
@@ -617,6 +632,16 @@ class CorridorController:
         cv2.putText(overlay, f"Corridor state: {self.state}", (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         cv2.putText(overlay, f"Turn direction var: {vision['turn_direction']}", (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
         cv2.putText(overlay, f"Cmd L/R: {self.command_left:.2f} / {self.command_right:.2f}", (10, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        if bool(vision.get("line_changing_warning_active", False)):
+            cv2.putText(
+                overlay,
+                "LINE CHANGING",
+                (18, H // 2),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.2,
+                (0, 0, 255),
+                4,
+            )
         return overlay
 
 
