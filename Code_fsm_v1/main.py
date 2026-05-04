@@ -82,7 +82,6 @@ from fsm_config import (  # noqa: E402
     HIT_AREA_RATIO_THRESHOLD,
     POST_SHOOT_DRIVE_SEC,
     POST_SHOOT_DRIVE_SPEED,
-    POST_SHOOT_STEER_DELTA,
     PREFER_LINE_WHEN_VISIBLE,
     RECORDINGS_DIR,
     RECORD_RUN_FPS,
@@ -1116,9 +1115,7 @@ def main() -> None:
                 aux_vis = blue_mask
 
             elif fsm_state == STATE_POST_SHOOT_DRIVE:
-                left = clamp(POST_SHOOT_DRIVE_SPEED + (POST_SHOOT_STEER_DELTA * post_shoot_turn_sign), -1.0, 1.0)
-                right = clamp(POST_SHOOT_DRIVE_SPEED - (POST_SHOOT_STEER_DELTA * post_shoot_turn_sign), -1.0, 1.0)
-                motors.set_speeds(left, right)
+                motors.set_speeds(POST_SHOOT_DRIVE_SPEED, POST_SHOOT_DRIVE_SPEED)
                 set_leds_for_line(leds)
                 main_vis = frame.copy()
                 remaining = max(0.0, post_shoot_until - now)
@@ -1126,6 +1123,7 @@ def main() -> None:
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Drive after shooting: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Remembered line direction: {direction_label}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                cv2.putText(main_vis, "Action: straight drive", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
                 if now >= post_shoot_until:
                     motors.stop()
