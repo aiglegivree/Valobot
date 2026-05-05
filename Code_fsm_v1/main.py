@@ -90,6 +90,9 @@ from fsm_config import (  # noqa: E402
     RECORD_RUN_FPS,
     RECORD_RUN_VIDEO,
     RETURN_T_IGNORE_SECONDS,
+    SHOOT_SEARCH_BASE_SEC,
+    SHOOT_SEARCH_SEC_INCREMENT,
+    SHOOT_SEARCH_TURN_SPEED,
     SHOOT_STUCK_BOOST_SEC,
     SHOOT_STUCK_BOOST_SPEED,
     SHOOT_STUCK_TARGET_DELTA_PX,
@@ -909,6 +912,9 @@ def main() -> None:
     aim_stuck_since = 0.0
     aim_last_motion_center: tuple[int, int] | None = None
     aim_boost_until = 0.0
+    shoot_search_direction = 1
+    shoot_search_step = 0
+    shoot_search_until = 0.0
 
     if SHOW_DEBUG:
         setup_windows()
@@ -1112,6 +1118,9 @@ def main() -> None:
                     aim_stuck_since = 0.0
                     aim_last_motion_center = None
                     aim_boost_until = 0.0
+                    shoot_search_direction = 1
+                    shoot_search_step = 0
+                    shoot_search_until = 0.0
 
             elif fsm_state == STATE_SHOOTING:
                 set_leds_for_shooting(leds)
@@ -1121,6 +1130,7 @@ def main() -> None:
                     aim_stuck_since = 0.0
                     aim_last_motion_center = None
                     aim_boost_until = 0.0
+                    shoot_search_until = 0.0
                     if confirm_delay_frames > 0:
                         confirm_delay_frames -= 1
                         motors.set_speeds(0, 0)
@@ -1175,10 +1185,10 @@ def main() -> None:
                                 "cy": target["cy"],
                                 "area": target["area"],
                             }
+                            shoot_search_until = 0.0
 
                     if target is None:
                         if locked_target_ref is not None:
-                            motors.set_speeds(0, 0)
                             lock_frames = 0
                             aim_stuck_since = 0.0
                             aim_last_motion_center = None
@@ -1192,17 +1202,28 @@ def main() -> None:
                                     "area": target["area"],
                                 }
                                 locked_target_miss_count = 0
+                                shoot_search_until = 0.0
 
                     if target is None:
-                        if locked_target_ref is None:
-                            motors.set_speeds(0, 0)
-                            lock_frames = 0
-                            last_target_center = None
-                            locked_target_miss_count = 0
-                            aim_stuck_since = 0.0
-                            aim_last_motion_center = None
-                            aim_boost_until = 0.0
+                        lock_frames = 0
+                        last_target_center = None
+                        aim_stuck_since = 0.0
+                        aim_last_motion_center = None
+                        aim_boost_until = 0.0
+                        if now >= shoot_search_until:
+                            search_duration = SHOOT_SEARCH_BASE_SEC + (shoot_search_step * SHOOT_SEARCH_SEC_INCREMENT)
+                            shoot_search_direction = 1 if (shoot_search_step % 2) == 0 else -1
+                            shoot_search_until = now + search_duration
+                            shoot_search_step += 1
+                        turn_sign = 1.0 if shoot_search_direction > 0 else -1.0
+                        motors.set_speeds(
+                            turn_sign * SHOOT_SEARCH_TURN_SPEED,
+                            -turn_sign * SHOOT_SEARCH_TURN_SPEED,
+                        )
                     else:
+                        shoot_search_until = 0.0
+                        shoot_search_direction = 1
+                        shoot_search_step = 0
                         last_target_center = (target["cx"], target["cy"])
                         locked, err = aim_to_target(motors, target)
                         current_center = (target["cx"], target["cy"])
@@ -1284,6 +1305,10 @@ def main() -> None:
                 cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"PENDING: {pending_shot}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"AIM BOOST: {'ON' if now < aim_boost_until else 'OFF'}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                if not pending_shot and not targets:
+                    direction_label = "RIGHT" if shoot_search_direction > 0 else "LEFT"
+                    remaining = max(0.0, shoot_search_until - now)
+                    cv2.putText(main_vis, f"SEARCH: {direction_label} {remaining:.2f}s", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 aux_vis = blue_mask
 
             elif fsm_state == STATE_POST_SHOOT_DRIVE:
