@@ -590,9 +590,9 @@ class CorridorController:
 
     def single_wall_search_wheels(self, visible_side: str) -> tuple[float, float]:
         if visible_side == "left":
-            return self.forward_wheels(-SINGLE_WALL_SEARCH_DELTA)
-        if visible_side == "right":
             return self.forward_wheels(SINGLE_WALL_SEARCH_DELTA)
+        if visible_side == "right":
+            return self.forward_wheels(-SINGLE_WALL_SEARCH_DELTA)
         return self.forward_wheels(0.0)
 
     def update(
