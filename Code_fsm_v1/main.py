@@ -395,10 +395,13 @@ class CorridorVision:
                 categories["infront"].append((rho, theta))
         return categories
 
-    def process(self, frame: np.ndarray, now: float) -> dict[str, object]:
+    def process(self, frame: np.ndarray, now: float, *, use_lateral_lines: bool = True) -> dict[str, object]:
         edges = self.detect_edges(frame)
         raw_lines = self.detect_hough_lines(edges)
         categories = self.classify_lines(raw_lines)
+        if not use_lateral_lines:
+            categories["left"] = []
+            categories["right"] = []
         current_lines = {key: median_line(values) for key, values in categories.items()}
         stable_lines: dict[str, tuple[float, float] | None] = {}
         for key, line in current_lines.items():
@@ -533,7 +536,7 @@ class CorridorController:
         return self.forward_wheels(0.0)
 
     def update(self, frame: np.ndarray, now: float) -> tuple[float, float, np.ndarray, np.ndarray, str]:
-        vision = self.vision.process(frame, now)
+        vision = self.vision.process(frame, now, use_lateral_lines=(self.state != "TURN"))
         _, blue_targets = detect_blue_targets(
             frame,
             blue_low=BLUE_LOW_CORRIDOR,
