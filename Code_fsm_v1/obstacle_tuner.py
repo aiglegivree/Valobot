@@ -14,6 +14,10 @@ WINDOW_CAMERA = "Obstacle Camera"
 WINDOW_EDGES = "Obstacle Edges"
 WINDOW_DEBUG = "Obstacle Debug"
 
+FRONT_BOTH_COLOR = (255, 0, 0)
+FRONT_RIGHT_ONLY_COLOR = (255, 0, 255)
+FRONT_LEFT_ONLY_COLOR = (255, 255, 0)
+
 
 def nothing(_):
     pass
@@ -74,17 +78,92 @@ def hough_line_endpoints(rho: float, theta: float, length: int = 1000) -> tuple[
     return (x1, y1), (x2, y2)
 
 
-def classify_line(theta_deg: float, values: dict[str, int]) -> tuple[str, tuple[int, int, int]] | None:
+def hough_y_at_x(line: tuple[float, float], x: float) -> float | None:
+    rho, theta = line
+    a = math.cos(theta)
+    b = math.sin(theta)
+    if abs(b) < 1e-6:
+        return None
+    return float((rho - a * x) / b)
+
+
+def front_line_side_presence(
+    edges: np.ndarray,
+    line: tuple[float, float] | None,
+    *,
+    samples: int = 80,
+    band_radius: int = 2,
+    min_hits: int = 4,
+) -> str:
+    if line is None:
+        return "NONE"
+
+    height, width = edges.shape[:2]
+    if width <= 0 or height <= 0:
+        return "NONE"
+
+    left_hits = 0
+    right_hits = 0
+    sample_count = max(samples, 2)
+    for sample_index in range(sample_count):
+        x = int(round((sample_index / (sample_count - 1)) * (width - 1)))
+        y_value = hough_y_at_x(line, x)
+        if y_value is None:
+            continue
+        y = int(round(y_value))
+        if not (0 <= y < height):
+            continue
+
+        x0 = max(0, x - band_radius)
+        x1 = min(width, x + band_radius + 1)
+        y0 = max(0, y - band_radius)
+        y1 = min(height, y + band_radius + 1)
+        if np.any(edges[y0:y1, x0:x1] > 0):
+            if x < (width / 2.0):
+                left_hits += 1
+            else:
+                right_hits += 1
+
+    left_present = left_hits >= min_hits
+    right_present = right_hits >= min_hits
+    if left_present and right_present:
+        return "BOTH"
+    if right_present:
+        return "RIGHT_ONLY"
+    if left_present:
+        return "LEFT_ONLY"
+    return "NONE"
+
+
+def front_line_color(side_presence: str) -> tuple[int, int, int]:
+    if side_presence == "RIGHT_ONLY":
+        return FRONT_RIGHT_ONLY_COLOR
+    if side_presence == "LEFT_ONLY":
+        return FRONT_LEFT_ONLY_COLOR
+    return FRONT_BOTH_COLOR
+
+
+def merge_front_side_presence(current: str, new: str) -> str:
+    if new == "NONE":
+        return current
+    if current == "NONE":
+        return new
+    if current == new:
+        return current
+    return "BOTH"
+
+
+def classify_line(theta_deg: float, values: dict[str, int]) -> str | None:
     if values["left_angle_low"] <= theta_deg <= values["left_angle_high"]:
-        return "LEFT", (0, 255, 0)
+        return "LEFT"
     if values["right_angle_low"] <= theta_deg <= values["right_angle_high"]:
-        return "RIGHT", (0, 0, 255)
+        return "RIGHT"
     if values["infront_angle_low"] <= theta_deg <= values["infront_angle_high"]:
-        return "FRONT", (255, 0, 0)
+        return "FRONT"
     return None
 
 
-def detect_obstacle_lines(frame: np.ndarray, values: dict[str, int]) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+def detect_obstacle_lines(frame: np.ndarray, values: dict[str, int]) -> tuple[np.ndarray, np.ndarray, dict[str, int | str]]:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blur, values["canny_low"], values["canny_high"])
@@ -99,7 +178,7 @@ def detect_obstacle_lines(frame: np.ndarray, values: dict[str, int]) -> tuple[np
 
     raw_lines = cv2.HoughLines(filtered, 1, np.pi / 180, values["hough_threshold"])
     debug = frame.copy()
-    counts = {"LEFT": 0, "RIGHT": 0, "FRONT": 0}
+    counts: dict[str, int | str] = {"LEFT": 0, "RIGHT": 0, "FRONT": 0, "FRONT_SIDE": "NONE"}
 
     if raw_lines is not None:
         for line in raw_lines:
@@ -108,10 +187,19 @@ def detect_obstacle_lines(frame: np.ndarray, values: dict[str, int]) -> tuple[np
             classified = classify_line(angle_deg, values)
             if classified is None:
                 continue
-            label, color = classified
+            label = classified
+            color = (255, 255, 255)
+            if label == "LEFT":
+                color = (0, 255, 0)
+            elif label == "RIGHT":
+                color = (0, 0, 255)
+            else:
+                front_side = front_line_side_presence(filtered, (rho, theta))
+                color = front_line_color(front_side)
+                counts["FRONT_SIDE"] = merge_front_side_presence(str(counts["FRONT_SIDE"]), front_side)
             pt1, pt2 = hough_line_endpoints(rho, theta)
             cv2.line(debug, pt1, pt2, color, 2)
-            counts[label] += 1
+            counts[label] = int(counts[label]) + 1
 
     counts["CONTOURS"] = kept_contours
     counts["LINES"] = 0 if raw_lines is None else int(len(raw_lines))
@@ -143,8 +231,10 @@ def main() -> None:
             cv2.putText(debug_view, f"Contours kept: {counts['CONTOURS']} | Raw lines: {counts['LINES']}", (10, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
             cv2.putText(debug_view, f"Left angles: {values['left_angle_low']}-{values['left_angle_high']}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1)
             cv2.putText(debug_view, f"Right angles: {values['right_angle_low']}-{values['right_angle_high']}", (10, 175), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
-            cv2.putText(debug_view, f"Front angles: {values['infront_angle_low']}-{values['infront_angle_high']}", (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 0, 0), 1)
-            cv2.putText(debug_view, "s save config | q or esc quit", (10, 225), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            front_color = front_line_color(str(counts["FRONT_SIDE"]))
+            cv2.putText(debug_view, f"Front angles: {values['infront_angle_low']}-{values['infront_angle_high']}", (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.55, front_color, 1)
+            cv2.putText(debug_view, f"Front side: {counts['FRONT_SIDE']}", (10, 225), cv2.FONT_HERSHEY_SIMPLEX, 0.55, front_color, 1)
+            cv2.putText(debug_view, "s save config | q or esc quit", (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
             cv2.imshow(WINDOW_CAMERA, frame)
             cv2.imshow(WINDOW_EDGES, edges)

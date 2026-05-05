@@ -127,6 +127,8 @@ POST_SHOOT_PHASE_DRIVE_FORWARD = "DRIVE_FORWARD"
 RIGHT_COLOR = (0, 0, 255)
 LEFT_COLOR = (0, 255, 0)
 INFRONT_COLOR = (255, 0, 0)
+INFRONT_RIGHT_ONLY_COLOR = (255, 0, 255)
+INFRONT_LEFT_ONLY_COLOR = (255, 255, 0)
 TARGET_COLOR = (255, 0, 255)
 MEMORY_COLOR = (255, 255, 255)
 TURN_TRIGGER_GUIDE_COLOR = (0, 255, 255)
@@ -213,6 +215,62 @@ def line_tilt_px(line: tuple[float, float], width: int) -> float | None:
     if y_left is None or y_right is None:
         return None
     return float(y_right - y_left)
+
+
+def front_line_side_presence(
+    edges: np.ndarray,
+    line: tuple[float, float] | None,
+    *,
+    samples: int = 80,
+    band_radius: int = 2,
+    min_hits: int = 4,
+) -> str:
+    if line is None:
+        return "NONE"
+
+    height, width = edges.shape[:2]
+    if width <= 0 or height <= 0:
+        return "NONE"
+
+    left_hits = 0
+    right_hits = 0
+    sample_count = max(samples, 2)
+    for sample_index in range(sample_count):
+        x = int(round((sample_index / (sample_count - 1)) * (width - 1)))
+        y_value = hough_y_at_x(line, x)
+        if y_value is None:
+            continue
+        y = int(round(y_value))
+        if not (0 <= y < height):
+            continue
+
+        x0 = max(0, x - band_radius)
+        x1 = min(width, x + band_radius + 1)
+        y0 = max(0, y - band_radius)
+        y1 = min(height, y + band_radius + 1)
+        if np.any(edges[y0:y1, x0:x1] > 0):
+            if x < (width / 2.0):
+                left_hits += 1
+            else:
+                right_hits += 1
+
+    left_present = left_hits >= min_hits
+    right_present = right_hits >= min_hits
+    if left_present and right_present:
+        return "BOTH"
+    if right_present:
+        return "RIGHT_ONLY"
+    if left_present:
+        return "LEFT_ONLY"
+    return "NONE"
+
+
+def front_line_color(side_presence: str) -> tuple[int, int, int]:
+    if side_presence == "RIGHT_ONLY":
+        return INFRONT_RIGHT_ONLY_COLOR
+    if side_presence == "LEFT_ONLY":
+        return INFRONT_LEFT_ONLY_COLOR
+    return INFRONT_COLOR
 
 
 def median_line(lines: list[tuple[float, float]]) -> tuple[float, float] | None:
@@ -366,6 +424,7 @@ class CorridorVision:
             vanishing_point = intersect_hough_lines(effective_lines["left"], effective_lines["right"])
 
         blue_line = stable_lines["infront"]
+        blue_line_side = front_line_side_presence(edges, blue_line)
         blue_y_center = hough_y_at_x(blue_line, W / 2.0) if blue_line is not None else None
         blue_tilt = line_tilt_px(blue_line, W) if blue_line is not None else None
         line_changing_detected = False
@@ -378,6 +437,12 @@ class CorridorVision:
         else:
             self.last_blue_y_center = None
 
+        if not left_seen_now and not right_seen_now:
+            if blue_line_side == "RIGHT_ONLY":
+                self.turn_direction = "RIGHT"
+            elif blue_line_side == "LEFT_ONLY":
+                self.turn_direction = "LEFT"
+
         return {
             "edges": edges,
             "current_lines": current_lines,
@@ -386,6 +451,8 @@ class CorridorVision:
             "dashed_side": dashed_side,
             "vanishing_point": vanishing_point,
             "blue_line": blue_line,
+            "blue_line_side": blue_line_side,
+            "blue_line_color": front_line_color(blue_line_side),
             "blue_y_center": blue_y_center,
             "blue_tilt": blue_tilt,
             "left_blue_intersection": (
@@ -535,6 +602,9 @@ class CorridorController:
                             -MAX_STEER_DELTA,
                             MAX_STEER_DELTA,
                         )
+                    elif int(vision["current_side_count"]) == 0 and vision["blue_line_side"] in ("RIGHT_ONLY", "LEFT_ONLY"):
+                        direction = 1.0 if vision["blue_line_side"] == "RIGHT_ONLY" else -1.0
+                        correction = clamp(direction * MAX_STEER_DELTA, -MAX_STEER_DELTA, MAX_STEER_DELTA)
                     else:
                         blue_tilt = vision["blue_tilt"]
                         if blue_tilt is not None:
@@ -622,7 +692,7 @@ class CorridorController:
             draw_line(overlay, effective_lines["left"], MEMORY_COLOR, dashed=True)
 
         if stable_lines["infront"] is not None:
-            draw_line(overlay, stable_lines["infront"], INFRONT_COLOR, dashed=False)
+            draw_line(overlay, stable_lines["infront"], vision["blue_line_color"], dashed=False)
 
         if vision["vanishing_point"] is not None:
             ix, iy = vision["vanishing_point"]
