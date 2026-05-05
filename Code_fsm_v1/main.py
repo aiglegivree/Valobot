@@ -918,7 +918,7 @@ def main() -> None:
         turn_speed=0.30,
         blind_speed=0.30,
         search_speed=0.30,
-        steer_gain=0.8,
+        steer_gain=0.08,
     )
     corridor_controller = CorridorController()
     motors = MotorDriver()
