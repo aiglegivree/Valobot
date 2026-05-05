@@ -78,6 +78,7 @@ from fsm_config import (  # noqa: E402
     BLUE_TO_T_RIGHT_TURN_SPEED,
     FLYWHEEL_SPINUP_TIME,
     FRONT_SIDE_CONFIRM_FRAMES,
+    FIRST_T_SIDE_LINES_TOP_FRAC,
     FIRST_T_STRAIGHT_SEC,
     FIRST_T_STRAIGHT_SPEED,
     HIT_AREA_RATIO_THRESHOLD,
@@ -223,6 +224,24 @@ def line_tilt_px(line: tuple[float, float], width: int) -> float | None:
     if y_left is None or y_right is None:
         return None
     return float(y_right - y_left)
+
+
+def line_intersects_top_region(line: tuple[float, float], width: int, top_limit: int) -> bool:
+    if top_limit <= 0:
+        return False
+
+    sample_xs = (0.0, (width - 1) / 2.0, float(width - 1))
+    valid_ys = [hough_y_at_x(line, x) for x in sample_xs]
+    valid_ys = [y for y in valid_ys if y is not None]
+    if not valid_ys:
+        return False
+
+    if any(0.0 <= y <= float(top_limit) for y in valid_ys):
+        return True
+
+    min_y = min(valid_ys)
+    max_y = max(valid_ys)
+    return min_y <= float(top_limit) <= max_y
 
 
 def front_line_side_presence(
@@ -417,13 +436,31 @@ class CorridorVision:
                 categories["infront"].append((rho, theta))
         return categories
 
-    def process(self, frame: np.ndarray, now: float, *, use_lateral_lines: bool = True) -> dict[str, object]:
+    def process(
+        self,
+        frame: np.ndarray,
+        now: float,
+        *,
+        use_lateral_lines: bool = True,
+        lateral_top_frac: float | None = None,
+        use_front_line: bool = True,
+    ) -> dict[str, object]:
         edges = self.detect_edges(frame)
         raw_lines = self.detect_hough_lines(edges)
         categories = self.classify_lines(raw_lines)
         if not use_lateral_lines:
             categories["left"] = []
             categories["right"] = []
+        elif lateral_top_frac is not None:
+            top_limit = int(round(H * max(0.0, min(1.0, lateral_top_frac))))
+            categories["left"] = [
+                line for line in categories["left"] if line_intersects_top_region(line, W, top_limit)
+            ]
+            categories["right"] = [
+                line for line in categories["right"] if line_intersects_top_region(line, W, top_limit)
+            ]
+        if not use_front_line:
+            categories["infront"] = []
         current_lines = {key: median_line(values) for key, values in categories.items()}
         stable_lines: dict[str, tuple[float, float] | None] = {}
         for key, line in current_lines.items():
@@ -558,8 +595,21 @@ class CorridorController:
             return self.forward_wheels(SINGLE_WALL_SEARCH_DELTA)
         return self.forward_wheels(0.0)
 
-    def update(self, frame: np.ndarray, now: float) -> tuple[float, float, np.ndarray, np.ndarray, str]:
-        vision = self.vision.process(frame, now, use_lateral_lines=(self.state != "TURN"))
+    def update(
+        self,
+        frame: np.ndarray,
+        now: float,
+        *,
+        lateral_top_frac: float | None = None,
+        use_front_line: bool = True,
+    ) -> tuple[float, float, np.ndarray, np.ndarray, str]:
+        vision = self.vision.process(
+            frame,
+            now,
+            use_lateral_lines=(self.state != "TURN"),
+            lateral_top_frac=lateral_top_frac,
+            use_front_line=use_front_line,
+        )
         _, blue_targets = detect_blue_targets(
             frame,
             blue_low=BLUE_LOW_CORRIDOR,
@@ -934,6 +984,7 @@ def main() -> None:
             if fsm_state == STATE_LINE_FOLLOW:
                 left, right, _, _, line_mode = line_controller.update(line_res)
                 if line_mode == "T_STOP":
+                    corridor_controller.reset()
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
                     post_t_until = now + FIRST_T_STRAIGHT_SEC
                     fsm_state = STATE_POST_T_STRAIGHT
@@ -963,16 +1014,19 @@ def main() -> None:
                         print("LOW SPEED SWITCHED ON")
 
             elif fsm_state == STATE_POST_T_STRAIGHT:
-                motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
-                set_leds_for_line(leds)
-                main_vis = frame.copy()
+                left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(
+                    frame,
+                    now,
+                    lateral_top_frac=FIRST_T_SIDE_LINES_TOP_FRAC,
+                    use_front_line=False,
+                )
+                motors.set_speeds(left, right)
+                set_leds_for_corridor(leds)
                 remaining = max(0.0, post_t_until - now)
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-                cv2.putText(main_vis, f"Straight for: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-                aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
+                cv2.putText(main_vis, f"Top-third side-line mode: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Corridor substate: {corridor_state}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
                 if now >= post_t_until:
-                    motors.stop()
-                    corridor_controller.reset()
                     music_player.play("couloir.wav")
                     fsm_state = STATE_CORRIDOR_FOLLOW
 
