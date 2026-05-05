@@ -116,6 +116,7 @@ from obstacle_vision_config import load_obstacle_settings  # noqa: E402
 MAIN_WINDOW = "FSM Navigation"
 AUX_WINDOW = "FSM Aux"
 
+STATE_RELOAD = "RELOAD"
 STATE_LINE_FOLLOW = "LINE_FOLLOW"
 STATE_POST_T_STRAIGHT = "POST_T_STRAIGHT"
 STATE_CORRIDOR_FOLLOW = "CORRIDOR_FOLLOW"
@@ -941,7 +942,8 @@ def main() -> None:
     signal.signal(signal.SIGINT, _reload_ammo_on_exit)
     signal.signal(signal.SIGTERM, _reload_ammo_on_exit)
 
-    fsm_state = STATE_LINE_FOLLOW
+    shooter.reset_ammo()
+    fsm_state = STATE_RELOAD
     aura_started = False
     post_t_until = 0.0
     post_second_t_until = 0.0
@@ -980,8 +982,19 @@ def main() -> None:
 
             main_vis = frame.copy()
             aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
+            next_fsm_state = fsm_state
 
-            if fsm_state == STATE_LINE_FOLLOW:
+            if fsm_state == STATE_RELOAD:
+                motors.stop()
+                shooter.spin_flywheel(False)
+                set_leds_for_line(leds)
+                main_vis = frame.copy()
+                cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, "Press R to start run", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
+
+            elif fsm_state == STATE_LINE_FOLLOW:
                 left, right, _, _, line_mode = line_controller.update(line_res)
                 if line_mode == "T_STOP":
                     corridor_controller.reset()
@@ -1433,8 +1446,39 @@ def main() -> None:
                 cv2.imshow(MAIN_WINDOW, main_vis)
                 cv2.imshow(AUX_WINDOW, aux_vis)
                 key = cv2.waitKey(1) & 0xFF
+                if key == ord("r") and fsm_state == STATE_RELOAD:
+                    shooter.reset_ammo()
+                    line_controller.reset()
+                    second_line_controller.reset()
+                    post_shoot_line_controller.reset()
+                    corridor_controller.reset()
+                    aura_started = False
+                    post_t_until = 0.0
+                    post_second_t_until = 0.0
+                    post_shoot_back_until = 0.0
+                    post_shoot_until = 0.0
+                    post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
+                    lock_frames = 0
+                    last_target_center = None
+                    locked_target_ref = None
+                    locked_target_miss_count = 0
+                    pending_shot = False
+                    pending_target_before_shot = None
+                    confirm_delay_frames = 0
+                    targets_hit = 0
+                    blue_detect_frames = 0
+                    post_shoot_turn_sign = 1
+                    aim_stuck_since = 0.0
+                    aim_last_motion_center = None
+                    aim_boost_until = 0.0
+                    shoot_search_direction = 1
+                    shoot_search_step = 0
+                    shoot_search_until = 0.0
+                    next_fsm_state = STATE_LINE_FOLLOW
                 if key == 27 or key == ord("q"):
                     break
+
+            fsm_state = next_fsm_state
 
     finally:
         try:

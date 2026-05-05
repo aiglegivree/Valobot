@@ -60,6 +60,11 @@ class Shooter:
     def reload(self):
         self.set_servo_angle(ANGLE_LOADED)
 
+    def reset_ammo(self):
+        self.shots_fired = 0
+        self.last_shot_time = 0.0
+        self.reload()
+
     def can_shoot(self) -> bool:
         if self.shots_fired >= MAG_CAPACITY:
             return False
