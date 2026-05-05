@@ -239,6 +239,7 @@ def front_line_side_presence(
     right_limit = (2.0 * width) / 3.0
 
     left_hits = 0
+    center_hits = 0
     right_hits = 0
     sample_count = max(samples, 2)
     for sample_index in range(sample_count):
@@ -259,15 +260,18 @@ def front_line_side_presence(
                 left_hits += 1
             elif x >= right_limit:
                 right_hits += 1
+            else:
+                center_hits += 1
 
     left_present = left_hits >= min_hits
+    center_present = center_hits >= min_hits
     right_present = right_hits >= min_hits
-    if left_present and right_present:
-        return "BOTH"
-    if right_present:
+    if right_present and not left_present and not center_present:
         return "RIGHT_ONLY"
-    if left_present:
+    if left_present and not right_present and not center_present:
         return "LEFT_ONLY"
+    if left_present or center_present or right_present:
+        return "BOTH"
     return "NONE"
 
 
