@@ -80,6 +80,8 @@ from fsm_config import (  # noqa: E402
     FIRST_T_STRAIGHT_SEC,
     FIRST_T_STRAIGHT_SPEED,
     HIT_AREA_RATIO_THRESHOLD,
+    POST_SHOOT_BACK_SEC,
+    POST_SHOOT_BACK_SPEED,
     POST_SHOOT_DRIVE_SEC,
     POST_SHOOT_DRIVE_SPEED,
     PREFER_LINE_WHEN_VISIBLE,
@@ -117,6 +119,10 @@ STATE_AURA = "AURA"
 
 MODE_LINE = "LINE"
 MODE_CORRIDOR = "CORRIDOR"
+
+POST_SHOOT_PHASE_BACK_UP = "BACK_UP"
+POST_SHOOT_PHASE_ALIGN = "ALIGN"
+POST_SHOOT_PHASE_DRIVE_FORWARD = "DRIVE_FORWARD"
 
 RIGHT_COLOR = (0, 0, 255)
 LEFT_COLOR = (0, 255, 0)
@@ -756,6 +762,13 @@ def main() -> None:
         search_speed=0.20,
         steer_gain=0.10,
     )
+    post_shoot_line_controller = Controller(
+        base_speed=0.22,
+        turn_speed=0.20,
+        blind_speed=0.18,
+        search_speed=0.18,
+        steer_gain=0.10,
+    )
     corridor_controller = CorridorController()
     motors = MotorDriver()
     leds = LED() if USE_LEDS else None
@@ -782,7 +795,9 @@ def main() -> None:
     aura_started = False
     post_t_until = 0.0
     post_second_t_until = 0.0
+    post_shoot_back_until = 0.0
     post_shoot_until = 0.0
+    post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
 
     lock_frames = 0
     last_target_center = None
@@ -1096,8 +1111,13 @@ def main() -> None:
                 if mission_done and not pending_shot:
                     motors.set_speeds(0, 0)
                     shooter.spin_flywheel(False)
+                    set_leds_for_line(leds)
                     time.sleep(0.2)
-                    post_shoot_until = now + POST_SHOOT_DRIVE_SEC
+                    post_shoot_back_until = now + POST_SHOOT_BACK_SEC
+                    post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
+                    post_shoot_line_controller.reset()
+                    post_shoot_line_controller.last_turn_sign = post_shoot_turn_sign
+                    post_shoot_line_controller.last_green_turn_sign = post_shoot_turn_sign
                     fsm_state = STATE_POST_SHOOT_DRIVE
 
                 main_vis = frame.copy()
@@ -1115,19 +1135,53 @@ def main() -> None:
                 aux_vis = blue_mask
 
             elif fsm_state == STATE_POST_SHOOT_DRIVE:
-                motors.set_speeds(POST_SHOOT_DRIVE_SPEED, POST_SHOOT_DRIVE_SPEED)
                 set_leds_for_line(leds)
-                main_vis = frame.copy()
-                remaining = max(0.0, post_shoot_until - now)
+                main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
                 direction_label = "RIGHT" if post_shoot_turn_sign > 0 else "LEFT"
+                action_label = ""
+                status_label = ""
+
+                if post_shoot_phase == POST_SHOOT_PHASE_BACK_UP:
+                    motors.set_speeds(POST_SHOOT_BACK_SPEED, POST_SHOOT_BACK_SPEED)
+                    remaining = max(0.0, post_shoot_back_until - now)
+                    action_label = "Action: backing up before line reacquire"
+                    status_label = f"Reverse for: {remaining:.2f}s"
+                    aux_vis = draw_mask_slices(line_res)
+                    if now >= post_shoot_back_until:
+                        motors.stop()
+                        post_shoot_phase = POST_SHOOT_PHASE_ALIGN
+                        post_shoot_line_controller.reset()
+                        post_shoot_line_controller.last_turn_sign = post_shoot_turn_sign
+                        post_shoot_line_controller.last_green_turn_sign = post_shoot_turn_sign
+                elif post_shoot_phase == POST_SHOOT_PHASE_ALIGN:
+                    left, right, _, _, line_mode = post_shoot_line_controller.update(line_res)
+                    motors.set_speeds(left, right)
+                    action_label = "Action: line follow until T is detected"
+                    status_label = f"Line mode: {line_mode} | T: {'YES' if line_res.t_detected else 'NO'}"
+                    aux_vis = draw_mask_slices(line_res)
+                    if line_res.t_detected:
+                        motors.set_speeds(POST_SHOOT_DRIVE_SPEED, POST_SHOOT_DRIVE_SPEED)
+                        post_shoot_until = now + POST_SHOOT_DRIVE_SEC
+                        post_shoot_phase = POST_SHOOT_PHASE_DRIVE_FORWARD
+                else:
+                    motors.set_speeds(POST_SHOOT_DRIVE_SPEED, POST_SHOOT_DRIVE_SPEED)
+                    remaining = max(0.0, post_shoot_until - now)
+                    action_label = "Action: straight drive"
+                    status_label = f"Drive after shooting: {remaining:.2f}s"
+                    aux_vis = draw_mask_slices(line_res)
+                    if now >= post_shoot_until:
+                        motors.stop()
+                        fsm_state = STATE_AURA
+
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-                cv2.putText(main_vis, f"Drive after shooting: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-                cv2.putText(main_vis, f"Remembered line direction: {direction_label}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-                cv2.putText(main_vis, "Action: straight drive", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-                aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
-                if now >= post_shoot_until:
-                    motors.stop()
-                    fsm_state = STATE_AURA
+                cv2.putText(main_vis, f"Post-shoot phase: {post_shoot_phase}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                cv2.putText(main_vis, status_label, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Remembered line direction: {direction_label}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                cv2.putText(main_vis, action_label, (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                if post_shoot_phase == POST_SHOOT_PHASE_ALIGN:
+                    draw_low_speed_debug(main_vis, post_shoot_line_controller)
+                    if post_shoot_line_controller.low_speed_just_latched:
+                        print("LOW SPEED SWITCHED ON")
 
             elif fsm_state == STATE_AURA:
                 aura_started = fail_stop(motors, leds, aura_started)
