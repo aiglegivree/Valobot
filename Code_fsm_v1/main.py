@@ -967,6 +967,8 @@ def main() -> None:
     shoot_search_direction = 1
     shoot_search_step = 0
     shoot_search_until = 0.0
+    shooting_cmd_left = 0.0
+    shooting_cmd_right = 0.0
 
     if SHOW_DEBUG:
         setup_windows()
@@ -1178,6 +1180,8 @@ def main() -> None:
             elif fsm_state == STATE_SHOOTING:
                 set_leds_for_shooting(leds)
                 blue_mask, targets = detect_blue_targets(frame)
+                shooting_cmd_left = 0.0
+                shooting_cmd_right = 0.0
 
                 if pending_shot:
                     aim_stuck_since = 0.0
@@ -1187,6 +1191,8 @@ def main() -> None:
                     if confirm_delay_frames > 0:
                         confirm_delay_frames -= 1
                         motors.set_speeds(0, 0)
+                        shooting_cmd_left = 0.0
+                        shooting_cmd_right = 0.0
                     else:
                         old = pending_target_before_shot
                         matched, dist = match_target_by_position(
@@ -1269,16 +1275,28 @@ def main() -> None:
                             shoot_search_until = now + search_duration
                             shoot_search_step += 1
                         turn_sign = 1.0 if shoot_search_direction > 0 else -1.0
-                        motors.set_speeds(
-                            turn_sign * SHOOT_SEARCH_TURN_SPEED,
-                            -turn_sign * SHOOT_SEARCH_TURN_SPEED,
-                        )
+                        shooting_cmd_left = turn_sign * SHOOT_SEARCH_TURN_SPEED
+                        shooting_cmd_right = -turn_sign * SHOOT_SEARCH_TURN_SPEED
+                        motors.set_speeds(shooting_cmd_left, shooting_cmd_right)
                     else:
                         shoot_search_until = 0.0
                         shoot_search_direction = 1
                         shoot_search_step = 0
                         last_target_center = (target["cx"], target["cy"])
                         locked, err = aim_to_target(motors, target)
+                        if abs(err) <= CENTER_TOL:
+                            shooting_cmd_left = 0.0
+                            shooting_cmd_right = 0.0
+                        else:
+                            max_err = max(W / 2.0, 1.0)
+                            err_ratio = min(abs(err) / max_err, 1.0)
+                            turn_speed = MIN_AIM_TURN_SPEED + (TURN_SPEED - MIN_AIM_TURN_SPEED) * err_ratio
+                            if err > 0:
+                                shooting_cmd_left = turn_speed
+                                shooting_cmd_right = -turn_speed
+                            else:
+                                shooting_cmd_left = -turn_speed
+                                shooting_cmd_right = turn_speed
                         current_center = (target["cx"], target["cy"])
                         should_move = not locked
 
@@ -1297,19 +1315,17 @@ def main() -> None:
 
                             if now >= aim_boost_until and aim_stuck_since > 0.0 and (now - aim_stuck_since) >= SHOOT_STUCK_TIMEOUT_SEC:
                                 boost_sign = 1.0 if err > 0 else -1.0
-                                motors.set_speeds(
-                                    boost_sign * SHOOT_STUCK_BOOST_SPEED,
-                                    -boost_sign * SHOOT_STUCK_BOOST_SPEED,
-                                )
+                                shooting_cmd_left = boost_sign * SHOOT_STUCK_BOOST_SPEED
+                                shooting_cmd_right = -boost_sign * SHOOT_STUCK_BOOST_SPEED
+                                motors.set_speeds(shooting_cmd_left, shooting_cmd_right)
                                 aim_boost_until = now + SHOOT_STUCK_BOOST_SEC
                                 aim_stuck_since = now
 
                             if now < aim_boost_until:
                                 boost_sign = 1.0 if err > 0 else -1.0
-                                motors.set_speeds(
-                                    boost_sign * SHOOT_STUCK_BOOST_SPEED,
-                                    -boost_sign * SHOOT_STUCK_BOOST_SPEED,
-                                )
+                                shooting_cmd_left = boost_sign * SHOOT_STUCK_BOOST_SPEED
+                                shooting_cmd_right = -boost_sign * SHOOT_STUCK_BOOST_SPEED
+                                motors.set_speeds(shooting_cmd_left, shooting_cmd_right)
                         else:
                             aim_stuck_since = 0.0
                             aim_last_motion_center = current_center
@@ -1358,10 +1374,11 @@ def main() -> None:
                 cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"PENDING: {pending_shot}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"AIM BOOST: {'ON' if now < aim_boost_until else 'OFF'}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"STEER L/R: {shooting_cmd_left:.2f} / {shooting_cmd_right:.2f}", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 if not pending_shot and not targets:
                     direction_label = "RIGHT" if shoot_search_direction > 0 else "LEFT"
                     remaining = max(0.0, shoot_search_until - now)
-                    cv2.putText(main_vis, f"SEARCH: {direction_label} {remaining:.2f}s", (10, 180), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                    cv2.putText(main_vis, f"SEARCH: {direction_label} {remaining:.2f}s", (10, 210), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 aux_vis = blue_mask
 
             elif fsm_state == STATE_POST_SHOOT_DRIVE:
