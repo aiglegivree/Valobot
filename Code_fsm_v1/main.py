@@ -982,7 +982,6 @@ def main() -> None:
 
             main_vis = frame.copy()
             aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
-            next_fsm_state = fsm_state
 
             if fsm_state == STATE_RELOAD:
                 motors.stop()
@@ -1474,11 +1473,9 @@ def main() -> None:
                     shoot_search_direction = 1
                     shoot_search_step = 0
                     shoot_search_until = 0.0
-                    next_fsm_state = STATE_LINE_FOLLOW
+                    fsm_state = STATE_LINE_FOLLOW
                 if key == 27 or key == ord("q"):
                     break
-
-            fsm_state = next_fsm_state
 
     finally:
         try:
