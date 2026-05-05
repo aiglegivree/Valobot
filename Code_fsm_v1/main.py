@@ -89,6 +89,10 @@ from fsm_config import (  # noqa: E402
     RECORD_RUN_FPS,
     RECORD_RUN_VIDEO,
     RETURN_T_IGNORE_SECONDS,
+    SHOOT_STUCK_BOOST_SEC,
+    SHOOT_STUCK_BOOST_SPEED,
+    SHOOT_STUCK_TARGET_DELTA_PX,
+    SHOOT_STUCK_TIMEOUT_SEC,
     SHOW_DEBUG,
     T_LIM_SPEED,
     T_LIM_TIME,
@@ -436,12 +440,6 @@ class CorridorVision:
             self.last_blue_y_center = float(blue_y_center)
         else:
             self.last_blue_y_center = None
-
-        if not left_seen_now and not right_seen_now:
-            if blue_line_side == "RIGHT_ONLY":
-                self.turn_direction = "RIGHT"
-            elif blue_line_side == "LEFT_ONLY":
-                self.turn_direction = "LEFT"
 
         return {
             "edges": edges,
@@ -879,6 +877,9 @@ def main() -> None:
     targets_hit = 0
     blue_detect_frames = 0
     post_shoot_turn_sign = 1
+    aim_stuck_since = 0.0
+    aim_last_motion_center: tuple[int, int] | None = None
+    aim_boost_until = 0.0
 
     if SHOW_DEBUG:
         setup_windows()
@@ -1079,12 +1080,18 @@ def main() -> None:
                     pending_shot = False
                     pending_target_before_shot = None
                     confirm_delay_frames = 0
+                    aim_stuck_since = 0.0
+                    aim_last_motion_center = None
+                    aim_boost_until = 0.0
 
             elif fsm_state == STATE_SHOOTING:
                 set_leds_for_shooting(leds)
                 blue_mask, targets = detect_blue_targets(frame)
 
                 if pending_shot:
+                    aim_stuck_since = 0.0
+                    aim_last_motion_center = None
+                    aim_boost_until = 0.0
                     if confirm_delay_frames > 0:
                         confirm_delay_frames -= 1
                         motors.set_speeds(0, 0)
@@ -1144,6 +1151,9 @@ def main() -> None:
                         if locked_target_ref is not None:
                             motors.set_speeds(0, 0)
                             lock_frames = 0
+                            aim_stuck_since = 0.0
+                            aim_last_motion_center = None
+                            aim_boost_until = 0.0
                         else:
                             target = pick_target_by_shot_order(targets, targets_hit)
                             if target is not None:
@@ -1160,9 +1170,48 @@ def main() -> None:
                             lock_frames = 0
                             last_target_center = None
                             locked_target_miss_count = 0
+                            aim_stuck_since = 0.0
+                            aim_last_motion_center = None
+                            aim_boost_until = 0.0
                     else:
                         last_target_center = (target["cx"], target["cy"])
-                        locked, _ = aim_to_target(motors, target)
+                        locked, err = aim_to_target(motors, target)
+                        current_center = (target["cx"], target["cy"])
+                        should_move = not locked
+
+                        if should_move:
+                            if aim_last_motion_center is None:
+                                aim_last_motion_center = current_center
+                                aim_stuck_since = now
+                            else:
+                                delta_x = abs(current_center[0] - aim_last_motion_center[0])
+                                delta_y = abs(current_center[1] - aim_last_motion_center[1])
+                                if delta_x > SHOOT_STUCK_TARGET_DELTA_PX or delta_y > SHOOT_STUCK_TARGET_DELTA_PX:
+                                    aim_last_motion_center = current_center
+                                    aim_stuck_since = now
+                                elif aim_stuck_since <= 0.0:
+                                    aim_stuck_since = now
+
+                            if now >= aim_boost_until and aim_stuck_since > 0.0 and (now - aim_stuck_since) >= SHOOT_STUCK_TIMEOUT_SEC:
+                                boost_sign = 1.0 if err > 0 else -1.0
+                                motors.set_speeds(
+                                    boost_sign * SHOOT_STUCK_BOOST_SPEED,
+                                    -boost_sign * SHOOT_STUCK_BOOST_SPEED,
+                                )
+                                aim_boost_until = now + SHOOT_STUCK_BOOST_SEC
+                                aim_stuck_since = now
+
+                            if now < aim_boost_until:
+                                boost_sign = 1.0 if err > 0 else -1.0
+                                motors.set_speeds(
+                                    boost_sign * SHOOT_STUCK_BOOST_SPEED,
+                                    -boost_sign * SHOOT_STUCK_BOOST_SPEED,
+                                )
+                        else:
+                            aim_stuck_since = 0.0
+                            aim_last_motion_center = current_center
+                            aim_boost_until = 0.0
+
                         lock_frames = lock_frames + 1 if locked else 0
                         if lock_frames >= LOCK_FRAMES_REQUIRED:
                             fired = shooter.fire_once()
@@ -1175,6 +1224,9 @@ def main() -> None:
                                     "area": target["area"],
                                 }
                                 confirm_delay_frames = POST_SHOT_CONFIRM_FRAMES
+                                aim_stuck_since = 0.0
+                                aim_last_motion_center = None
+                                aim_boost_until = 0.0
                                 time.sleep(POST_SHOT_SETTLE_TIME)
 
                 mission_done = (targets_hit >= NOMBRE_DE_CIBLES) or shooter.is_empty()
@@ -1202,6 +1254,7 @@ def main() -> None:
                 cv2.putText(main_vis, f"HITS: {targets_hit}/{NOMBRE_DE_CIBLES}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"PENDING: {pending_shot}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"AIM BOOST: {'ON' if now < aim_boost_until else 'OFF'}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 aux_vis = blue_mask
 
             elif fsm_state == STATE_POST_SHOOT_DRIVE:
