@@ -907,10 +907,10 @@ def main() -> None:
     cam = Camera()
     line_controller = Controller()
     second_line_controller = Controller(
-        base_speed=0.25,
-        turn_speed=0.25,
-        blind_speed=0.20,
-        search_speed=0.20,
+        base_speed=0.30,
+        turn_speed=0.30,
+        blind_speed=0.30,
+        search_speed=0.30,
         steer_gain=0.10,
     )
     post_shoot_line_controller = Controller(
@@ -918,7 +918,7 @@ def main() -> None:
         turn_speed=0.30,
         blind_speed=0.30,
         search_speed=0.30,
-        steer_gain=0.10,
+        steer_gain=0.8,
     )
     corridor_controller = CorridorController()
     motors = MotorDriver()
