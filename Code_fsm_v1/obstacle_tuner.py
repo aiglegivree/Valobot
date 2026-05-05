@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 
 from camera import Camera
+from fsm_config import FRONT_SIDE_CONFIRM_FRAMES
 from obstacle_vision_config import load_obstacle_settings, save_obstacle_settings
 
 
@@ -169,7 +170,12 @@ def classify_line(theta_deg: float, values: dict[str, int]) -> str | None:
     return None
 
 
-def detect_obstacle_lines(frame: np.ndarray, values: dict[str, int]) -> tuple[np.ndarray, np.ndarray, dict[str, int | str]]:
+def detect_obstacle_lines(
+    frame: np.ndarray,
+    values: dict[str, int],
+    *,
+    confirmed_front_side: str,
+) -> tuple[np.ndarray, np.ndarray, dict[str, int | str]]:
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
     edges = cv2.Canny(blur, values["canny_low"], values["canny_high"])
@@ -201,8 +207,8 @@ def detect_obstacle_lines(frame: np.ndarray, values: dict[str, int]) -> tuple[np
                 color = (0, 0, 255)
             else:
                 front_side = front_line_side_presence(filtered, (rho, theta))
-                color = front_line_color(front_side)
                 counts["FRONT_SIDE"] = merge_front_side_presence(str(counts["FRONT_SIDE"]), front_side)
+                color = front_line_color(confirmed_front_side)
             pt1, pt2 = hough_line_endpoints(rho, theta)
             cv2.line(debug, pt1, pt2, color, 2)
             counts[label] = int(counts[label]) + 1
@@ -210,6 +216,27 @@ def detect_obstacle_lines(frame: np.ndarray, values: dict[str, int]) -> tuple[np
     counts["CONTOURS"] = kept_contours
     counts["LINES"] = 0 if raw_lines is None else int(len(raw_lines))
     return filtered, debug, counts
+
+
+def confirm_front_side(
+    side_presence: str,
+    *,
+    line_present: bool,
+    previous_candidate: str,
+    previous_frames: int,
+) -> tuple[str, str, int]:
+    if side_presence in ("RIGHT_ONLY", "LEFT_ONLY"):
+        if side_presence == previous_candidate:
+            frames = previous_frames + 1
+        else:
+            previous_candidate = side_presence
+            frames = 1
+
+        if frames >= FRONT_SIDE_CONFIRM_FRAMES:
+            return side_presence, previous_candidate, frames
+        return ("BOTH" if line_present else "NONE"), previous_candidate, frames
+
+    return side_presence, side_presence, 0
 
 
 def main() -> None:
@@ -220,6 +247,8 @@ def main() -> None:
     cv2.namedWindow(WINDOW_CAMERA, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_EDGES, cv2.WINDOW_NORMAL)
     cv2.namedWindow(WINDOW_DEBUG, cv2.WINDOW_NORMAL)
+    front_side_candidate = "NONE"
+    front_side_candidate_frames = 0
 
     try:
         while True:
@@ -228,7 +257,20 @@ def main() -> None:
                 continue
 
             values = get_values()
-            edges, debug_view, counts = detect_obstacle_lines(frame, values)
+            current_confirmed_front_side = "NONE"
+            if front_side_candidate in ("RIGHT_ONLY", "LEFT_ONLY") and front_side_candidate_frames >= FRONT_SIDE_CONFIRM_FRAMES:
+                current_confirmed_front_side = front_side_candidate
+            edges, debug_view, counts = detect_obstacle_lines(
+                frame,
+                values,
+                confirmed_front_side=current_confirmed_front_side,
+            )
+            confirmed_front_side, front_side_candidate, front_side_candidate_frames = confirm_front_side(
+                str(counts["FRONT_SIDE"]),
+                line_present=int(counts["FRONT"]) > 0,
+                previous_candidate=front_side_candidate,
+                previous_frames=front_side_candidate_frames,
+            )
 
             cv2.putText(debug_view, f"Canny: {values['canny_low']} / {values['canny_high']}", (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
             cv2.putText(debug_view, f"Contour min len: {values['contour_min_length']}", (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
@@ -237,10 +279,11 @@ def main() -> None:
             cv2.putText(debug_view, f"Contours kept: {counts['CONTOURS']} | Raw lines: {counts['LINES']}", (10, 125), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
             cv2.putText(debug_view, f"Left angles: {values['left_angle_low']}-{values['left_angle_high']}", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 0), 1)
             cv2.putText(debug_view, f"Right angles: {values['right_angle_low']}-{values['right_angle_high']}", (10, 175), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 255), 1)
-            front_color = front_line_color(str(counts["FRONT_SIDE"]))
+            front_color = front_line_color(confirmed_front_side)
             cv2.putText(debug_view, f"Front angles: {values['infront_angle_low']}-{values['infront_angle_high']}", (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.55, front_color, 1)
-            cv2.putText(debug_view, f"Front side: {counts['FRONT_SIDE']}", (10, 225), cv2.FONT_HERSHEY_SIMPLEX, 0.55, front_color, 1)
-            cv2.putText(debug_view, "s save config | q or esc quit", (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+            cv2.putText(debug_view, f"Front side: {confirmed_front_side}", (10, 225), cv2.FONT_HERSHEY_SIMPLEX, 0.55, front_color, 1)
+            cv2.putText(debug_view, f"Front confirm: {front_side_candidate_frames}/{FRONT_SIDE_CONFIRM_FRAMES}", (10, 250), cv2.FONT_HERSHEY_SIMPLEX, 0.55, front_color, 1)
+            cv2.putText(debug_view, "s save config | q or esc quit", (10, 275), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
 
             cv2.imshow(WINDOW_CAMERA, frame)
             cv2.imshow(WINDOW_EDGES, edges)

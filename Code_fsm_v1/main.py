@@ -77,6 +77,7 @@ from fsm_config import (  # noqa: E402
     BLUE_DETECT_CONFIRM_FRAMES,
     BLUE_TO_T_RIGHT_TURN_SPEED,
     FLYWHEEL_SPINUP_TIME,
+    FRONT_SIDE_CONFIRM_FRAMES,
     FIRST_T_STRAIGHT_SEC,
     FIRST_T_STRAIGHT_SPEED,
     HIT_AREA_RATIO_THRESHOLD,
@@ -351,9 +352,27 @@ class CorridorVision:
         self.turn_direction = DEFAULT_TURN_DIRECTION
         self.last_blue_y_center: float | None = None
         self.line_changing_warning_until = 0.0
+        self.front_side_candidate = "NONE"
+        self.front_side_candidate_frames = 0
 
     def reset_for_forward(self) -> None:
         self.turn_direction = DEFAULT_TURN_DIRECTION
+
+    def confirmed_front_side(self, side_presence: str, line_present: bool) -> str:
+        if side_presence in ("RIGHT_ONLY", "LEFT_ONLY"):
+            if side_presence == self.front_side_candidate:
+                self.front_side_candidate_frames += 1
+            else:
+                self.front_side_candidate = side_presence
+                self.front_side_candidate_frames = 1
+
+            if self.front_side_candidate_frames >= FRONT_SIDE_CONFIRM_FRAMES:
+                return side_presence
+            return "BOTH" if line_present else "NONE"
+
+        self.front_side_candidate = side_presence
+        self.front_side_candidate_frames = 0
+        return side_presence
 
     def detect_edges(self, frame: np.ndarray) -> np.ndarray:
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -437,7 +456,8 @@ class CorridorVision:
             vanishing_point = intersect_hough_lines(effective_lines["left"], effective_lines["right"])
 
         blue_line = stable_lines["infront"]
-        blue_line_side = front_line_side_presence(edges, blue_line)
+        raw_blue_line_side = front_line_side_presence(edges, blue_line)
+        blue_line_side = self.confirmed_front_side(raw_blue_line_side, blue_line is not None)
         blue_y_center = hough_y_at_x(blue_line, W / 2.0) if blue_line is not None else None
         blue_tilt = line_tilt_px(blue_line, W) if blue_line is not None else None
         line_changing_detected = False
