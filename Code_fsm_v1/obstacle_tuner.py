@@ -101,6 +101,8 @@ def front_line_side_presence(
     height, width = edges.shape[:2]
     if width <= 0 or height <= 0:
         return "NONE"
+    left_limit = width / 3.0
+    right_limit = (2.0 * width) / 3.0
 
     left_hits = 0
     right_hits = 0
@@ -119,9 +121,9 @@ def front_line_side_presence(
         y0 = max(0, y - band_radius)
         y1 = min(height, y + band_radius + 1)
         if np.any(edges[y0:y1, x0:x1] > 0):
-            if x < (width / 2.0):
+            if x <= left_limit:
                 left_hits += 1
-            else:
+            elif x >= right_limit:
                 right_hits += 1
 
     left_present = left_hits >= min_hits
