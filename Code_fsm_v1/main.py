@@ -341,7 +341,7 @@ def front_line_side_presence(
     center_present = center_hits >= min_hits
     right_present = right_hits >= min_hits
     if right_present and not left_present and not center_present:
-        return "RIGHT_ONLY"
+        return "BOTH"
     if left_present and not right_present and not center_present:
         return "LEFT_ONLY"
     if left_present or center_present or right_present:
@@ -733,9 +733,8 @@ class CorridorController:
                             -MAX_STEER_DELTA,
                             MAX_STEER_DELTA,
                         )
-                    elif int(vision["current_side_count"]) == 0 and vision["blue_line_side"] in ("RIGHT_ONLY", "LEFT_ONLY"):
-                        direction = 1.0 if vision["blue_line_side"] == "RIGHT_ONLY" else -1.0
-                        correction = clamp(direction * MAX_STEER_DELTA, -MAX_STEER_DELTA, MAX_STEER_DELTA)
+                    elif int(vision["current_side_count"]) == 0 and vision["blue_line_side"] == "LEFT_ONLY":
+                        correction = clamp(-MAX_STEER_DELTA, -MAX_STEER_DELTA, MAX_STEER_DELTA)
                     else:
                         blue_tilt = vision["blue_tilt"]
                         if blue_tilt is not None:
