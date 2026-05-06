@@ -78,6 +78,7 @@ from fsm_config import (  # noqa: E402
     BLUE_DETECT_CONFIRM_FRAMES,
     BLUE_TO_T_RIGHT_TURN_SPEED,
     FIRST_T_NO_LINE_FORWARD_SPEED,
+    FIRST_T_SIDE_STEER_DELTA,
     FLYWHEEL_SPINUP_TIME,
     FRONT_SIDE_CONFIRM_FRAMES,
     FIRST_T_SIDE_LINES_TOP_FRAC,
@@ -156,6 +157,46 @@ def reverse_line_follow_wheels(left: float, right: float, reverse_speed_limit: f
     reverse_left = clamp(-right, -reverse_limit, reverse_limit)
     reverse_right = clamp(-left, -reverse_limit, reverse_limit)
     return reverse_left, reverse_right
+
+
+def post_t_transition_wheels(vision: dict[str, object]) -> tuple[float, float, str]:
+    current_lines = vision["current_lines"]
+    dashed_side = vision["dashed_side"]
+    left_seen_now = current_lines["left"] is not None
+    right_seen_now = current_lines["right"] is not None
+    using_old_line = bool(dashed_side["left"] or dashed_side["right"])
+
+    if left_seen_now and right_seen_now:
+        correction = 0.0
+        vanishing_point = vision["vanishing_point"]
+        if vanishing_point is not None:
+            error_pixels = float(vanishing_point[0]) - (W / 2.0)
+            if abs(error_pixels) < STEER_DEADBAND_PX:
+                error_pixels = 0.0
+            error_norm = error_pixels / max(W / 2.0, 1.0)
+            correction = clamp(
+                STEER_SIGN * VANISHING_STEER_GAIN * error_norm,
+                -FIRST_T_SIDE_STEER_DELTA,
+                FIRST_T_SIDE_STEER_DELTA,
+            )
+        left = clamp(FIRST_T_NO_LINE_FORWARD_SPEED + correction, -1.0, 1.0)
+        right = clamp(FIRST_T_NO_LINE_FORWARD_SPEED - correction, -1.0, 1.0)
+        return left, right, "BOTH_SIDES_INTERSECTION"
+
+    if left_seen_now:
+        left = clamp(FIRST_T_NO_LINE_FORWARD_SPEED + FIRST_T_SIDE_STEER_DELTA, -1.0, 1.0)
+        right = clamp(FIRST_T_NO_LINE_FORWARD_SPEED - FIRST_T_SIDE_STEER_DELTA, -1.0, 1.0)
+        return left, right, "LEFT_SIDE_ONLY"
+
+    if right_seen_now:
+        left = clamp(FIRST_T_NO_LINE_FORWARD_SPEED - FIRST_T_SIDE_STEER_DELTA, -1.0, 1.0)
+        right = clamp(FIRST_T_NO_LINE_FORWARD_SPEED + FIRST_T_SIDE_STEER_DELTA, -1.0, 1.0)
+        return left, right, "RIGHT_SIDE_ONLY"
+
+    if using_old_line:
+        return FIRST_T_NO_LINE_FORWARD_SPEED, FIRST_T_NO_LINE_FORWARD_SPEED, "OLD_LINE_STRAIGHT"
+
+    return FIRST_T_NO_LINE_FORWARD_SPEED, FIRST_T_NO_LINE_FORWARD_SPEED, "NO_LINE_STRAIGHT"
 
 
 def draw_low_speed_debug(image: np.ndarray, controller, origin: tuple[int, int] = (10, 95)) -> None:
@@ -973,6 +1014,7 @@ def main() -> None:
     aim_stuck_since = 0.0
     aim_last_motion_center: tuple[int, int] | None = None
     aim_boost_until = 0.0
+    aim_boost_sign = 0.0
     shoot_search_direction = 1
     shoot_search_step = 0
     shoot_search_until = 0.0
@@ -1037,21 +1079,21 @@ def main() -> None:
                         print("LOW SPEED SWITCHED ON")
 
             elif fsm_state == STATE_POST_T_STRAIGHT:
-                left, right, main_vis, aux_vis, corridor_state = corridor_controller.update(
+                transition_vision = corridor_controller.vision.process(
                     frame,
                     now,
                     lateral_top_frac=FIRST_T_SIDE_LINES_TOP_FRAC,
                     use_front_line=False,
                 )
-                if corridor_state == "SEARCH_LINES":
-                    left = FIRST_T_NO_LINE_FORWARD_SPEED
-                    right = FIRST_T_NO_LINE_FORWARD_SPEED
+                main_vis = corridor_controller.draw_debug(frame, transition_vision)
+                aux_vis = cv2.cvtColor(transition_vision["edges"], cv2.COLOR_GRAY2BGR)
+                left, right, transition_mode = post_t_transition_wheels(transition_vision)
                 motors.set_speeds(left, right)
                 set_leds_for_corridor(leds)
                 remaining = max(0.0, post_t_until - now)
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Top-third side-line mode: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-                cv2.putText(main_vis, f"Corridor substate: {corridor_state}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Transition mode: {transition_mode}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
                 if now >= post_t_until:
                     music_player.play("couloir.wav")
                     fsm_state = STATE_CORRIDOR_FOLLOW
@@ -1185,6 +1227,7 @@ def main() -> None:
                     aim_stuck_since = 0.0
                     aim_last_motion_center = None
                     aim_boost_until = 0.0
+                    aim_boost_sign = 0.0
                     shoot_search_direction = 1
                     shoot_search_step = 0
                     shoot_search_until = 0.0
@@ -1199,6 +1242,7 @@ def main() -> None:
                     aim_stuck_since = 0.0
                     aim_last_motion_center = None
                     aim_boost_until = 0.0
+                    aim_boost_sign = 0.0
                     shoot_search_until = 0.0
                     if confirm_delay_frames > 0:
                         confirm_delay_frames -= 1
@@ -1264,6 +1308,7 @@ def main() -> None:
                             aim_stuck_since = 0.0
                             aim_last_motion_center = None
                             aim_boost_until = 0.0
+                            aim_boost_sign = 0.0
                         else:
                             target = pick_target_by_shot_order(targets, targets_hit)
                             if target is not None:
@@ -1281,6 +1326,7 @@ def main() -> None:
                         aim_stuck_since = 0.0
                         aim_last_motion_center = None
                         aim_boost_until = 0.0
+                        aim_boost_sign = 0.0
                         if now >= shoot_search_until:
                             search_duration = SHOOT_SEARCH_BASE_SEC + (shoot_search_step * SHOOT_SEARCH_SEC_INCREMENT)
                             shoot_search_direction = 1 if (shoot_search_step % 2) == 0 else -1
@@ -1326,15 +1372,15 @@ def main() -> None:
                                     aim_stuck_since = now
 
                             if now >= aim_boost_until and aim_stuck_since > 0.0 and (now - aim_stuck_since) >= SHOOT_STUCK_TIMEOUT_SEC:
-                                boost_sign = 1.0 if err > 0 else -1.0
-                                shooting_cmd_left = boost_sign * SHOOT_STUCK_BOOST_SPEED
-                                shooting_cmd_right = -boost_sign * SHOOT_STUCK_BOOST_SPEED
+                                aim_boost_sign = 1.0 if err > 0 else -1.0
+                                shooting_cmd_left = aim_boost_sign * SHOOT_STUCK_BOOST_SPEED
+                                shooting_cmd_right = -aim_boost_sign * SHOOT_STUCK_BOOST_SPEED
                                 motors.set_speeds(shooting_cmd_left, shooting_cmd_right)
                                 aim_boost_until = now + SHOOT_STUCK_BOOST_SEC
                                 aim_stuck_since = now
 
                             if now < aim_boost_until:
-                                boost_sign = 1.0 if err > 0 else -1.0
+                                boost_sign = aim_boost_sign if aim_boost_sign != 0.0 else (1.0 if err > 0 else -1.0)
                                 shooting_cmd_left = boost_sign * SHOOT_STUCK_BOOST_SPEED
                                 shooting_cmd_right = -boost_sign * SHOOT_STUCK_BOOST_SPEED
                                 motors.set_speeds(shooting_cmd_left, shooting_cmd_right)
@@ -1342,6 +1388,7 @@ def main() -> None:
                             aim_stuck_since = 0.0
                             aim_last_motion_center = current_center
                             aim_boost_until = 0.0
+                            aim_boost_sign = 0.0
 
                         lock_frames = lock_frames + 1 if locked else 0
                         if lock_frames >= LOCK_FRAMES_REQUIRED:
@@ -1358,6 +1405,7 @@ def main() -> None:
                                 aim_stuck_since = 0.0
                                 aim_last_motion_center = None
                                 aim_boost_until = 0.0
+                                aim_boost_sign = 0.0
                                 time.sleep(POST_SHOT_SETTLE_TIME)
 
                 mission_done = (targets_hit >= NOMBRE_DE_CIBLES) or shooter.is_empty()
