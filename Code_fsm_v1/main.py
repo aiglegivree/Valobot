@@ -1071,7 +1071,7 @@ def main() -> None:
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
                     set_leds_for_line(leds)
                     aura_started = False
-                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, line_controller.steer_cmd)
                     aux_vis = draw_mask_slices(line_res)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -1083,7 +1083,7 @@ def main() -> None:
                     motors.set_speeds(left, right)
                     set_leds_for_line(leds)
                     aura_started = False
-                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, line_controller.steer_cmd)
                     aux_vis = draw_mask_slices(line_res)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -1207,7 +1207,7 @@ def main() -> None:
                     motors.set_speeds(left, right)
                     set_leds_for_line(leds)
                     aura_started = False
-                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, second_line_controller.steer_cmd)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Line mode: {line_mode}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -1459,7 +1459,7 @@ def main() -> None:
 
             elif fsm_state == STATE_POST_SHOOT_DRIVE:
                 set_leds_for_line(leds)
-                main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS)
+                main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, post_shoot_line_controller.steer_cmd)
                 direction_label = "RIGHT" if post_shoot_turn_sign > 0 else "LEFT"
                 action_label = ""
                 status_label = ""

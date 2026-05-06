@@ -447,7 +447,12 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     )
 
 
-def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_thickness: int):
+def draw_debug_slices(
+    frame_bgr: np.ndarray,
+    vision_result: VisionResult,
+    band_thickness: int,
+    steer_cmd: float | None = None,
+):
     out = frame_bgr.copy()
     mask = vision_result.connected_mask
     h_roi, w_roi = mask.shape
@@ -514,6 +519,22 @@ def draw_debug_slices(frame_bgr: np.ndarray, vision_result: VisionResult, band_t
         (0, 255, 0),
         1,
     )
+
+    if steer_cmd is not None:
+        steer_label = f"STEER: {steer_cmd:.2f}"
+        (text_w, text_h), baseline = cv2.getTextSize(steer_label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+        text_x = max(0, (out.shape[1] - text_w) // 2)
+        text_y = max(text_h + 10, 26)
+        pad_x = 10
+        pad_y = 8
+        cv2.rectangle(
+            out,
+            (max(0, text_x - pad_x), max(0, text_y - text_h - pad_y)),
+            (min(out.shape[1] - 1, text_x + text_w + pad_x), min(out.shape[0] - 1, text_y + baseline + pad_y)),
+            (0, 0, 0),
+            -1,
+        )
+        cv2.putText(out, steer_label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
     return out
 
 
