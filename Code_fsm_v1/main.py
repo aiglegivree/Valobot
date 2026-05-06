@@ -162,8 +162,12 @@ def reverse_line_follow_wheels(
     reverse_limit = abs(reverse_speed_limit)
     if not line_seen:
         return -reverse_limit, -reverse_limit
-    reverse_left = clamp(-right, -reverse_limit, reverse_limit)
-    reverse_right = clamp(-left, -reverse_limit, reverse_limit)
+
+    # Keep a strong fixed reverse base speed, and only reuse the steering
+    # differential from the forward line-follow command.
+    steer_delta = 0.5 * (left - right)
+    reverse_left = clamp(-reverse_limit + steer_delta, -1.0, 0.0)
+    reverse_right = clamp(-reverse_limit - steer_delta, -1.0, 0.0)
     return reverse_left, reverse_right
 
 
