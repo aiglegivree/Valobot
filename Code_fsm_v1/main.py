@@ -1129,10 +1129,8 @@ def main() -> None:
             fsm_state = STATE_CORRIDOR_FOLLOW
             return
         if mode_key == "t":
-            music_player.play("tir.wav")
-            shooter.spin_flywheel(True)
-            time.sleep(FLYWHEEL_SPINUP_TIME)
-            fsm_state = STATE_SHOOTING
+            second_line_controller.reset()
+            fsm_state = STATE_LINE_TO_SECOND_T
             return
         if mode_key == "s":
             post_shoot_phase = POST_SHOOT_PHASE_DRIVE_FORWARD
