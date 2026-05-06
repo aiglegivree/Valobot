@@ -1341,7 +1341,7 @@ def main() -> None:
                         shoot_search_direction = 1
                         shoot_search_step = 0
                         last_target_center = (target["cx"], target["cy"])
-                        locked, err = aim_to_target(motors, target)
+                        locked, err = aim_to_target(motors, target, apply_command=False)
                         if abs(err) <= CENTER_TOL:
                             shooting_cmd_left = 0.0
                             shooting_cmd_right = 0.0
@@ -1389,6 +1389,8 @@ def main() -> None:
                             aim_last_motion_center = current_center
                             aim_boost_until = 0.0
                             aim_boost_sign = 0.0
+
+                        motors.set_speeds(shooting_cmd_left, shooting_cmd_right)
 
                         lock_frames = lock_frames + 1 if locked else 0
                         if lock_frames >= LOCK_FRAMES_REQUIRED:

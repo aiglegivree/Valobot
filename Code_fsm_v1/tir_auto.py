@@ -208,19 +208,21 @@ def pick_target_by_shot_order(targets, confirmed_hits: int):
     return targets_by_x[len(targets_by_x) // 2]
 
 
-def aim_to_target(motors: MotorDriver, target):
+def aim_to_target(motors: MotorDriver, target, *, apply_command: bool = True):
     err = target["cx"] - (W // 2)
 
     if abs(err) <= CENTER_TOL:
-        motors.set_speeds(0, 0)
+        if apply_command:
+            motors.set_speeds(0, 0)
         return True, err
 
     max_err = max(W / 2.0, 1.0)
     err_ratio = min(abs(err) / max_err, 1.0)
     turn_speed = MIN_AIM_TURN_SPEED + (TURN_SPEED - MIN_AIM_TURN_SPEED) * err_ratio
-    if err > 0:
-        motors.set_speeds(turn_speed, -turn_speed)
-    else:
-        motors.set_speeds(-turn_speed, turn_speed)
+    if apply_command:
+        if err > 0:
+            motors.set_speeds(turn_speed, -turn_speed)
+        else:
+            motors.set_speeds(-turn_speed, turn_speed)
 
     return False, err
