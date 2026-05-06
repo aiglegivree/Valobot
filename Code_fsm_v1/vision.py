@@ -358,10 +358,10 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     )
 
     seen_bot = raw_cx_bot_gated is not None
-    top_near_center = raw_cx_top is not None and abs(raw_cx_top - cx_ref) <= CENTER_EXCEPTION_DIST
-    mid_near_center = raw_cx_mid is not None and abs(raw_cx_mid - cx_ref) <= CENTER_EXCEPTION_DIST
-    allow_top = seen_bot or top_near_center
-    allow_mid = seen_bot or mid_near_center
+    top_near_center = False
+    mid_near_center = False
+    allow_top = seen_bot
+    allow_mid = seen_bot
     bottom_slice_full_white = is_band_full_white(slice_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
 
     cx_top = SLICE_POINT_HISTORY.update("top", raw_cx_top if allow_top else None)
