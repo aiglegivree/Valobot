@@ -96,10 +96,7 @@ class Controller:
         if not getattr(vision_result, "seen_top", False):
             return
 
-        if getattr(vision_result, "seen_bot", False):
-            err_px = float(vision_result.cx_top - vision_result.cx_bot)
-        else:
-            err_px = vision_result.err_top
+        err_px = vision_result.err_top
         if err_px > STEER_DEADZONE:
             self.last_green_turn_sign = +1
         elif err_px < -STEER_DEADZONE:
