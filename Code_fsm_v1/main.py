@@ -1025,10 +1025,10 @@ def main() -> None:
         steer_gain=0.10,
     )
     post_shoot_line_controller = Controller(
-        base_speed=0.25,
-        turn_speed=0.25,
-        blind_speed=0.25,
-        search_speed=0.25,
+        base_speed=0.20,
+        turn_speed=0.20,
+        blind_speed=0.20,
+        search_speed=0.20,
         steer_gain=0.10,
     )
     corridor_controller = CorridorController()
