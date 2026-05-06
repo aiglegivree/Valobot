@@ -1582,16 +1582,15 @@ def main() -> None:
                         post_shoot_phase = POST_SHOOT_PHASE_ALIGN
                         post_shoot_line_controller.reset()
                 elif post_shoot_phase == POST_SHOOT_PHASE_ALIGN:
-                    back_left, back_right, _, _, line_mode = post_shoot_line_controller.update(line_res)
-                    reverse_left, reverse_right = reverse_line_follow_wheels(
-                        back_left,
-                        back_right,
-                        POST_SHOOT_BACK_SPEED,
-                        line_seen=bool(line_res.any_seen),
-                    )
-                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, reverse_left, reverse_right)
-                    motors.set_speeds(reverse_left, reverse_right)
-                    action_label = "Action: reverse straight unless line is visible"
+                    left, right, _, _, line_mode = post_shoot_line_controller.update(line_res)
+                    if line_res.any_seen:
+                        cmd_left, cmd_right = left, right
+                        action_label = "Action: line follow until T is detected"
+                    else:
+                        cmd_left, cmd_right = POST_SHOOT_BACK_SPEED, POST_SHOOT_BACK_SPEED
+                        action_label = "Action: straight forward until line is visible"
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, cmd_left, cmd_right)
+                    motors.set_speeds(cmd_left, cmd_right)
                     status_label = f"Line mode: {line_mode} | T: {'YES' if line_res.t_detected else 'NO'}"
                     aux_vis = draw_mask_slices(line_res)
                     if line_res.t_detected:
