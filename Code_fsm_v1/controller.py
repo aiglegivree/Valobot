@@ -261,8 +261,7 @@ class Controller:
 
             if self.stuck_boost_active:
                 speed = max(speed, STUCK_BOOST_SPEED)
-
-            if use_low_speed:
+            elif use_low_speed:
                 speed = min(speed, self.low_speed)
         else:
             self.lost_count += 1
@@ -292,7 +291,7 @@ class Controller:
                 self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.18)
                 speed = 0.0
 
-            if use_low_speed:
+            if not self.stuck_boost_active and use_low_speed:
                 speed = min(speed, self.low_speed)
 
         steer = clamp(self.steer_cmd, -1.0, 1.0)
