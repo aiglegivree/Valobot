@@ -77,6 +77,7 @@ from corridor_config import (  # noqa: E402
 from fsm_config import (  # noqa: E402
     BLUE_DETECT_CONFIRM_FRAMES,
     BLUE_TO_T_RIGHT_TURN_SPEED,
+    FIRST_T_NO_LINE_FORWARD_SPEED,
     FLYWHEEL_SPINUP_TIME,
     FRONT_SIDE_CONFIRM_FRAMES,
     FIRST_T_SIDE_LINES_TOP_FRAC,
@@ -148,6 +149,13 @@ TURN_REACQUIRE_GUIDE_COLOR = (255, 255, 0)
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def reverse_line_follow_wheels(left: float, right: float, reverse_speed_limit: float) -> tuple[float, float]:
+    reverse_limit = abs(reverse_speed_limit)
+    reverse_left = clamp(-right, -reverse_limit, reverse_limit)
+    reverse_right = clamp(-left, -reverse_limit, reverse_limit)
+    return reverse_left, reverse_right
 
 
 def draw_low_speed_debug(image: np.ndarray, controller, origin: tuple[int, int] = (10, 95)) -> None:
@@ -1035,6 +1043,9 @@ def main() -> None:
                     lateral_top_frac=FIRST_T_SIDE_LINES_TOP_FRAC,
                     use_front_line=False,
                 )
+                if corridor_state == "SEARCH_LINES":
+                    left = FIRST_T_NO_LINE_FORWARD_SPEED
+                    right = FIRST_T_NO_LINE_FORWARD_SPEED
                 motors.set_speeds(left, right)
                 set_leds_for_corridor(leds)
                 remaining = max(0.0, post_t_until - now)
@@ -1390,10 +1401,16 @@ def main() -> None:
                 status_label = ""
 
                 if post_shoot_phase == POST_SHOOT_PHASE_BACK_UP:
-                    motors.set_speeds(POST_SHOOT_BACK_SPEED, POST_SHOOT_BACK_SPEED)
+                    back_left, back_right, _, _, line_mode = post_shoot_line_controller.update(line_res)
+                    reverse_left, reverse_right = reverse_line_follow_wheels(
+                        back_left,
+                        back_right,
+                        POST_SHOOT_BACK_SPEED,
+                    )
+                    motors.set_speeds(reverse_left, reverse_right)
                     remaining = max(0.0, post_shoot_back_until - now)
-                    action_label = "Action: backing up before line reacquire"
-                    status_label = f"Reverse for: {remaining:.2f}s"
+                    action_label = "Action: reverse line follow before forward reacquire"
+                    status_label = f"Reverse for: {remaining:.2f}s | Line mode: {line_mode}"
                     aux_vis = draw_mask_slices(line_res)
                     if now >= post_shoot_back_until:
                         motors.stop()
@@ -1426,7 +1443,7 @@ def main() -> None:
                 cv2.putText(main_vis, status_label, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Remembered line direction: {direction_label}", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 cv2.putText(main_vis, action_label, (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
-                if post_shoot_phase == POST_SHOOT_PHASE_ALIGN:
+                if post_shoot_phase in (POST_SHOOT_PHASE_BACK_UP, POST_SHOOT_PHASE_ALIGN):
                     draw_low_speed_debug(main_vis, post_shoot_line_controller)
                     if post_shoot_line_controller.low_speed_just_latched:
                         print("LOW SPEED SWITCHED ON")
