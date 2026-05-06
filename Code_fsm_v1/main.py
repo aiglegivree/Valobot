@@ -97,6 +97,7 @@ from fsm_config import (  # noqa: E402
     RECORD_RUN_VIDEO,
     RETURN_T_IGNORE_SECONDS,
     SHOOT_SEARCH_BASE_SEC,
+    SHOOT_ENTRY_SETTLE_SEC,
     SHOOT_SEARCH_SEC_INCREMENT,
     SHOOT_SEARCH_TURN_SPEED,
     SHOOT_STUCK_BOOST_SEC,
@@ -1080,6 +1081,7 @@ def main() -> None:
     shoot_search_direction = 1
     shoot_search_step = 0
     shoot_search_until = 0.0
+    shooting_entry_until = 0.0
     shooting_cmd_left = 0.0
     shooting_cmd_right = 0.0
 
@@ -1090,7 +1092,7 @@ def main() -> None:
         nonlocal pending_target_before_shot, confirm_delay_frames, targets_hit
         nonlocal blue_detect_frames, post_shoot_turn_sign, aim_stuck_since
         nonlocal aim_last_motion_center, aim_boost_until, aim_boost_sign
-        nonlocal shoot_search_direction, shoot_search_step, shoot_search_until
+        nonlocal shoot_search_direction, shoot_search_step, shoot_search_until, shooting_entry_until
         nonlocal shooting_cmd_left, shooting_cmd_right
 
         shooter.reset_ammo()
@@ -1124,6 +1126,7 @@ def main() -> None:
         shoot_search_direction = 1
         shoot_search_step = 0
         shoot_search_until = 0.0
+        shooting_entry_until = 0.0
         shooting_cmd_left = 0.0
         shooting_cmd_right = 0.0
 
@@ -1358,6 +1361,7 @@ def main() -> None:
                     shoot_search_direction = 1
                     shoot_search_step = 0
                     shoot_search_until = 0.0
+                    shooting_entry_until = now + SHOOT_ENTRY_SETTLE_SEC
 
             elif fsm_state == STATE_SHOOTING:
                 set_leds_for_shooting(leds)
@@ -1365,7 +1369,28 @@ def main() -> None:
                 shooting_cmd_left = 0.0
                 shooting_cmd_right = 0.0
 
-                if pending_shot:
+                if now < shooting_entry_until:
+                    motors.set_speeds(0.0, 0.0)
+                    main_vis = frame.copy()
+                    for t in targets:
+                        x, y, w, h = t["bbox"]
+                        cv2.rectangle(main_vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                        cv2.circle(main_vis, (t["cx"], t["cy"]), 4, (0, 0, 255), -1)
+                    cv2.line(main_vis, (W // 2, 0), (W // 2, H), (255, 255, 255), 1)
+                    cv2.line(main_vis, (W // 2 - CENTER_TOL, 0), (W // 2 - CENTER_TOL, H), (0, 255, 255), 1)
+                    cv2.line(main_vis, (W // 2 + CENTER_TOL, 0), (W // 2 + CENTER_TOL, H), (0, 255, 255), 1)
+                    cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                    cv2.putText(main_vis, f"HITS: {targets_hit}/{NOMBRE_DE_CIBLES}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                    cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                    cv2.putText(main_vis, f"SETTLING: {max(0.0, shooting_entry_until - now):.2f}s", (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                    aux_vis = blue_mask
+                    goto_after_shooting_settle = True
+                else:
+                    goto_after_shooting_settle = False
+
+                if goto_after_shooting_settle:
+                    pass
+                elif pending_shot:
                     aim_stuck_since = 0.0
                     aim_last_motion_center = None
                     aim_boost_until = 0.0
