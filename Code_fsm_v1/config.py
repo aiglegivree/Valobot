@@ -32,7 +32,6 @@ W_BOT = 0.60
 
 # bottom gating
 BOTTOM_SLICE_MAX_DIST = 150
-CENTER_EXCEPTION_DIST = 30
 
 # black threshold in HSV
 BLACK_H_LOW = 0

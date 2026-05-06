@@ -15,7 +15,6 @@ from config import (
     BLACK_V_HIGH,
     BLACK_V_LOW,
     BOTTOM_SLICE_MAX_DIST,
-    CENTER_EXCEPTION_DIST,
     CORNER_APPROX_EPSILON_FRAC,
     CORNER_MAX_ANGLE_DEG,
     CORNER_MIN_CONTOUR_AREA,
@@ -54,8 +53,6 @@ class VisionResult:
     seen_top: bool
     seen_mid: bool
     seen_bot: bool
-    top_near_center: bool
-    mid_near_center: bool
     allow_top: bool
     allow_mid: bool
     any_seen: bool
@@ -358,8 +355,6 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     )
 
     seen_bot = raw_cx_bot_gated is not None
-    top_near_center = False
-    mid_near_center = False
     allow_top = seen_bot
     allow_mid = seen_bot
     bottom_slice_full_white = is_band_full_white(slice_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
@@ -434,8 +429,6 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         seen_top=seen_top,
         seen_mid=seen_mid,
         seen_bot=seen_bot,
-        top_near_center=top_near_center,
-        mid_near_center=mid_near_center,
         allow_top=allow_top,
         allow_mid=allow_mid,
         any_seen=any_seen,
@@ -474,21 +467,6 @@ def draw_debug_slices(
 
     cv2.rectangle(out, (0, roi_start), (w_roi - 1, roi_start + h_roi - 1), (0, 255, 255), 2)
     cv2.line(out, (cx_ref, roi_start), (cx_ref, roi_start + h_roi - 1), (255, 0, 0), 2)
-
-    center_x0 = max(0, cx_ref - CENTER_EXCEPTION_DIST)
-    center_x1 = min(w_roi - 1, cx_ref + CENTER_EXCEPTION_DIST)
-    for y, allowed in [
-        (vision_result.y_top, vision_result.allow_top),
-        (vision_result.y_mid, vision_result.allow_mid),
-    ]:
-        color = (0, 180, 0) if allowed else (0, 0, 180)
-        cv2.rectangle(
-            out,
-            (center_x0, roi_start + max(0, y - band_thickness)),
-            (center_x1, roi_start + min(h_roi - 1, y + band_thickness)),
-            color,
-            1,
-        )
 
     x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
     x1 = min(w_roi - 1, cx_ref + BOTTOM_SLICE_MAX_DIST)
@@ -539,7 +517,7 @@ def draw_debug_slices(
         (0, 255, 0),
         "TOP",
         vision_result.allow_top,
-        vision_result.top_near_center,
+        False,
     )
     draw_one(
         vision_result.y_mid,
@@ -548,7 +526,7 @@ def draw_debug_slices(
         (0, 200, 255),
         "MID",
         vision_result.allow_mid,
-        vision_result.mid_near_center,
+        False,
     )
     draw_one(
         vision_result.y_bot,
@@ -633,21 +611,6 @@ def draw_mask_slices(vision_result: VisionResult):
             cv2.circle(vis, (raw_cx, y), 3, (255, 255, 255), -1)
         if cx is not None:
             cv2.circle(vis, (cx, y), 5, color, -1)
-
-    center_x0 = max(0, cx_ref - CENTER_EXCEPTION_DIST)
-    center_x1 = min(vis.shape[1] - 1, cx_ref + CENTER_EXCEPTION_DIST)
-    for y, allowed in [
-        (vision_result.y_top, vision_result.allow_top),
-        (vision_result.y_mid, vision_result.allow_mid),
-    ]:
-        color = (0, 180, 0) if allowed else (0, 0, 180)
-        cv2.rectangle(
-            vis,
-            (center_x0, max(0, y - BAND_THICKNESS)),
-            (center_x1, min(vis.shape[0] - 1, y + BAND_THICKNESS)),
-            color,
-            1,
-        )
 
     x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
     x1 = min(vis.shape[1] - 1, cx_ref + BOTTOM_SLICE_MAX_DIST)
