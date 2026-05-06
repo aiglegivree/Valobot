@@ -1199,7 +1199,7 @@ def main() -> None:
                     lateral_top_frac=FIRST_T_SIDE_LINES_TOP_FRAC,
                     use_front_line=False,
                 )
-                main_vis = corridor_controller.draw_debug(frame, transition_vision)
+                main_vis = corridor_controller.draw_debug(frame, transition_vision, now)
                 aux_vis = cv2.cvtColor(transition_vision["edges"], cv2.COLOR_GRAY2BGR)
                 left, right, transition_mode = post_t_transition_wheels(transition_vision)
                 motors.set_speeds(left, right)
