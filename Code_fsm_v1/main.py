@@ -621,6 +621,7 @@ class CorridorController:
         self.command_right = 0.0
         self.blind_until = 0.0
         self.turn_deadline = 0.0
+        self.turn_deadline_alert_until = 0.0
         self.search_turn_direction = "RIGHT"
         self.search_turn_until = 0.0
         self.line_change_turn_until = 0.0
@@ -633,6 +634,7 @@ class CorridorController:
         self.command_right = 0.0
         self.blind_until = 0.0
         self.turn_deadline = 0.0
+        self.turn_deadline_alert_until = 0.0
         self.search_turn_direction = "RIGHT"
         self.search_turn_until = 0.0
         self.line_change_turn_until = 0.0
@@ -783,6 +785,7 @@ class CorridorController:
                 self.command_right = 0.0
                 self.vision.reset_for_forward()
             elif now >= self.turn_deadline:
+                self.turn_deadline_alert_until = now + 1.0
                 if self.turn_phase == 1:
                     self.turn_phase = 2
                     self.turn_direction = "LEFT" if self.turn_direction == "RIGHT" else "RIGHT"
@@ -827,7 +830,10 @@ class CorridorController:
         turn_reacquire_y = int(round(H * TURN_REACQUIRE_TOP_FRAC))
         blind_remaining = max(0.0, self.blind_until - now)
         deadline_remaining = max(0.0, self.turn_deadline - now)
-        turn_deadline_reached = self.state == "TURN" and self.turn_deadline > 0.0 and now >= self.turn_deadline
+        turn_deadline_reached = now < self.turn_deadline_alert_until
+        turn_timer_color = (0, 0, 255) if self.state == "TURN" else (255, 255, 255)
+        left_target_x = int(round(W * SIDE_BLUE_TARGET_FRAC))
+        right_target_x = int(round(W * (1.0 - SIDE_BLUE_TARGET_FRAC)))
 
         if stable_lines["right"] is not None:
             draw_line(overlay, stable_lines["right"], RIGHT_COLOR, dashed=bool(dashed_side["right"]))
@@ -854,6 +860,9 @@ class CorridorController:
             if 0 <= ix < W and 0 <= iy < H:
                 cv2.circle(overlay, (int(round(ix)), int(round(iy))), 5, color, -1)
 
+        cv2.line(overlay, (left_target_x, 0), (left_target_x, H - 1), (0, 0, 0), 2)
+        cv2.line(overlay, (right_target_x, 0), (right_target_x, H - 1), (0, 0, 0), 2)
+
         cv2.line(overlay, (0, turn_trigger_y), (W - 1, turn_trigger_y), TURN_TRIGGER_GUIDE_COLOR, 1)
         cv2.line(overlay, (0, turn_reacquire_y), (W - 1, turn_reacquire_y), TURN_REACQUIRE_GUIDE_COLOR, 1)
         cv2.putText(
@@ -879,8 +888,8 @@ class CorridorController:
         cv2.putText(overlay, f"Corridor state: {self.state}", (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         cv2.putText(overlay, f"Turn direction var: {vision['turn_direction']}", (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
         cv2.putText(overlay, f"Cmd L/R: {self.command_left:.2f} / {self.command_right:.2f}", (10, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
-        cv2.putText(overlay, f"Blind left: {blind_remaining:.2f}s", (10, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
-        cv2.putText(overlay, f"Turn time left: {deadline_remaining:.2f}s", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        cv2.putText(overlay, f"Blind left: {blind_remaining:.2f}s", (10, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.45, turn_timer_color, 1)
+        cv2.putText(overlay, f"Turn time left: {deadline_remaining:.2f}s", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.45, turn_timer_color, 1)
         if bool(vision.get("line_changing_warning_active", False)):
             cv2.putText(
                 overlay,
