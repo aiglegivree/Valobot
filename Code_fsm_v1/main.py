@@ -970,6 +970,10 @@ def build_t_blue_debug(line_res, blue_mask: np.ndarray | None) -> np.ndarray:
     return combined
 
 
+def relaxed_t_detected(line_res) -> bool:
+    return bool(getattr(line_res, "seen_bot", False)) and int(getattr(line_res, "corner_count", 0) or 0) >= T_CORNERS
+
+
 def create_run_video_writer(frame_size: tuple[int, int]) -> cv2.VideoWriter | None:
     if not RECORD_RUN_VIDEO:
         return None
@@ -1299,7 +1303,8 @@ def main() -> None:
                 )
                 left, right, _, _, line_mode = second_line_controller.update(line_res)
                 post_shoot_turn_sign = second_line_controller.last_turn_sign
-                if line_res.t_detected:
+                second_t_seen = relaxed_t_detected(line_res)
+                if second_t_seen:
                     motors.set_speeds(T_LIM_SPEED, T_LIM_SPEED)
                     post_second_t_until = now + T_LIM_TIME
                     fsm_state = STATE_POST_SECOND_T_STRAIGHT
@@ -1583,6 +1588,7 @@ def main() -> None:
                         post_shoot_line_controller.reset()
                 elif post_shoot_phase == POST_SHOOT_PHASE_ALIGN:
                     left, right, _, _, line_mode = post_shoot_line_controller.update(line_res)
+                    final_t_seen = relaxed_t_detected(line_res)
                     if line_res.any_seen:
                         cmd_left, cmd_right = left, right
                         action_label = "Action: line follow until T is detected"
@@ -1591,9 +1597,9 @@ def main() -> None:
                         action_label = "Action: straight forward until line is visible"
                     main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, cmd_left, cmd_right)
                     motors.set_speeds(cmd_left, cmd_right)
-                    status_label = f"Line mode: {line_mode} | T: {'YES' if line_res.t_detected else 'NO'}"
+                    status_label = f"Line mode: {line_mode} | T: {'YES' if final_t_seen else 'NO'}"
                     aux_vis = draw_mask_slices(line_res)
-                    if line_res.t_detected:
+                    if final_t_seen:
                         motors.set_speeds(POST_SHOOT_DRIVE_SPEED, POST_SHOOT_DRIVE_SPEED)
                         post_shoot_until = now + POST_SHOOT_DRIVE_SEC
                         post_shoot_phase = POST_SHOOT_PHASE_DRIVE_FORWARD
