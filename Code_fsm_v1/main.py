@@ -1582,7 +1582,7 @@ def main() -> None:
                         back_left,
                         back_right,
                         POST_SHOOT_BACK_SPEED,
-                        line_seen=bool(line_res.any_seen),
+                        line_seen=bool(line_res.seen_bot),
                     )
                     main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, reverse_left, reverse_right)
                     motors.set_speeds(reverse_left, reverse_right)
