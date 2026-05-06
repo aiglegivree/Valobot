@@ -58,9 +58,8 @@ class MotorDriver:
             return current - max_step
         return target
 
-    def _set_one(self, pwm, in1, in2, value: float):
+    def _apply_direction(self, in1, in2, value: float) -> float:
         value = max(-1.0, min(1.0, value))
-        duty = abs(value) * 100.0
 
         if value > 0:
             GPIO.output(in1, GPIO.HIGH)
@@ -72,7 +71,7 @@ class MotorDriver:
             GPIO.output(in1, GPIO.LOW)
             GPIO.output(in2, GPIO.LOW)
 
-        pwm.ChangeDutyCycle(duty)
+        return abs(value) * 100.0
 
     def set_speeds(self, left: float, right: float):
         left_target = max(-1.0, min(1.0, left * LEFT_TRIM * DRIVE_SPEED_FACTOR))
@@ -85,16 +84,22 @@ class MotorDriver:
         left_limited = self._limit_accel(self.last_left_cmd, left_target, max_step)
         right_limited = self._limit_accel(self.last_right_cmd, right_target, max_step)
 
-        self._set_one(self.pwm_left, LEFT_IN1, LEFT_IN2, left_limited)
-        self._set_one(self.pwm_right, RIGHT_IN1, RIGHT_IN2, right_limited)
+        left_duty = self._apply_direction(LEFT_IN1, LEFT_IN2, left_limited)
+        right_duty = self._apply_direction(RIGHT_IN1, RIGHT_IN2, right_limited)
+
+        # Apply both PWM duty updates only after both direction pin states are set.
+        self.pwm_left.ChangeDutyCycle(left_duty)
+        self.pwm_right.ChangeDutyCycle(right_duty)
 
         self.last_left_cmd = left_limited
         self.last_right_cmd = right_limited
         self.last_update_time = now
 
     def stop(self):
-        self._set_one(self.pwm_left, LEFT_IN1, LEFT_IN2, 0.0)
-        self._set_one(self.pwm_right, RIGHT_IN1, RIGHT_IN2, 0.0)
+        left_duty = self._apply_direction(LEFT_IN1, LEFT_IN2, 0.0)
+        right_duty = self._apply_direction(RIGHT_IN1, RIGHT_IN2, 0.0)
+        self.pwm_left.ChangeDutyCycle(left_duty)
+        self.pwm_right.ChangeDutyCycle(right_duty)
         self.last_left_cmd = 0.0
         self.last_right_cmd = 0.0
         self.last_update_time = time.monotonic()
