@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 from collections import deque
 from pathlib import Path
 import atexit
