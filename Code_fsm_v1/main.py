@@ -1035,6 +1035,71 @@ def main() -> None:
     shooting_cmd_left = 0.0
     shooting_cmd_right = 0.0
 
+    def reset_run_context() -> None:
+        nonlocal aura_started, post_t_until, post_second_t_until, post_shoot_back_until
+        nonlocal post_shoot_until, post_shoot_phase, lock_frames, last_target_center
+        nonlocal locked_target_ref, locked_target_miss_count, pending_shot
+        nonlocal pending_target_before_shot, confirm_delay_frames, targets_hit
+        nonlocal blue_detect_frames, post_shoot_turn_sign, aim_stuck_since
+        nonlocal aim_last_motion_center, aim_boost_until, aim_boost_sign
+        nonlocal shoot_search_direction, shoot_search_step, shoot_search_until
+        nonlocal shooting_cmd_left, shooting_cmd_right
+
+        shooter.reset_ammo()
+        shooter.spin_flywheel(False)
+        line_controller.reset()
+        second_line_controller.reset()
+        post_shoot_line_controller.reset()
+        corridor_controller.reset()
+        motors.stop()
+        aura_started = False
+        post_t_until = 0.0
+        post_second_t_until = 0.0
+        post_shoot_back_until = 0.0
+        post_shoot_until = 0.0
+        post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
+        lock_frames = 0
+        last_target_center = None
+        locked_target_ref = None
+        locked_target_miss_count = 0
+        pending_shot = False
+        pending_target_before_shot = None
+        confirm_delay_frames = 0
+        targets_hit = 0
+        blue_detect_frames = 0
+        post_shoot_turn_sign = 1
+        aim_stuck_since = 0.0
+        aim_last_motion_center = None
+        aim_boost_until = 0.0
+        aim_boost_sign = 0.0
+        shoot_search_direction = 1
+        shoot_search_step = 0
+        shoot_search_until = 0.0
+        shooting_cmd_left = 0.0
+        shooting_cmd_right = 0.0
+
+    def start_run(mode_key: str, now: float) -> None:
+        nonlocal fsm_state, post_shoot_until, post_shoot_phase
+
+        reset_run_context()
+        if mode_key in ("r", "l"):
+            fsm_state = STATE_LINE_FOLLOW
+            return
+        if mode_key == "c":
+            fsm_state = STATE_CORRIDOR_FOLLOW
+            return
+        if mode_key == "t":
+            music_player.play("tir.wav")
+            shooter.spin_flywheel(True)
+            time.sleep(FLYWHEEL_SPINUP_TIME)
+            fsm_state = STATE_SHOOTING
+            return
+        if mode_key == "s":
+            post_shoot_phase = POST_SHOOT_PHASE_DRIVE_FORWARD
+            post_shoot_until = now + POST_SHOOT_DRIVE_SEC
+            fsm_state = STATE_POST_SHOOT_DRIVE
+            return
+
     if SHOW_DEBUG:
         setup_windows()
 
@@ -1056,7 +1121,7 @@ def main() -> None:
                 set_leds_for_line(leds)
                 main_vis = frame.copy()
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
-                cv2.putText(main_vis, "Press R to start run", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, "L/R line | C corridor | T shooting | S final straight", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
 
@@ -1534,35 +1599,8 @@ def main() -> None:
                 cv2.imshow(MAIN_WINDOW, main_vis)
                 cv2.imshow(AUX_WINDOW, aux_vis)
                 key = cv2.waitKey(1) & 0xFF
-                if key == ord("r") and fsm_state == STATE_RELOAD:
-                    shooter.reset_ammo()
-                    line_controller.reset()
-                    second_line_controller.reset()
-                    post_shoot_line_controller.reset()
-                    corridor_controller.reset()
-                    aura_started = False
-                    post_t_until = 0.0
-                    post_second_t_until = 0.0
-                    post_shoot_back_until = 0.0
-                    post_shoot_until = 0.0
-                    post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
-                    lock_frames = 0
-                    last_target_center = None
-                    locked_target_ref = None
-                    locked_target_miss_count = 0
-                    pending_shot = False
-                    pending_target_before_shot = None
-                    confirm_delay_frames = 0
-                    targets_hit = 0
-                    blue_detect_frames = 0
-                    post_shoot_turn_sign = 1
-                    aim_stuck_since = 0.0
-                    aim_last_motion_center = None
-                    aim_boost_until = 0.0
-                    shoot_search_direction = 1
-                    shoot_search_step = 0
-                    shoot_search_until = 0.0
-                    fsm_state = STATE_LINE_FOLLOW
+                if fsm_state == STATE_RELOAD and key in (ord("r"), ord("l"), ord("c"), ord("t"), ord("s")):
+                    start_run(chr(key), now)
                 if key == 27 or key == ord("q"):
                     break
 
