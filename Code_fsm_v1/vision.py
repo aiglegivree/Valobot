@@ -336,18 +336,18 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
     )
     connected_mask = apply_black_border(connected_mask)
-    h_td, w_td = slice_mask.shape
+    h_td, w_td = connected_mask.shape
     cx_ref = w_td // 2
 
     y_top = int(SLICE_TOP_FRAC * h_td)
     y_mid = int(SLICE_MID_FRAC * h_td)
     y_bot = int(SLICE_BOT_FRAC * h_td)
 
-    raw_cx_top, _, _, _, width_top, _ = get_band_info(slice_mask, SLICE_TOP_FRAC, BAND_THICKNESS)
-    raw_cx_mid, _, _, _, width_mid, _ = get_band_info(slice_mask, SLICE_MID_FRAC, BAND_THICKNESS)
-    raw_cx_bot, _, _, _, _, _ = get_band_info(slice_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+    raw_cx_top, _, _, _, width_top, _ = get_band_info(connected_mask, SLICE_TOP_FRAC, BAND_THICKNESS)
+    raw_cx_mid, _, _, _, width_mid, _ = get_band_info(connected_mask, SLICE_MID_FRAC, BAND_THICKNESS)
+    raw_cx_bot, _, _, _, _, _ = get_band_info(connected_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
     raw_cx_bot_gated, _, _, _, width_bot_gated, _ = get_band_info(
-        slice_mask,
+        connected_mask,
         SLICE_BOT_FRAC,
         BAND_THICKNESS,
         x_center=cx_ref,
@@ -357,7 +357,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     seen_bot = raw_cx_bot_gated is not None
     allow_top = seen_bot
     allow_mid = seen_bot
-    bottom_slice_full_white = is_band_full_white(slice_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+    bottom_slice_full_white = is_band_full_white(connected_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
 
     cx_top = SLICE_POINT_HISTORY.update("top", raw_cx_top if allow_top else None)
     cx_mid = SLICE_POINT_HISTORY.update("mid", raw_cx_mid if allow_mid else None)
@@ -446,7 +446,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         corners=corners,
         t_left_bar_x=t_left_bar_x,
         t_right_bar_x=t_right_bar_x,
-        mask=slice_mask,
+        mask=connected_mask,
         connected_mask=connected_mask,
         shape_mask=shape_connected_mask,
     )
