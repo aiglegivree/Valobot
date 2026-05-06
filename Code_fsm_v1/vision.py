@@ -44,6 +44,9 @@ class VisionResult:
     cx_top: int | None
     cx_mid: int | None
     cx_bot: int | None
+    raw_cx_top: int | None
+    raw_cx_mid: int | None
+    raw_cx_bot: int | None
     err_top: float
     err_mid: float
     err_bot: float
@@ -51,6 +54,10 @@ class VisionResult:
     seen_top: bool
     seen_mid: bool
     seen_bot: bool
+    top_near_center: bool
+    mid_near_center: bool
+    allow_top: bool
+    allow_mid: bool
     any_seen: bool
     all_seen: bool
     roi_start: int
@@ -341,7 +348,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
 
     raw_cx_top, _, _, _, width_top, _ = get_band_info(shared_mask, SLICE_TOP_FRAC, BAND_THICKNESS)
     raw_cx_mid, _, _, _, width_mid, _ = get_band_info(shared_mask, SLICE_MID_FRAC, BAND_THICKNESS)
-    raw_cx_bot, _, _, _, width_bot, _ = get_band_info(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+    raw_cx_bot, _, _, _, _, _ = get_band_info(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
     raw_cx_bot_gated, _, _, _, width_bot_gated, _ = get_band_info(
         shared_mask,
         SLICE_BOT_FRAC,
@@ -350,23 +357,21 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
     )
 
-    cx_top = SLICE_POINT_HISTORY.update("top", raw_cx_top)
-    cx_mid = SLICE_POINT_HISTORY.update("mid", raw_cx_mid)
-    cx_bot = SLICE_POINT_HISTORY.update("bot", raw_cx_bot)
-    cx_bot_gated = SLICE_POINT_HISTORY.update("bot_gated", raw_cx_bot_gated)
-    bottom_slice_full_white = is_band_full_white(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
-
-    seen_bot = cx_bot_gated is not None
-    top_near_center = cx_top is not None and abs(cx_top - cx_ref) <= CENTER_EXCEPTION_DIST
-    mid_near_center = cx_mid is not None and abs(cx_mid - cx_ref) <= CENTER_EXCEPTION_DIST
+    seen_bot = raw_cx_bot_gated is not None
+    top_near_center = raw_cx_top is not None and abs(raw_cx_top - cx_ref) <= CENTER_EXCEPTION_DIST
+    mid_near_center = raw_cx_mid is not None and abs(raw_cx_mid - cx_ref) <= CENTER_EXCEPTION_DIST
     allow_top = seen_bot or top_near_center
     allow_mid = seen_bot or mid_near_center
+    bottom_slice_full_white = is_band_full_white(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+
+    cx_top = SLICE_POINT_HISTORY.update("top", raw_cx_top if allow_top else None)
+    cx_mid = SLICE_POINT_HISTORY.update("mid", raw_cx_mid if allow_mid else None)
+    cx_bot = SLICE_POINT_HISTORY.update("bot", raw_cx_bot_gated)
+    width_bot = width_bot_gated
 
     if not allow_top:
-        cx_top = None
         width_top = 0
     if not allow_mid:
-        cx_mid = None
         width_mid = 0
 
     seen_top = cx_top is not None
@@ -419,6 +424,9 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         cx_top=cx_top,
         cx_mid=cx_mid,
         cx_bot=cx_bot,
+        raw_cx_top=raw_cx_top,
+        raw_cx_mid=raw_cx_mid,
+        raw_cx_bot=raw_cx_bot_gated,
         err_top=err_top,
         err_mid=err_mid,
         err_bot=err_bot,
@@ -426,6 +434,10 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         seen_top=seen_top,
         seen_mid=seen_mid,
         seen_bot=seen_bot,
+        top_near_center=top_near_center,
+        mid_near_center=mid_near_center,
+        allow_top=allow_top,
+        allow_mid=allow_mid,
         any_seen=any_seen,
         all_seen=all_seen,
         roi_start=roi_start,
@@ -463,6 +475,21 @@ def draw_debug_slices(
     cv2.rectangle(out, (0, roi_start), (w_roi - 1, roi_start + h_roi - 1), (0, 255, 255), 2)
     cv2.line(out, (cx_ref, roi_start), (cx_ref, roi_start + h_roi - 1), (255, 0, 0), 2)
 
+    center_x0 = max(0, cx_ref - CENTER_EXCEPTION_DIST)
+    center_x1 = min(w_roi - 1, cx_ref + CENTER_EXCEPTION_DIST)
+    for y, allowed in [
+        (vision_result.y_top, vision_result.allow_top),
+        (vision_result.y_mid, vision_result.allow_mid),
+    ]:
+        color = (0, 180, 0) if allowed else (0, 0, 180)
+        cv2.rectangle(
+            out,
+            (center_x0, roi_start + max(0, y - band_thickness)),
+            (center_x1, roi_start + min(h_roi - 1, y + band_thickness)),
+            color,
+            1,
+        )
+
     x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
     x1 = min(w_roi - 1, cx_ref + BOTTOM_SLICE_MAX_DIST)
     cv2.rectangle(
@@ -479,15 +506,59 @@ def draw_debug_slices(
         bar_x = max(0, min(w_roi - 1, bar_x))
         cv2.line(out, (bar_x, roi_start), (bar_x, roi_start + h_roi - 1), (255, 0, 255), 2)
 
-    def draw_one(y: int, cx: int | None, color: tuple[int, int, int], name: str):
+    def draw_one(
+        y: int,
+        cx: int | None,
+        raw_cx: int | None,
+        color: tuple[int, int, int],
+        name: str,
+        allowed: bool,
+        near_center: bool,
+    ):
         cv2.line(out, (0, roi_start + y), (w_roi - 1, roi_start + y), color, 1)
+        if raw_cx is not None:
+            cv2.circle(out, (raw_cx, roi_start + y), 3, (255, 255, 255), -1)
         if cx is not None:
             cv2.circle(out, (cx, roi_start + y), 5, color, -1)
-        cv2.putText(out, f"{name}: {cx}", (10, roi_start + y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.25, color, 1)
+        state = "BOT" if name == "BOT" else ("OK" if allowed else "BLOCK")
+        center_tag = "" if name == "BOT" else (" C" if near_center else "")
+        cv2.putText(
+            out,
+            f"{name}: {cx} raw:{raw_cx} {state}{center_tag}",
+            (10, roi_start + y - 8),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.25,
+            color,
+            1,
+        )
 
-    draw_one(vision_result.y_top, vision_result.cx_top, (0, 255, 0), "TOP")
-    draw_one(vision_result.y_mid, vision_result.cx_mid, (0, 200, 255), "MID")
-    draw_one(vision_result.y_bot, vision_result.cx_bot, (0, 0, 255), "BOT")
+    draw_one(
+        vision_result.y_top,
+        vision_result.cx_top,
+        vision_result.raw_cx_top,
+        (0, 255, 0),
+        "TOP",
+        vision_result.allow_top,
+        vision_result.top_near_center,
+    )
+    draw_one(
+        vision_result.y_mid,
+        vision_result.cx_mid,
+        vision_result.raw_cx_mid,
+        (0, 200, 255),
+        "MID",
+        vision_result.allow_mid,
+        vision_result.mid_near_center,
+    )
+    draw_one(
+        vision_result.y_bot,
+        vision_result.cx_bot,
+        vision_result.raw_cx_bot,
+        (0, 0, 255),
+        "BOT",
+        True,
+        False,
+    )
 
     width_lines = [
         (f"TOP W: {vision_result.width_top}", (0, 255, 0)),
@@ -518,6 +589,15 @@ def draw_debug_slices(
         cv2.FONT_HERSHEY_SIMPLEX,
         0.3,
         (0, 255, 0),
+        1,
+    )
+    cv2.putText(
+        out,
+        f"Top allow: {'Y' if vision_result.allow_top else 'N'} | Mid allow: {'Y' if vision_result.allow_mid else 'N'} | Bot: {'Y' if vision_result.seen_bot else 'N'}",
+        (10, 105),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.3,
+        (255, 255, 255),
         1,
     )
 
@@ -551,6 +631,21 @@ def draw_mask_slices(vision_result: VisionResult):
         cv2.line(vis, (0, y), (vis.shape[1] - 1, y), color, 1)
         if cx is not None:
             cv2.circle(vis, (cx, y), 5, color, -1)
+
+    center_x0 = max(0, cx_ref - CENTER_EXCEPTION_DIST)
+    center_x1 = min(vis.shape[1] - 1, cx_ref + CENTER_EXCEPTION_DIST)
+    for y, allowed in [
+        (vision_result.y_top, vision_result.allow_top),
+        (vision_result.y_mid, vision_result.allow_mid),
+    ]:
+        color = (0, 180, 0) if allowed else (0, 0, 180)
+        cv2.rectangle(
+            vis,
+            (center_x0, max(0, y - BAND_THICKNESS)),
+            (center_x1, min(vis.shape[0] - 1, y + BAND_THICKNESS)),
+            color,
+            1,
+        )
 
     x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
     x1 = min(vis.shape[1] - 1, cx_ref + BOTTOM_SLICE_MAX_DIST)
