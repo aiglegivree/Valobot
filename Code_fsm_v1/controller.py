@@ -10,6 +10,8 @@ from config import (
     LOW_SPEED,
     LOW_SPEED_STEER_GAIN,
     LOW_SPEED_HOLD_SEC,
+    NO_LINE_BOOST_DELAY_SEC,
+    NO_LINE_BOOST_SPEED,
     SEARCH_FRAMES,
     SEARCH_SPEED,
     SEARCH_TURN_STEER,
@@ -88,6 +90,8 @@ class Controller:
         self.stuck_since = 0.0
         self.stuck_boost_active = False
         self.last_motion_signature: tuple[int | None, int | None, int | None, int, int, int] | None = None
+        self.no_line_since = 0.0
+        self.no_line_boost_active = False
 
     def _top_slice_requests_low_speed(self, vision_result) -> bool:
         width_top = int(getattr(vision_result, "width_top", 0) or 0)
@@ -241,6 +245,8 @@ class Controller:
         if getattr(vision_result, "any_seen", False):
             self.mode = "TRACK"
             self.lost_count = 0
+            self.no_line_since = 0.0
+            self.no_line_boost_active = False
             self._update_stuck_boost(vision_result, now)
 
             steer_target = self._line_visible_steer_target(vision_result)
@@ -271,6 +277,9 @@ class Controller:
             self.stuck_since = 0.0
             self.stuck_boost_active = False
             self.last_motion_signature = None
+            if self.no_line_since <= 0.0:
+                self.no_line_since = now
+            self.no_line_boost_active = (now - self.no_line_since) >= NO_LINE_BOOST_DELAY_SEC
             use_low_speed = now <= self.low_speed_hold_until
             self.low_speed_latched = use_low_speed
 
@@ -293,7 +302,10 @@ class Controller:
                 self.steer_cmd = smooth(self.steer_cmd, steer_target, 0.18)
                 speed = 0.0
 
-            if not self.stuck_boost_active and use_low_speed:
+            if self.no_line_boost_active:
+                speed = max(speed, NO_LINE_BOOST_SPEED)
+
+            if not self.stuck_boost_active and not self.no_line_boost_active and use_low_speed:
                 speed = min(speed, self.low_speed)
 
         steer = clamp(self.steer_cmd, -1.0, 1.0)
