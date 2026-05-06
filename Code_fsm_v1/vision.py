@@ -451,7 +451,8 @@ def draw_debug_slices(
     frame_bgr: np.ndarray,
     vision_result: VisionResult,
     band_thickness: int,
-    steer_cmd: float | None = None,
+    wheel_left: float | None = None,
+    wheel_right: float | None = None,
 ):
     out = frame_bgr.copy()
     mask = vision_result.connected_mask
@@ -520,13 +521,13 @@ def draw_debug_slices(
         1,
     )
 
-    if steer_cmd is not None:
-        steer_label = f"STEER: {steer_cmd:.2f}"
-        (text_w, text_h), baseline = cv2.getTextSize(steer_label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2)
+    if wheel_left is not None and wheel_right is not None:
+        wheel_label = f"L {wheel_left:.2f}  R {wheel_right:.2f}"
+        (text_w, text_h), baseline = cv2.getTextSize(wheel_label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
         text_x = max(0, (out.shape[1] - text_w) // 2)
-        text_y = max(text_h + 10, 26)
-        pad_x = 10
-        pad_y = 8
+        text_y = max(text_h + 8, 22)
+        pad_x = 8
+        pad_y = 6
         cv2.rectangle(
             out,
             (max(0, text_x - pad_x), max(0, text_y - text_h - pad_y)),
@@ -534,7 +535,7 @@ def draw_debug_slices(
             (0, 0, 0),
             -1,
         )
-        cv2.putText(out, steer_label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+        cv2.putText(out, wheel_label, (text_x, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
     return out
 
 

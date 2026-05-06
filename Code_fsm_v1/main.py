@@ -1071,7 +1071,7 @@ def main() -> None:
                     motors.set_speeds(FIRST_T_STRAIGHT_SPEED, FIRST_T_STRAIGHT_SPEED)
                     set_leds_for_line(leds)
                     aura_started = False
-                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, line_controller.steer_cmd)
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, left, right)
                     aux_vis = draw_mask_slices(line_res)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -1083,7 +1083,7 @@ def main() -> None:
                     motors.set_speeds(left, right)
                     set_leds_for_line(leds)
                     aura_started = False
-                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, line_controller.steer_cmd)
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, left, right)
                     aux_vis = draw_mask_slices(line_res)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -1207,7 +1207,7 @@ def main() -> None:
                     motors.set_speeds(left, right)
                     set_leds_for_line(leds)
                     aura_started = False
-                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, second_line_controller.steer_cmd)
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, left, right)
                     cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Nav mode: {MODE_LINE}", (10, 163), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
                     cv2.putText(main_vis, f"Line mode: {line_mode}", (10, 181), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 0), 1)
@@ -1459,7 +1459,6 @@ def main() -> None:
 
             elif fsm_state == STATE_POST_SHOOT_DRIVE:
                 set_leds_for_line(leds)
-                main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, post_shoot_line_controller.steer_cmd)
                 direction_label = "RIGHT" if post_shoot_turn_sign > 0 else "LEFT"
                 action_label = ""
                 status_label = ""
@@ -1472,6 +1471,7 @@ def main() -> None:
                         POST_SHOOT_BACK_SPEED,
                         line_seen=bool(line_res.any_seen),
                     )
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, reverse_left, reverse_right)
                     motors.set_speeds(reverse_left, reverse_right)
                     remaining = max(0.0, post_shoot_back_until - now)
                     action_label = "Action: reverse line follow before forward reacquire"
@@ -1485,6 +1485,7 @@ def main() -> None:
                         post_shoot_line_controller.last_green_turn_sign = post_shoot_turn_sign
                 elif post_shoot_phase == POST_SHOOT_PHASE_ALIGN:
                     left, right, _, _, line_mode = post_shoot_line_controller.update(line_res)
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, left, right)
                     motors.set_speeds(left, right)
                     action_label = "Action: line follow until T is detected"
                     status_label = f"Line mode: {line_mode} | T: {'YES' if line_res.t_detected else 'NO'}"
@@ -1494,6 +1495,7 @@ def main() -> None:
                         post_shoot_until = now + POST_SHOOT_DRIVE_SEC
                         post_shoot_phase = POST_SHOOT_PHASE_DRIVE_FORWARD
                 else:
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, POST_SHOOT_DRIVE_SPEED, POST_SHOOT_DRIVE_SPEED)
                     motors.set_speeds(POST_SHOOT_DRIVE_SPEED, POST_SHOOT_DRIVE_SPEED)
                     remaining = max(0.0, post_shoot_until - now)
                     action_label = "Action: straight drive"
