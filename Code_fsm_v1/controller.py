@@ -8,6 +8,7 @@ from config import (
     BLIND_TURN_FRAMES,
     BLIND_TURN_STEER,
     LOW_SPEED,
+    LOW_SPEED_STEER_GAIN,
     LOW_SPEED_HOLD_SEC,
     SEARCH_FRAMES,
     SEARCH_SPEED,
@@ -64,6 +65,7 @@ class Controller:
         self.blind_speed = blind_speed
         self.search_speed = search_speed
         self.steer_gain = steer_gain
+        self.low_speed_steer_gain = LOW_SPEED_STEER_GAIN
         self.reset()
 
     def reset(self):
@@ -295,6 +297,7 @@ class Controller:
                 speed = min(speed, self.low_speed)
 
         steer = clamp(self.steer_cmd, -1.0, 1.0)
-        left = clamp(speed + self.steer_gain * steer, -1.0, 1.0)
-        right = clamp(speed - self.steer_gain * steer, -1.0, 1.0)
+        active_steer_gain = self.low_speed_steer_gain if (self.low_speed_latched and not self.stuck_boost_active) else self.steer_gain
+        left = clamp(speed + active_steer_gain * steer, -1.0, 1.0)
+        right = clamp(speed - active_steer_gain * steer, -1.0, 1.0)
         return left, right, speed, self.steer_cmd, self.mode
