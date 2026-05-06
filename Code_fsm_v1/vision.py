@@ -518,8 +518,7 @@ def draw_debug_slices(
         cv2.line(out, (0, roi_start + y), (w_roi - 1, roi_start + y), color, 1)
         if raw_cx is not None:
             cv2.circle(out, (raw_cx, roi_start + y), 3, (255, 255, 255), -1)
-        if cx is not None:
-            cv2.circle(out, (cx, roi_start + y), 5, color, -1)
+            cv2.circle(out, (raw_cx, roi_start + y), 5, color, -1)
         state = "BOT" if name == "BOT" else ("OK" if allowed else "BLOCK")
         center_tag = "" if name == "BOT" else (" C" if near_center else "")
         cv2.putText(
@@ -623,14 +622,15 @@ def draw_mask_slices(vision_result: VisionResult):
     vis = cv2.cvtColor(vision_result.mask, cv2.COLOR_GRAY2BGR)
     cx_ref = vis.shape[1] // 2
 
-    for y, cx, color in [
-        (vision_result.y_top, vision_result.cx_top, (0, 255, 0)),
-        (vision_result.y_mid, vision_result.cx_mid, (0, 200, 255)),
-        (vision_result.y_bot, vision_result.cx_bot, (0, 0, 255)),
+    for y, raw_cx, color in [
+        (vision_result.y_top, vision_result.raw_cx_top, (0, 255, 0)),
+        (vision_result.y_mid, vision_result.raw_cx_mid, (0, 200, 255)),
+        (vision_result.y_bot, vision_result.raw_cx_bot, (0, 0, 255)),
     ]:
         cv2.line(vis, (0, y), (vis.shape[1] - 1, y), color, 1)
-        if cx is not None:
-            cv2.circle(vis, (cx, y), 5, color, -1)
+        if raw_cx is not None:
+            cv2.circle(vis, (raw_cx, y), 3, (255, 255, 255), -1)
+            cv2.circle(vis, (raw_cx, y), 5, color, -1)
 
     center_x0 = max(0, cx_ref - CENTER_EXCEPTION_DIST)
     center_x1 = min(vis.shape[1] - 1, cx_ref + CENTER_EXCEPTION_DIST)
