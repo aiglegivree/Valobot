@@ -152,8 +152,16 @@ def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
 
 
-def reverse_line_follow_wheels(left: float, right: float, reverse_speed_limit: float) -> tuple[float, float]:
+def reverse_line_follow_wheels(
+    left: float,
+    right: float,
+    reverse_speed_limit: float,
+    *,
+    line_seen: bool,
+) -> tuple[float, float]:
     reverse_limit = abs(reverse_speed_limit)
+    if not line_seen:
+        return -reverse_limit, -reverse_limit
     reverse_left = clamp(-right, -reverse_limit, reverse_limit)
     reverse_right = clamp(-left, -reverse_limit, reverse_limit)
     return reverse_left, reverse_right
@@ -1455,6 +1463,7 @@ def main() -> None:
                         back_left,
                         back_right,
                         POST_SHOOT_BACK_SPEED,
+                        line_seen=bool(line_res.any_seen),
                     )
                     motors.set_speeds(reverse_left, reverse_right)
                     remaining = max(0.0, post_shoot_back_until - now)
