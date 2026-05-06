@@ -15,6 +15,9 @@ from config import (
     STEER_DEADZONE,
     STEER_GAIN,
     STEER_SMOOTH_ALPHA,
+    STUCK_BOOST_SPEED,
+    STUCK_MOVEMENT_DELTA_PX,
+    STUCK_TIMEOUT_SEC,
     T_CONFIRM_FRAMES,
     T_LINE_FRAMES,
     TOP_SLICE_LOW_WIDTH_FRAMES,
@@ -80,6 +83,9 @@ class Controller:
         self.low_speed_latched = False
         self.low_speed_just_latched = False
         self.low_speed_hold_until = 0.0
+        self.stuck_since = 0.0
+        self.stuck_boost_active = False
+        self.last_motion_signature: tuple[int | None, int | None, int | None, int, int, int] | None = None
 
     def _top_slice_requests_low_speed(self, vision_result) -> bool:
         width_top = int(getattr(vision_result, "width_top", 0) or 0)
@@ -101,6 +107,61 @@ class Controller:
         if err_px < -STEER_DEADZONE:
             return -1
         return None
+
+    def _motion_signature(self, vision_result) -> tuple[int | None, int | None, int | None, int, int, int]:
+        return (
+            getattr(vision_result, "cx_top", None),
+            getattr(vision_result, "cx_mid", None),
+            getattr(vision_result, "cx_bot", None),
+            int(getattr(vision_result, "width_top", 0) or 0),
+            int(getattr(vision_result, "width_mid", 0) or 0),
+            int(getattr(vision_result, "width_bot", 0) or 0),
+        )
+
+    def _has_line_motion(
+        self,
+        previous: tuple[int | None, int | None, int | None, int, int, int] | None,
+        current: tuple[int | None, int | None, int | None, int, int, int],
+    ) -> bool:
+        if previous is None:
+            return True
+
+        for prev_value, curr_value in zip(previous[:3], current[:3]):
+            if prev_value is None and curr_value is None:
+                continue
+            if prev_value is None or curr_value is None:
+                return True
+            if abs(curr_value - prev_value) >= STUCK_MOVEMENT_DELTA_PX:
+                return True
+
+        for prev_value, curr_value in zip(previous[3:], current[3:]):
+            if abs(curr_value - prev_value) >= STUCK_MOVEMENT_DELTA_PX:
+                return True
+
+        return False
+
+    def _update_stuck_boost(self, vision_result, now: float) -> None:
+        if not getattr(vision_result, "any_seen", False):
+            self.stuck_since = 0.0
+            self.stuck_boost_active = False
+            self.last_motion_signature = None
+            return
+
+        signature = self._motion_signature(vision_result)
+        moved = self._has_line_motion(self.last_motion_signature, signature)
+        self.last_motion_signature = signature
+
+        if moved:
+            self.stuck_since = now
+            self.stuck_boost_active = False
+            return
+
+        if self.stuck_since <= 0.0:
+            self.stuck_since = now
+            return
+
+        if (now - self.stuck_since) >= STUCK_TIMEOUT_SEC:
+            self.stuck_boost_active = True
 
     def _update_memory_turn_signs(self, vision_result) -> None:
         if getattr(vision_result, "seen_top", False):
@@ -178,6 +239,7 @@ class Controller:
         if getattr(vision_result, "any_seen", False):
             self.mode = "TRACK"
             self.lost_count = 0
+            self._update_stuck_boost(vision_result, now)
 
             steer_target = self._line_visible_steer_target(vision_result)
             self.steer_cmd = smooth(self.steer_cmd, steer_target, STEER_SMOOTH_ALPHA)
@@ -197,11 +259,17 @@ class Controller:
             else:
                 speed = self.base_speed
 
+            if self.stuck_boost_active:
+                speed = max(speed, STUCK_BOOST_SPEED)
+
             if use_low_speed:
                 speed = min(speed, self.low_speed)
         else:
             self.lost_count += 1
             self.top_low_width_count = 0
+            self.stuck_since = 0.0
+            self.stuck_boost_active = False
+            self.last_motion_signature = None
             use_low_speed = now <= self.low_speed_hold_until
             self.low_speed_latched = use_low_speed
 
