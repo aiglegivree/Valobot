@@ -87,6 +87,8 @@ from fsm_config import (  # noqa: E402
     HIT_AREA_RATIO_THRESHOLD,
     POST_SHOOT_BACK_SEC,
     POST_SHOOT_BACK_SPEED,
+    POST_SHOOT_EQUALIZE_SEC,
+    POST_SHOOT_EQUALIZE_SPEED,
     POST_SHOOT_DRIVE_SEC,
     POST_SHOOT_DRIVE_SPEED,
     PREFER_LINE_WHEN_VISIBLE,
@@ -135,6 +137,7 @@ MODE_CORRIDOR = "CORRIDOR"
 
 POST_SHOOT_PHASE_BACK_UP = "BACK_UP"
 POST_SHOOT_PHASE_ALIGN = "ALIGN"
+POST_SHOOT_PHASE_EQUALIZE = "EQUALIZE"
 POST_SHOOT_PHASE_DRIVE_FORWARD = "DRIVE_FORWARD"
 
 RIGHT_COLOR = (0, 0, 255)
@@ -1056,6 +1059,7 @@ def main() -> None:
     post_t_until = 0.0
     post_second_t_until = 0.0
     post_shoot_back_until = 0.0
+    post_shoot_equalize_until = 0.0
     post_shoot_until = 0.0
     post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
 
@@ -1081,7 +1085,7 @@ def main() -> None:
 
     def reset_run_context() -> None:
         nonlocal aura_started, post_t_until, post_second_t_until, post_shoot_back_until
-        nonlocal post_shoot_until, post_shoot_phase, lock_frames, last_target_center
+        nonlocal post_shoot_equalize_until, post_shoot_until, post_shoot_phase, lock_frames, last_target_center
         nonlocal locked_target_ref, locked_target_miss_count, pending_shot
         nonlocal pending_target_before_shot, confirm_delay_frames, targets_hit
         nonlocal blue_detect_frames, post_shoot_turn_sign, aim_stuck_since
@@ -1100,6 +1104,7 @@ def main() -> None:
         post_t_until = 0.0
         post_second_t_until = 0.0
         post_shoot_back_until = 0.0
+        post_shoot_equalize_until = 0.0
         post_shoot_until = 0.0
         post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
         lock_frames = 0
@@ -1137,8 +1142,8 @@ def main() -> None:
             fsm_state = STATE_LINE_TO_SECOND_T
             return
         if mode_key == "s":
-            post_shoot_phase = POST_SHOOT_PHASE_DRIVE_FORWARD
-            post_shoot_until = now + POST_SHOOT_DRIVE_SEC
+            post_shoot_phase = POST_SHOOT_PHASE_EQUALIZE
+            post_shoot_equalize_until = now + POST_SHOOT_EQUALIZE_SEC
             fsm_state = STATE_POST_SHOOT_DRIVE
             return
 
@@ -1603,6 +1608,17 @@ def main() -> None:
                     status_label = f"Line mode: {line_mode} | T: {'YES' if final_t_seen else 'NO'}"
                     aux_vis = draw_mask_slices(line_res)
                     if final_t_seen:
+                        motors.set_speeds(POST_SHOOT_EQUALIZE_SPEED, POST_SHOOT_EQUALIZE_SPEED)
+                        post_shoot_equalize_until = now + POST_SHOOT_EQUALIZE_SEC
+                        post_shoot_phase = POST_SHOOT_PHASE_EQUALIZE
+                elif post_shoot_phase == POST_SHOOT_PHASE_EQUALIZE:
+                    main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, POST_SHOOT_EQUALIZE_SPEED, POST_SHOOT_EQUALIZE_SPEED)
+                    motors.set_speeds(POST_SHOOT_EQUALIZE_SPEED, POST_SHOOT_EQUALIZE_SPEED)
+                    remaining = max(0.0, post_shoot_equalize_until - now)
+                    action_label = "Action: equalize both motors"
+                    status_label = f"Equalize before fast drive: {remaining:.2f}s"
+                    aux_vis = draw_mask_slices(line_res)
+                    if now >= post_shoot_equalize_until:
                         motors.set_speeds(POST_SHOOT_DRIVE_SPEED, POST_SHOOT_DRIVE_SPEED)
                         post_shoot_until = now + POST_SHOOT_DRIVE_SEC
                         post_shoot_phase = POST_SHOOT_PHASE_DRIVE_FORWARD
