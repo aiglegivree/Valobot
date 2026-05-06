@@ -814,17 +814,20 @@ class CorridorController:
             self.command_left = 0.0
             self.command_right = 0.0
 
-        debug = self.draw_debug(frame, vision)
+        debug = self.draw_debug(frame, vision, now)
         aux = cv2.cvtColor(vision["edges"], cv2.COLOR_GRAY2BGR)
         return self.command_left, self.command_right, debug, aux, self.state
 
-    def draw_debug(self, frame: np.ndarray, vision: dict[str, object]) -> np.ndarray:
+    def draw_debug(self, frame: np.ndarray, vision: dict[str, object], now: float) -> np.ndarray:
         overlay = frame.copy()
         stable_lines = vision["stable_lines"]
         effective_lines = vision["effective_lines"]
         dashed_side = vision["dashed_side"]
         turn_trigger_y = int(round(H * (1.0 - TURN_HEIGHT_FRAC)))
         turn_reacquire_y = int(round(H * TURN_REACQUIRE_TOP_FRAC))
+        blind_remaining = max(0.0, self.blind_until - now)
+        deadline_remaining = max(0.0, self.turn_deadline - now)
+        turn_deadline_reached = self.state == "TURN" and self.turn_deadline > 0.0 and now >= self.turn_deadline
 
         if stable_lines["right"] is not None:
             draw_line(overlay, stable_lines["right"], RIGHT_COLOR, dashed=bool(dashed_side["right"]))
@@ -876,6 +879,8 @@ class CorridorController:
         cv2.putText(overlay, f"Corridor state: {self.state}", (10, 38), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         cv2.putText(overlay, f"Turn direction var: {vision['turn_direction']}", (10, 56), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
         cv2.putText(overlay, f"Cmd L/R: {self.command_left:.2f} / {self.command_right:.2f}", (10, 74), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        cv2.putText(overlay, f"Blind left: {blind_remaining:.2f}s", (10, 92), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+        cv2.putText(overlay, f"Turn time left: {deadline_remaining:.2f}s", (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
         if bool(vision.get("line_changing_warning_active", False)):
             cv2.putText(
                 overlay,
@@ -885,6 +890,27 @@ class CorridorController:
                 1.2,
                 (0, 0, 255),
                 4,
+            )
+        if turn_deadline_reached and int(now * 4.0) % 2 == 0:
+            warning = "TURN TIME ENDED"
+            (text_w, text_h), baseline = cv2.getTextSize(warning, cv2.FONT_HERSHEY_SIMPLEX, 1.1, 3)
+            text_x = max(10, (W - text_w) // 2)
+            text_y = max(text_h + 10, H // 2 + text_h // 2)
+            cv2.rectangle(
+                overlay,
+                (max(0, text_x - 12), max(0, text_y - text_h - 12)),
+                (min(W - 1, text_x + text_w + 12), min(H - 1, text_y + baseline + 12)),
+                (0, 0, 80),
+                -1,
+            )
+            cv2.putText(
+                overlay,
+                warning,
+                (text_x, text_y),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1.1,
+                (0, 0, 255),
+                3,
             )
         return overlay
 
