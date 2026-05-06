@@ -553,6 +553,8 @@ class CorridorVision:
         if effective_lines["left"] is not None and effective_lines["right"] is not None:
             vanishing_point = intersect_hough_lines(effective_lines["left"], effective_lines["right"])
 
+        current_blue_line = current_lines["infront"]
+        current_blue_y_center = hough_y_at_x(current_blue_line, W / 2.0) if current_blue_line is not None else None
         blue_line = stable_lines["infront"]
         raw_blue_line_side = front_line_side_presence(edges, blue_line)
         blue_line_side = self.confirmed_front_side(raw_blue_line_side, blue_line is not None)
@@ -576,6 +578,8 @@ class CorridorVision:
             "dashed_side": dashed_side,
             "vanishing_point": vanishing_point,
             "blue_line": blue_line,
+            "current_blue_line": current_blue_line,
+            "current_blue_y_center": current_blue_y_center,
             "blue_line_side": blue_line_side,
             "blue_line_color": front_line_color(blue_line_side),
             "blue_y_center": blue_y_center,
@@ -595,6 +599,10 @@ class CorridorVision:
             ),
             "blue_top_visible": (
                 blue_y_center is not None and blue_y_center <= (H * TURN_REACQUIRE_TOP_FRAC)
+            ),
+            "current_blue_top_visible": (
+                current_blue_y_center is not None
+                and current_blue_y_center <= (H * TURN_REACQUIRE_TOP_FRAC)
             ),
             "current_side_count": int(current_lines["left"] is not None) + int(current_lines["right"] is not None),
             "turn_direction": self.turn_direction,
@@ -768,7 +776,7 @@ class CorridorController:
             self.command_left = turn_sign * TURN_SPEED
             self.command_right = -turn_sign * TURN_SPEED
 
-            if now >= self.blind_until and bool(vision["blue_top_visible"]):
+            if now >= self.blind_until and bool(vision["current_blue_top_visible"]):
                 self.state = "FORWARD"
                 self.turn_phase = 0
                 self.command_left = 0.0
