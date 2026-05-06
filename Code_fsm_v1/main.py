@@ -1587,7 +1587,7 @@ def main() -> None:
                         cmd_left, cmd_right = left, right
                         action_label = "Action: line follow until T is detected"
                     else:
-                        cmd_left, cmd_right = POST_SHOOT_BACK_SPEED, POST_SHOOT_BACK_SPEED
+                        cmd_left, cmd_right = abs(POST_SHOOT_BACK_SPEED), abs(POST_SHOOT_BACK_SPEED)
                         action_label = "Action: straight forward until line is visible"
                     main_vis = draw_debug_slices(frame, line_res, BAND_THICKNESS, cmd_left, cmd_right)
                     motors.set_speeds(cmd_left, cmd_right)
