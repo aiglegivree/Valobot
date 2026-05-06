@@ -332,25 +332,25 @@ def extract_corners_from_connected_mask(
 
 def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     shape_mask_raw, roi_start = compute_shape_mask_from_frame(frame_bgr)
-    shared_mask = apply_black_border(shape_mask_raw)
-    shared_mask = keep_shape_connected_to_bottom_rect(
-        shared_mask,
-        x_center=shared_mask.shape[1] // 2,
+    slice_mask = apply_black_border(shape_mask_raw)
+    connected_mask = keep_shape_connected_to_bottom_rect(
+        slice_mask,
+        x_center=slice_mask.shape[1] // 2,
         max_x_dist=BOTTOM_SLICE_MAX_DIST,
     )
-    shared_mask = apply_black_border(shared_mask)
-    h_td, w_td = shared_mask.shape
+    connected_mask = apply_black_border(connected_mask)
+    h_td, w_td = slice_mask.shape
     cx_ref = w_td // 2
 
     y_top = int(SLICE_TOP_FRAC * h_td)
     y_mid = int(SLICE_MID_FRAC * h_td)
     y_bot = int(SLICE_BOT_FRAC * h_td)
 
-    raw_cx_top, _, _, _, width_top, _ = get_band_info(shared_mask, SLICE_TOP_FRAC, BAND_THICKNESS)
-    raw_cx_mid, _, _, _, width_mid, _ = get_band_info(shared_mask, SLICE_MID_FRAC, BAND_THICKNESS)
-    raw_cx_bot, _, _, _, _, _ = get_band_info(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+    raw_cx_top, _, _, _, width_top, _ = get_band_info(slice_mask, SLICE_TOP_FRAC, BAND_THICKNESS)
+    raw_cx_mid, _, _, _, width_mid, _ = get_band_info(slice_mask, SLICE_MID_FRAC, BAND_THICKNESS)
+    raw_cx_bot, _, _, _, _, _ = get_band_info(slice_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
     raw_cx_bot_gated, _, _, _, width_bot_gated, _ = get_band_info(
-        shared_mask,
+        slice_mask,
         SLICE_BOT_FRAC,
         BAND_THICKNESS,
         x_center=cx_ref,
@@ -362,7 +362,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     mid_near_center = raw_cx_mid is not None and abs(raw_cx_mid - cx_ref) <= CENTER_EXCEPTION_DIST
     allow_top = seen_bot or top_near_center
     allow_mid = seen_bot or mid_near_center
-    bottom_slice_full_white = is_band_full_white(shared_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
+    bottom_slice_full_white = is_band_full_white(slice_mask, SLICE_BOT_FRAC, BAND_THICKNESS)
 
     cx_top = SLICE_POINT_HISTORY.update("top", raw_cx_top if allow_top else None)
     cx_mid = SLICE_POINT_HISTORY.update("mid", raw_cx_mid if allow_mid else None)
@@ -401,7 +401,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
     err_bot = float(cx_bot_use - cx_ref)
     steer_error = W_TOP * err_top + W_MID * err_mid + W_BOT * err_bot
 
-    corners, _, _ = extract_corners_from_connected_mask(shared_mask)
+    corners, _, _ = extract_corners_from_connected_mask(connected_mask)
     corner_count = len(corners)
     left_side_corners, right_side_corners, bottom_pair, t_left_bar_x, t_right_bar_x = count_t_side_corners(corners)
 
@@ -413,12 +413,12 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
             and left_side_corners >= 2
             and right_side_corners >= 2
         )
-        shape_connected_mask = shared_mask
+        shape_connected_mask = connected_mask
     else:
         t_detected = False
         corner_count = 0
         corners = []
-        shape_connected_mask = np.zeros_like(shared_mask)
+        shape_connected_mask = np.zeros_like(connected_mask)
 
     return VisionResult(
         cx_top=cx_top,
@@ -453,8 +453,8 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         corners=corners,
         t_left_bar_x=t_left_bar_x,
         t_right_bar_x=t_right_bar_x,
-        mask=shared_mask,
-        connected_mask=shared_mask,
+        mask=slice_mask,
+        connected_mask=connected_mask,
         shape_mask=shape_connected_mask,
     )
 
@@ -467,7 +467,7 @@ def draw_debug_slices(
     wheel_right: float | None = None,
 ):
     out = frame_bgr.copy()
-    mask = vision_result.connected_mask
+    mask = vision_result.mask
     h_roi, w_roi = mask.shape
     roi_start = vision_result.roi_start
     cx_ref = w_roi // 2
@@ -620,7 +620,7 @@ def draw_debug_slices(
 
 
 def draw_mask_slices(vision_result: VisionResult):
-    vis = cv2.cvtColor(vision_result.connected_mask, cv2.COLOR_GRAY2BGR)
+    vis = cv2.cvtColor(vision_result.mask, cv2.COLOR_GRAY2BGR)
     cx_ref = vis.shape[1] // 2
 
     for y, cx, color in [

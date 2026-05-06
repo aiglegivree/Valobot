@@ -93,6 +93,28 @@ class Controller:
             self.last_turn_sign = -1
 
     def _update_green_turn_sign(self, vision_result) -> None:
+        # When the line is only being kept by the center-exception boxes,
+        # choose the blind-turn side from the raw point inside that yellow zone
+        # instead of relying on the normal center-based steering error.
+        if not getattr(vision_result, "seen_bot", False):
+            if getattr(vision_result, "seen_mid", False) and getattr(vision_result, "mid_near_center", False):
+                raw_cx_mid = getattr(vision_result, "raw_cx_mid", None)
+                if raw_cx_mid is not None:
+                    if raw_cx_mid > (W // 2):
+                        self.last_green_turn_sign = +1
+                    elif raw_cx_mid < (W // 2):
+                        self.last_green_turn_sign = -1
+                    return
+
+            if getattr(vision_result, "seen_top", False) and getattr(vision_result, "top_near_center", False):
+                raw_cx_top = getattr(vision_result, "raw_cx_top", None)
+                if raw_cx_top is not None:
+                    if raw_cx_top > (W // 2):
+                        self.last_green_turn_sign = +1
+                    elif raw_cx_top < (W // 2):
+                        self.last_green_turn_sign = -1
+                    return
+
         if not getattr(vision_result, "seen_top", False):
             return
 
