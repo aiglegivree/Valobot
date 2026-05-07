@@ -115,6 +115,13 @@ from fsm_config import (  # noqa: E402
     MUSIC_BACKEND,
     MUSIC_DEBUG,
     MUSIC_SINK,
+    START_LINE_DELAY_SEC,
+    START_MUSIC_FILE,
+    START_MUSIC_FALLBACK,
+    MIDDLE_MUSIC_FILE,
+    MIDDLE_MUSIC_FALLBACK,
+    END_MUSIC_FILE,
+    END_MUSIC_FALLBACK,
     USE_SHOOTING_LEDS,
     WINDOW_SCALE,
 )
@@ -125,6 +132,7 @@ MAIN_WINDOW = "FSM Navigation"
 AUX_WINDOW = "FSM Aux"
 
 STATE_RELOAD = "RELOAD"
+STATE_START_DELAY = "START_DELAY"
 STATE_LINE_FOLLOW = "LINE_FOLLOW"
 STATE_POST_T_STRAIGHT = "POST_T_STRAIGHT"
 STATE_CORRIDOR_FOLLOW = "CORRIDOR_FOLLOW"
@@ -1065,6 +1073,7 @@ def main() -> None:
     post_shoot_back_until = 0.0
     post_shoot_equalize_until = 0.0
     post_shoot_until = 0.0
+    start_line_follow_until = 0.0
     post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
 
     lock_frames = 0
@@ -1096,10 +1105,11 @@ def main() -> None:
         nonlocal blue_detect_frames, post_shoot_turn_sign, aim_stuck_since
         nonlocal aim_last_motion_center, aim_boost_until, aim_boost_sign
         nonlocal shoot_search_direction, shoot_search_step, shoot_search_until, shooting_entry_until
-        nonlocal shooting_cmd_left, shooting_cmd_right
+        nonlocal shooting_cmd_left, shooting_cmd_right, start_line_follow_until
 
         shooter.reset_ammo()
         shooter.spin_flywheel(False)
+        music_player.stop()
         line_controller.reset()
         second_line_controller.reset()
         post_shoot_line_controller.reset()
@@ -1111,6 +1121,7 @@ def main() -> None:
         post_shoot_back_until = 0.0
         post_shoot_equalize_until = 0.0
         post_shoot_until = 0.0
+        start_line_follow_until = 0.0
         post_shoot_phase = POST_SHOOT_PHASE_BACK_UP
         lock_frames = 0
         last_target_center = None
@@ -1134,11 +1145,13 @@ def main() -> None:
         shooting_cmd_right = 0.0
 
     def start_run(mode_key: str, now: float) -> None:
-        nonlocal fsm_state, post_shoot_until, post_shoot_phase
+        nonlocal fsm_state, post_shoot_until, post_shoot_phase, start_line_follow_until
 
         reset_run_context()
         if mode_key in ("r", "l"):
-            fsm_state = STATE_LINE_FOLLOW
+            music_player.play((START_MUSIC_FILE, START_MUSIC_FALLBACK))
+            start_line_follow_until = now + START_LINE_DELAY_SEC
+            fsm_state = STATE_START_DELAY
             return
         if mode_key == "c":
             fsm_state = STATE_CORRIDOR_FOLLOW
@@ -1180,6 +1193,18 @@ def main() -> None:
                 cv2.putText(main_vis, "L/R line | C corridor | T shooting | S final straight", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.58, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"AMMO: {shooter.ammo_remaining()}/{MAG_CAPACITY}", (10, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
+
+            elif fsm_state == STATE_START_DELAY:
+                motors.stop()
+                shooter.spin_flywheel(False)
+                set_leds_for_line(leds)
+                remaining = max(0.0, start_line_follow_until - now)
+                main_vis = frame.copy()
+                cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
+                cv2.putText(main_vis, f"Starting line follow in: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
+                aux_vis = np.zeros((H, W, 3), dtype=np.uint8)
+                if now >= start_line_follow_until:
+                    fsm_state = STATE_LINE_FOLLOW
 
             elif fsm_state == STATE_LINE_FOLLOW:
                 left, right, _, _, line_mode = line_controller.update(line_res)
@@ -1230,7 +1255,6 @@ def main() -> None:
                 cv2.putText(main_vis, f"Top-third side-line mode: {remaining:.2f}s", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
                 cv2.putText(main_vis, f"Transition mode: {transition_mode}", (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2)
                 if now >= post_t_until:
-                    music_player.play("couloir.wav")
                     fsm_state = STATE_CORRIDOR_FOLLOW
 
             elif fsm_state == STATE_CORRIDOR_FOLLOW:
@@ -1245,6 +1269,7 @@ def main() -> None:
                     blue_detect_frames += 1
                     if blue_detect_frames >= BLUE_DETECT_CONFIRM_FRAMES:
                         motors.stop()
+                        music_player.play((MIDDLE_MUSIC_FILE, MIDDLE_MUSIC_FALLBACK))
                         fsm_state = STATE_BLUE_TO_T
                         main_vis = frame.copy()
                         for target in blue_targets:
@@ -1349,7 +1374,6 @@ def main() -> None:
                 aux_vis = build_t_blue_debug(line_res, None)
                 if now >= post_second_t_until:
                     motors.stop()
-                    music_player.play("tir.wav")
                     shooter.spin_flywheel(True)
                     time.sleep(FLYWHEEL_SPINUP_TIME)
                     fsm_state = STATE_SHOOTING
@@ -1662,6 +1686,7 @@ def main() -> None:
                     aux_vis = draw_mask_slices(line_res)
                     if now >= post_shoot_until:
                         motors.stop()
+                        music_player.play((END_MUSIC_FILE, END_MUSIC_FALLBACK))
                         fsm_state = STATE_AURA
 
                 cv2.putText(main_vis, f"FSM: {fsm_state}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (255, 255, 255), 2)
