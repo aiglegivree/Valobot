@@ -1621,7 +1621,7 @@ def main() -> None:
                         post_shoot_line_controller.reset()
                 elif post_shoot_phase == POST_SHOOT_PHASE_ALIGN:
                     left, right, _, _, line_mode = post_shoot_line_controller.update(line_res)
-                    final_t_seen = relaxed_t_detected(line_res)
+                    final_t_seen = line_res.t_detected
                     if line_res.any_seen:
                         cmd_left, cmd_right = left, right
                         action_label = "Action: line follow until T is detected"
