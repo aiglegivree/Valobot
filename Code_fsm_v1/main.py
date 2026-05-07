@@ -3,7 +3,9 @@ from collections import deque
 from pathlib import Path
 import atexit
 import math
+import os
 import signal
+import sys
 import time
 
 import cv2
@@ -162,8 +164,49 @@ TURN_TRIGGER_GUIDE_COLOR = (0, 255, 255)
 TURN_REACQUIRE_GUIDE_COLOR = (255, 255, 0)
 
 
+if os.name == "nt":
+    import msvcrt
+else:
+    import select
+
+
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def poll_keypress() -> int:
+    key = cv2.waitKey(1) & 0xFF
+    if key != 255:
+        return key
+
+    if os.name == "nt":
+        if not msvcrt.kbhit():
+            return -1
+        ch = msvcrt.getwch()
+        if ch in ("\x00", "\xe0") and msvcrt.kbhit():
+            msvcrt.getwch()
+            return -1
+        if ch == "\x1b":
+            return 27
+        if ch:
+            return ord(ch.lower())
+        return -1
+
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], 0.0)
+    except Exception:
+        return -1
+    if not ready:
+        return -1
+    try:
+        ch = sys.stdin.read(1)
+    except Exception:
+        return -1
+    if ch == "\x1b":
+        return 27
+    if ch:
+        return ord(ch.lower())
+    return -1
 
 
 def reverse_line_follow_wheels(
@@ -996,12 +1039,39 @@ def relaxed_t_detected(line_res) -> bool:
 def create_run_video_writer(frame_size: tuple[int, int]) -> cv2.VideoWriter | None:
     if not RECORD_RUN_VIDEO:
         return None
-    recordings_dir = Path(__file__).resolve().parent / RECORDINGS_DIR
-    recordings_dir.mkdir(parents=True, exist_ok=True)
+    candidate_dirs = [
+        Path(__file__).resolve().parent / RECORDINGS_DIR,
+        Path.cwd() / RECORDINGS_DIR,
+    ]
+
+    unique_candidate_dirs: list[Path] = []
+    seen_dirs: set[str] = set()
+    for candidate_dir in candidate_dirs:
+        candidate_key = str(candidate_dir.resolve(strict=False))
+        if candidate_key in seen_dirs:
+            continue
+        seen_dirs.add(candidate_key)
+        unique_candidate_dirs.append(candidate_dir)
+
+    selected_dir: Path | None = None
+    for candidate_dir in unique_candidate_dirs:
+        try:
+            candidate_dir.mkdir(parents=True, exist_ok=True)
+            probe_path = candidate_dir / ".write_test"
+            probe_path.write_bytes(b"ok")
+            probe_path.unlink(missing_ok=True)
+            selected_dir = candidate_dir
+            break
+        except Exception as error:
+            print(f"Recording directory unavailable: {candidate_dir} ({error})")
+
+    if selected_dir is None:
+        print("Recording disabled: no writable output directory was found.")
+        return None
 
     run_index = 1
     while True:
-        output_path = recordings_dir / f"run_{run_index:03d}.mp4"
+        output_path = selected_dir / f"run_{run_index:03d}.mp4"
         if not output_path.exists():
             break
         run_index += 1
@@ -1009,6 +1079,7 @@ def create_run_video_writer(frame_size: tuple[int, int]) -> cv2.VideoWriter | No
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     writer = cv2.VideoWriter(str(output_path), fourcc, RECORD_RUN_FPS, frame_size)
     if not writer.isOpened():
+        print(f"Recording disabled: could not open video writer for {output_path}")
         return None
     print(f"Recording run video to: {output_path}")
     return writer
@@ -1717,7 +1788,7 @@ def main() -> None:
             if SHOW_DEBUG:
                 cv2.imshow(MAIN_WINDOW, main_vis)
                 cv2.imshow(AUX_WINDOW, aux_vis)
-                key = cv2.waitKey(1) & 0xFF
+                key = poll_keypress()
                 if fsm_state == STATE_RELOAD and key in (ord("r"), ord("l"), ord("c"), ord("t"), ord("s")):
                     start_run(chr(key), now)
                 if key == 27 or key == ord("q"):
