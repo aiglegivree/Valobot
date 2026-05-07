@@ -21,6 +21,7 @@ from config import (  # noqa: E402
     MIN_TARGET_AREA_CORRIDOR,
     MIN_TARGET_WIDTH_CORRIDOR,
     NOMBRE_DE_CIBLES,
+    POST_SHOOT_ALIGN_STUCK_BOOST_SPEED,
     POST_SHOT_CONFIRM_FRAMES,
     POST_SHOT_SETTLE_TIME,
     T_CORNERS,
@@ -1032,6 +1033,7 @@ def main() -> None:
         blind_speed=0.25,
         search_speed=0.25,
         steer_gain=0.10,
+        stuck_boost_speed=POST_SHOOT_ALIGN_STUCK_BOOST_SPEED,
     )
     corridor_controller = CorridorController()
     motors = MotorDriver()

@@ -60,6 +60,7 @@ class Controller:
         blind_speed: float = BLIND_SPEED,
         search_speed: float = SEARCH_SPEED,
         steer_gain: float = STEER_GAIN,
+        stuck_boost_speed: float = STUCK_BOOST_SPEED,
     ):
         self.base_speed = base_speed
         self.low_speed = low_speed
@@ -68,6 +69,7 @@ class Controller:
         self.search_speed = search_speed
         self.steer_gain = steer_gain
         self.low_speed_steer_gain = LOW_SPEED_STEER_GAIN
+        self.stuck_boost_speed = stuck_boost_speed
         self.reset()
 
     def reset(self):
@@ -268,7 +270,7 @@ class Controller:
                 speed = self.base_speed
 
             if self.stuck_boost_active:
-                speed = max(speed, STUCK_BOOST_SPEED)
+                speed = max(speed, self.stuck_boost_speed)
             elif use_low_speed:
                 speed = min(speed, self.low_speed)
         else:
