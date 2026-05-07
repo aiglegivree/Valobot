@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
+import signal
 import subprocess
 import sys
 
@@ -56,7 +58,16 @@ class MusicPlayer:
         stderr = None if self.debug else subprocess.DEVNULL
 
         try:
-            self._process = subprocess.Popen(cmd, stdout=stdout, stderr=stderr)
+            popen_kwargs: dict[str, object] = {
+                "stdout": stdout,
+                "stderr": stderr,
+            }
+            if os.name == "nt":
+                popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            else:
+                popen_kwargs["start_new_session"] = True
+
+            self._process = subprocess.Popen(cmd, **popen_kwargs)
         except Exception as error:
             print(f"[fsm music] Could not start audio '{audio_path.name}': {error}")
             self._process = None
@@ -66,10 +77,29 @@ class MusicPlayer:
             return
 
         if self._process.poll() is None:
-            self._process.terminate()
+            try:
+                if os.name == "nt":
+                    self._process.terminate()
+                else:
+                    os.killpg(self._process.pid, signal.SIGTERM)
+            except Exception:
+                try:
+                    self._process.terminate()
+                except Exception:
+                    pass
+
             try:
                 self._process.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
-                self._process.kill()
+                try:
+                    if os.name == "nt":
+                        self._process.kill()
+                    else:
+                        os.killpg(self._process.pid, signal.SIGKILL)
+                except Exception:
+                    try:
+                        self._process.kill()
+                    except Exception:
+                        pass
                 self._process.wait(timeout=1.0)
         self._process = None
