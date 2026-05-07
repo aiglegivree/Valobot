@@ -77,7 +77,7 @@ SEARCH_TURN_STEER = 0.60
 # SPEED
 # ============================================================
 BASE_SPEED = 0.50
-LOW_SPEED = 0.30
+LOW_SPEED = 0.25
 STUCK_BOOST_SPEED = 0.60
 STUCK_TIMEOUT_SEC = 2.0
 STUCK_MOVEMENT_DELTA_PX = 10
