@@ -1146,7 +1146,7 @@ def main() -> None:
             return
         if mode_key == "s":
             post_shoot_phase = POST_SHOOT_PHASE_DRIVE_FORWARD
-            post_shoot_until = now + POST_SHOOT_DRIVE_SEC
+            post_shoot_until = now + POST_SHOOT_DRIVE_SEC + 0.5
             fsm_state = STATE_POST_SHOOT_DRIVE
             return
 
