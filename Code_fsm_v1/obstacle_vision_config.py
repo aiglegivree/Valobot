@@ -6,8 +6,8 @@ from pathlib import Path
 CONFIG_PATH = Path(__file__)
 
 DEFAULT_OBSTACLE_SETTINGS = {
-    "canny_low": 75,
-    "canny_high": 90,
+    "canny_low": 63,
+    "canny_high": 93,
     "contour_min_length": 30,
     "hough_threshold": 60,
     "left_angle_low": 30,
