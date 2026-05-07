@@ -7,6 +7,7 @@ import numpy as np
 
 from camera import Camera
 from fsm_config import FRONT_SIDE_CONFIRM_FRAMES
+from leds import LED
 from obstacle_vision_config import load_obstacle_settings, save_obstacle_settings
 
 
@@ -241,7 +242,9 @@ def confirm_front_side(
 
 def main() -> None:
     cam = Camera()
+    leds = LED()
     settings = load_obstacle_settings()
+    leds.turn_on_all()
 
     create_trackbars(settings)
     cv2.namedWindow(WINDOW_CAMERA, cv2.WINDOW_NORMAL)
@@ -299,6 +302,11 @@ def main() -> None:
     finally:
         try:
             cam.release()
+        except Exception:
+            pass
+        try:
+            leds.turn_off_all()
+            leds.cleanup()
         except Exception:
             pass
         cv2.destroyAllWindows()
