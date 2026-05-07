@@ -12,6 +12,7 @@ import numpy as np
 from camera import Camera  # noqa: E402
 from config import (  # noqa: E402
     BAND_THICKNESS,
+    BOTTOM_SLICE_MAX_DIST,
     BLUE_HIGH_CORRIDOR,
     BLUE_LOW_CORRIDOR,
     LOCK_FRAMES_REQUIRED,
@@ -1160,7 +1161,10 @@ def main() -> None:
                 continue
 
             now = time.monotonic()
-            line_res = detect_line(frame, angle_deg=20)
+            line_bottom_gate_dist = BOTTOM_SLICE_MAX_DIST
+            if fsm_state == STATE_POST_SHOOT_DRIVE and post_shoot_phase == POST_SHOOT_PHASE_ALIGN:
+                line_bottom_gate_dist = 150
+            line_res = detect_line(frame, angle_deg=20, bottom_slice_max_dist=line_bottom_gate_dist)
 
             main_vis = frame.copy()
             aux_vis = np.zeros((H, W, 3), dtype=np.uint8)

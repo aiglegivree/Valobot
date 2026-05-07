@@ -64,6 +64,7 @@ class VisionResult:
     width_top: int
     width_mid: int
     width_bot: int
+    bottom_gate_dist: int
     bottom_slice_full_white: bool
     t_detected: bool
     corner_count: int
@@ -327,13 +328,17 @@ def extract_corners_from_connected_mask(
     return corners, corner_angles, biggest
 
 
-def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
+def detect_line(
+    frame_bgr: np.ndarray,
+    angle_deg: float = 20,
+    bottom_slice_max_dist: int = BOTTOM_SLICE_MAX_DIST,
+) -> VisionResult:
     shape_mask_raw, roi_start = compute_shape_mask_from_frame(frame_bgr)
     slice_mask = apply_black_border(shape_mask_raw)
     connected_mask = keep_shape_connected_to_bottom_rect(
         slice_mask,
         x_center=slice_mask.shape[1] // 2,
-        max_x_dist=BOTTOM_SLICE_MAX_DIST,
+        max_x_dist=bottom_slice_max_dist,
     )
     connected_mask = apply_black_border(connected_mask)
     h_td, w_td = connected_mask.shape
@@ -351,7 +356,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         SLICE_BOT_FRAC,
         BAND_THICKNESS,
         x_center=cx_ref,
-        max_x_dist=BOTTOM_SLICE_MAX_DIST,
+        max_x_dist=bottom_slice_max_dist,
     )
 
     seen_bot = raw_cx_bot_gated is not None
@@ -440,6 +445,7 @@ def detect_line(frame_bgr: np.ndarray, angle_deg: float = 20) -> VisionResult:
         width_top=width_top,
         width_mid=width_mid,
         width_bot=width_bot,
+        bottom_gate_dist=bottom_slice_max_dist,
         bottom_slice_full_white=bottom_slice_full_white,
         t_detected=t_detected,
         corner_count=corner_count,
@@ -468,8 +474,8 @@ def draw_debug_slices(
     cv2.rectangle(out, (0, roi_start), (w_roi - 1, roi_start + h_roi - 1), (0, 255, 255), 2)
     cv2.line(out, (cx_ref, roi_start), (cx_ref, roi_start + h_roi - 1), (255, 0, 0), 2)
 
-    x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
-    x1 = min(w_roi - 1, cx_ref + BOTTOM_SLICE_MAX_DIST)
+    x0 = max(0, cx_ref - vision_result.bottom_gate_dist)
+    x1 = min(w_roi - 1, cx_ref + vision_result.bottom_gate_dist)
     cv2.rectangle(
         out,
         (x0, roi_start + max(0, vision_result.y_bot - band_thickness)),
@@ -612,8 +618,8 @@ def draw_mask_slices(vision_result: VisionResult):
         if cx is not None:
             cv2.circle(vis, (cx, y), 5, color, -1)
 
-    x0 = max(0, cx_ref - BOTTOM_SLICE_MAX_DIST)
-    x1 = min(vis.shape[1] - 1, cx_ref + BOTTOM_SLICE_MAX_DIST)
+    x0 = max(0, cx_ref - vision_result.bottom_gate_dist)
+    x1 = min(vis.shape[1] - 1, cx_ref + vision_result.bottom_gate_dist)
     cv2.rectangle(
         vis,
         (x0, max(0, vision_result.y_bot - BAND_THICKNESS)),
