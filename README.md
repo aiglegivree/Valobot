@@ -14,7 +14,3 @@ Start with [Code_fsm_v1](Code_fsm_v1/). Despite the version number in its name, 
 
 - [Mechanical CAD](CAD/) includes the chassis assembly, wheel and motor-mount designs. [CAD_V1](CAD_V1/) contains the CATIA assembly and component models.
 - [Electronics prototype](Elec/elec_proto/) contains the KiCad board design. The [component list](Components.xlsx) records the hardware used during development.
-
-## Development history
-
-The [pre-cleanup snapshot](https://github.com/aiglegivree/Valobot/tree/81965a84623f7e89856ed3ef548d561cf87e1eee) preserves the earlier controllers, standalone experiments, hardware checks, and test recordings.
