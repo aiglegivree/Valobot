@@ -1,9 +1,0 @@
-target=brown
-H_LOW=2
-S_LOW=5
-V_LOW=152
-H_HIGH=175
-S_HIGH=59
-V_HIGH=236
-low_percentile=5.0
-high_percentile=95.0

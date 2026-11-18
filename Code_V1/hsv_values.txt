@@ -1,5 +1,0 @@
-LOWER_HSV = [41, 92, 0]
-UPPER_HSV = [74, 255, 255]
-BLUR = 0
-ERODE = 0
-DILATE = 0

@@ -1,4 +1,4 @@
-﻿# Valobot
+# Valobot
 
 **1st place in the EPFL Robopoly robotics competition.** Valobot is a team-built mobile robot that uses an onboard camera to follow a line and navigate corridors autonomously. The team designed the robot's mechanics, electronics, and control software together.
 
@@ -15,12 +15,6 @@ Start with [Code_fsm_v1](Code_fsm_v1/). Despite the version number in its name, 
 - [Mechanical CAD](CAD/) includes the chassis assembly, wheel and motor-mount designs. [CAD_V1](CAD_V1/) contains the CATIA assembly and component models.
 - [Electronics prototype](Elec/elec_proto/) contains the KiCad board design. The [component list](Components.xlsx) records the hardware used during development.
 
-## Earlier iterations and experiments
+## Development history
 
-| Directory | Role |
-| --- | --- |
-| [Code_V1](Code_V1/), [Code_v2](Code_v2/), [Code_v3](Code_v3/) | Earlier versions of the navigation software. These show how the camera, controller, and motor interfaces evolved. |
-| [Code_obstacle](Code_obstacle/) | Standalone corridor-navigation experiments and recordings. |
-| [CODE_T_detection](CODE_T_detection/) | Experiments comparing approaches to recognizing T-shaped visual markers. |
-| [Code_test](Code_test/) | Individual hardware and vision checks used during bring-up. |
-| [CAD proto](CAD%20proto/) | Early mechanical prototypes. |
+The [prototype archive](https://github.com/aiglegivree/Valobot/tree/archive/prototypes) preserves the earlier controllers, standalone experiments, hardware checks, and test recordings.

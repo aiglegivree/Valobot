@@ -1,6 +1,0 @@
-{
-  "canny_low": 75,
-  "canny_high": 128,
-  "contour_min_length": 32,
-  "hough_threshold": 86
-}
