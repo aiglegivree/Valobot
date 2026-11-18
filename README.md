@@ -17,4 +17,4 @@ Start with [Code_fsm_v1](Code_fsm_v1/). Despite the version number in its name, 
 
 ## Development history
 
-The [prototype archive](https://github.com/aiglegivree/Valobot/tree/archive/prototypes) preserves the earlier controllers, standalone experiments, hardware checks, and test recordings.
+The [pre-cleanup snapshot](https://github.com/aiglegivree/Valobot/tree/81965a84623f7e89856ed3ef548d561cf87e1eee) preserves the earlier controllers, standalone experiments, hardware checks, and test recordings.
